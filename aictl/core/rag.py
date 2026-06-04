@@ -265,6 +265,12 @@ def chunk_text(
     """
     if not text or not text.strip():
         return []
+    # Guard against misconfiguration: a non-positive chunk_size, or an overlap
+    # that meets/exceeds chunk_size, would make the character-slicing step
+    # `chunk_size - overlap` zero (range() raises ValueError) or negative
+    # (empty range → the paragraph is silently dropped from the index).
+    chunk_size = max(1, chunk_size)
+    overlap = max(0, min(overlap, chunk_size - 1))
     if len(text) <= chunk_size:
         return [text]
 

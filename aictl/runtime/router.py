@@ -134,8 +134,9 @@ class BrokerRouter:
             decision.reason_codes.append(
                 f"selected {best.engine} (score={best.score:.2f})"
             )
-            if best != eligible[0]:
-                decision.fallback_used = True
+            # An eligible engine was scored and selected directly; this is not a
+            # fallback. The priority-order fallback path (_fallback) is the only
+            # place fallback_used becomes True.
         else:
             # ── Fallback: try engines in priority order ──
             decision = self._fallback(req, candidates, decision)

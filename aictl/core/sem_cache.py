@@ -262,7 +262,8 @@ class SemanticCache:
                         "DELETE FROM cache WHERE prompt_hash IN "
                         "(SELECT prompt_hash FROM cache "
                         "ORDER BY last_hit_at ASC, created_at ASC "
-                        f"LIMIT {delete_n})"
+                        "LIMIT ?)",
+                        (delete_n,),
                     )
         except Exception:
             pass  # best-effort; failure is non-critical
@@ -279,7 +280,7 @@ class SemanticCache:
             total_hits = c.execute(
                 "SELECT COALESCE(SUM(hits), 0) FROM cache"
             ).fetchone()[0]
-            c.execute(
+            lifetime_tokens_saved = c.execute(
                 "SELECT COALESCE(SUM(tokens_saved * hits), 0) FROM cache"
             ).fetchone()[0]
 
@@ -291,6 +292,7 @@ class SemanticCache:
             "session_misses": self._misses,
             "session_hit_rate": round(hit_rate, 3),
             "total_tokens_saved": self._total_tokens_saved,
+            "lifetime_tokens_saved": lifetime_tokens_saved,
             "lifetime_hits": total_hits,
             "db_path": str(self.db_path),
             "threshold": self.threshold,

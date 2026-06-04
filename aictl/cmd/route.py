@@ -380,7 +380,8 @@ def _explain_score(text: str) -> list[str]:
         reasons.append(f"Long prompt ({words} words)")
     for pat in _COMPLEX_PATTERNS:
         if re.search(pat, lower):
-            reasons.append(f"Complex keyword: '{pat.strip(chr(92) + 'b').strip()}'")
+            keyword = pat.replace(r"\b", "").strip()
+            reasons.append(f"Complex keyword: '{keyword}'")
             if len(reasons) >= 3:
                 break
     for pat in _CODE_PATTERNS:
