@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aictl"
+version = "1.6.0"
+description = "AI Native Linux OS — local-first AI inference infrastructure CLI"
+keywords = ["ai", "llm", "ollama", "vllm", "inference", "local-ai", "rag", "mcp", "cli", "mlops"]
+authors = [{name = "shizukutanaka"}]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.scripts]
+aictl = "aictl.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/shizukutanaka/aios"
+Homepage = "https://github.com/shizukutanaka/aios"
+"Bug Tracker" = "https://github.com/shizukutanaka/aios/issues"
+Documentation = "https://github.com/shizukutanaka/aios/blob/main/docs/QUICKSTART.md"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,43 @@
+apiVersion: aios/v1alpha1
+kind: InferenceService
+metadata:
+  name: legal-assistant-prod
+spec:
+  tenant: corp-legal
+  tenantClassRef: regulated-enterprise
+  profile: server-gpu-nvidia
+  modelBundleRef: qwen3-72b-regulated
+  endpoint:
+    protocol: openai-compatible
+    auth: mTLS-and-token
+  qos:
+    class: platinum
+    target:
+      p95LatencyMs: 900
+      minTokensPerSecond: 65
+      maxQueueDelayMs: 120
+    admission:
+      strategy: reserve-slice-then-queue
+      rejectIfPredictedP95ExceedsMs: 1000
+  slicePolicy:
+    vendor: nvidia
+    mode: mig
+    profileCandidates:
+      - 3g.40gb
+      - 2g.24gb
+    fallback:
+      allowWholeGpuBurst: true
+  continuity:
+    enabled: true
+    snapshotOnDrain: true
+    maxResumeAgeSeconds: 1800
+    encryptionRequired: true
+  fabricPolicyRef: enterprise-hbm-cxl-policy
+  placement:
+    preferredZone: tokyo-a
+    allowCxlMemory: true
+    allowGpudirectStorage: true
+  security:
+    attestedHostRequired: true
+    signedModelRequired: true
+    denyInternetEgress: true

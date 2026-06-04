@@ -1,0 +1,20 @@
+{
+  "name": "local-chat",
+  "version": "1",
+  "services": [
+    {
+      "name": "llm",
+      "runtime": "ollama",
+      "model": "llama3.2:3b",
+      "port": 11434,
+      "health_path": "/api/tags"
+    },
+    {
+      "name": "webui",
+      "image": "ghcr.io/open-webui/open-webui:main",
+      "port": 3000,
+      "env": {"OLLAMA_API_BASE_URL": "http://localhost:11434"}
+    }
+  ],
+  "trust_policy": "warn"
+}

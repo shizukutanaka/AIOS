@@ -1,0 +1,23 @@
+apiVersion: aios/v1alpha1
+kind: TenantClass
+metadata:
+  name: regulated-enterprise
+spec:
+  securityDefaults:
+    confidentialComputeRequired: true
+    signedImagesOnly: true
+    modelEncryptionRequired: true
+    outboundNetwork: deny-by-default
+    removableMediaExport: deny
+  audit:
+    retainDays: 3650
+    logAttestationEvidence: true
+    logModelDigest: true
+    logContextResumeEvents: true
+  continuity:
+    allowSnapshot: true
+    allowCrossHostResume: false
+  workloadDefaults:
+    fabricPolicyRef: enterprise-hbm-cxl-policy
+    qosClass: gold
+    admissionMode: strict

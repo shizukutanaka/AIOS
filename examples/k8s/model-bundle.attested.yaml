@@ -1,0 +1,16 @@
+# Signed model bundle with Cosign attestation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aios-model-bundle
+data:
+  model: "meta-llama/Llama-3.2-8B-Instruct"
+  registry: "ghcr.io/shizukutanaka/models"
+  tag: "v1.0.0"
+  digest: "sha256:abcdef1234567890..."
+  cosign_identity: "ci@github.com"
+  cosign_oidc_issuer: "https://github.com/login/oauth"
+  trust_policy: "enforce"
+  # Verify: cosign verify --certificate-identity ci@github.com \
+  #   --certificate-oidc-issuer https://github.com/login/oauth \
+  #   ghcr.io/shizukutanaka/models:v1.0.0

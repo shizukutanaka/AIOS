@@ -1,0 +1,74 @@
+# OpenTelemetry Collector configuration for AI OS
+# Scrapes vLLM, SGLang, Ollama metrics and exports to Prometheus/Grafana
+#
+# Deploy: copy to /etc/otelcol/config.yaml
+# Start:  systemctl start otelcol
+
+receivers:
+  # Scrape vLLM Prometheus metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'vllm'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['localhost:8000']
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: 'vllm:(.*)'
+              target_label: __name__
+              replacement: 'aios_vllm_$1'
+
+        - job_name: 'sglang'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['localhost:30000']
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: 'sglang_(.*)'
+              target_label: __name__
+              replacement: 'aios_sglang_$1'
+
+  # Receive OTLP from aiosd
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+
+  # Add AI OS resource attributes
+  resource:
+    attributes:
+      - key: service.name
+        value: aios
+        action: upsert
+      - key: deployment.environment
+        value: local
+        action: upsert
+
+exporters:
+  # Local Prometheus endpoint for Grafana
+  prometheus:
+    endpoint: 0.0.0.0:9090
+    namespace: aios
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Debug logging
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus, otlp]
+      processors: [batch, resource]
+      exporters: [prometheus]
+
+  telemetry:
+    logs:
+      level: info

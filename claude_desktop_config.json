@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aictl": {
+      "command": "python3",
+      "args": ["-m", "aictl.mcp_server"],
+      "env": {}
+    }
+  }
+}

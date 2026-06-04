@@ -1,0 +1,571 @@
+openapi: 3.1.0
+info:
+  title: AI OS Runtime Broker API
+  version: 0.7.0
+  description: >
+    Runtime Broker: OpenAI-compatible entry point with dynamic backend
+    selection across vLLM, SGLang, Ollama, and TensorRT-LLM.
+    Includes SLO governance, trust gate, and failover policies.
+servers:
+  - url: http://127.0.0.1:7700
+    description: Local aiosd daemon
+tags:
+  - name: Health
+  - name: Node
+  - name: Broker
+  - name: Stacks
+  - name: Models
+  - name: Recipes
+  - name: Metrics
+  - name: Upgrade
+
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Daemon health check
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/node:
+    get:
+      tags: [Node]
+      summary: Node status including hardware, GPUs, NPUs
+      responses:
+        "200":
+          description: Full node report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeReport"
+
+  /v1/runtime:
+    get:
+      tags: [Broker]
+      summary: Runtime profile and available backends
+      responses:
+        "200":
+          description: Runtime info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeInfo"
+
+  /v1/broker/route:
+    post:
+      tags: [Broker]
+      summary: Route an inference request to the best engine
+      description: >
+        Select optimal engine based on model, SLO objective, tenant,
+        and current system pressure. Returns selected engine and reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRequest"
+      responses:
+        "200":
+          description: Routing decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteResponse"
+
+  /v1/broker/failover:
+    post:
+      tags: [Broker]
+      summary: Request failover after engine error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FailoverRequest"
+      responses:
+        "200":
+          description: Failover target
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FailoverResponse"
+
+  /v1/broker/drain:
+    post:
+      tags: [Broker]
+      summary: Drain an engine/pool/node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrainRequest"
+      responses:
+        "200":
+          description: Drain result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrainResponse"
+
+  /v1/stacks:
+    get:
+      tags: [Stacks]
+      summary: List applied stacks
+      responses:
+        "200":
+          description: Stack list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stacks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StackEntry"
+
+  /v1/stacks/apply:
+    post:
+      tags: [Stacks]
+      summary: Apply a stack manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  description: Path to stack manifest file
+      responses:
+        "201":
+          description: Stack applied
+
+  /v1/stacks/down:
+    post:
+      tags: [Stacks]
+      summary: Stop a stack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: Stack stopped
+
+  /v1/services:
+    get:
+      tags: [Stacks]
+      summary: List running services
+      responses:
+        "200":
+          description: Service list
+
+  /v1/models:
+    get:
+      tags: [Models]
+      summary: List registered models
+      responses:
+        "200":
+          description: Model list
+
+  /v1/models/register:
+    post:
+      tags: [Models]
+      summary: Register a model with optional digest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelRegistration"
+      responses:
+        "201":
+          description: Model registered
+
+  /v1/recipes:
+    get:
+      tags: [Recipes]
+      summary: List built-in recipes
+      responses:
+        "200":
+          description: Recipe list
+
+  /v1/recipes/run:
+    post:
+      tags: [Recipes]
+      summary: Run a built-in recipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Recipe started
+
+  /v1/metrics/slo:
+    get:
+      tags: [Metrics]
+      summary: SLO compliance status
+      responses:
+        "200":
+          description: SLO metrics and verdict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SLOStatus"
+
+  /v1/metrics/psi:
+    get:
+      tags: [Metrics]
+      summary: Linux PSI memory/CPU/IO pressure
+      responses:
+        "200":
+          description: PSI values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemPressure"
+
+  /v1/upgrade/plan:
+    get:
+      tags: [Upgrade]
+      summary: Generate upgrade plan
+      responses:
+        "200":
+          description: Upgrade plan
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        initialized:
+          type: boolean
+        profile:
+          type: string
+        container_runtime:
+          type: string
+        uptime_seconds:
+          type: number
+
+    NodeReport:
+      type: object
+      properties:
+        node:
+          $ref: "#/components/schemas/NodeState"
+        system:
+          $ref: "#/components/schemas/SystemInfo"
+        gpus:
+          type: array
+          items:
+            $ref: "#/components/schemas/GPUInfo"
+        npus:
+          type: array
+          items:
+            $ref: "#/components/schemas/NPUInfo"
+        issues:
+          type: array
+          items:
+            type: string
+
+    NodeState:
+      type: object
+      properties:
+        node_id:
+          type: string
+        hostname:
+          type: string
+        profile:
+          type: string
+        version:
+          type: string
+        mode:
+          type: string
+          enum: [local, cluster]
+        gpu_count:
+          type: integer
+        vram_total_mb:
+          type: integer
+        ram_total_mb:
+          type: integer
+
+    SystemInfo:
+      type: object
+      properties:
+        hostname:
+          type: string
+        cpu_model:
+          type: string
+        cpu_cores:
+          type: integer
+        ram_total_mb:
+          type: integer
+        disk_free_gb:
+          type: number
+        kernel:
+          type: string
+        cgroup_v2:
+          type: boolean
+        psi_enabled:
+          type: boolean
+
+    GPUInfo:
+      type: object
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+        vendor:
+          type: string
+          enum: [nvidia, amd, intel]
+        vram_mb:
+          type: integer
+        driver_version:
+          type: string
+        compute_cap:
+          type: string
+        mig_capable:
+          type: boolean
+        mig_enabled:
+          type: boolean
+
+    NPUInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        vendor:
+          type: string
+          enum: [intel, amd]
+        driver_loaded:
+          type: boolean
+        runtime:
+          type: string
+
+    RuntimeInfo:
+      type: object
+      properties:
+        profile:
+          type: string
+        container_runtime:
+          type: string
+        ollama:
+          type: boolean
+        gpus:
+          type: array
+          items:
+            $ref: "#/components/schemas/GPUInfo"
+        npus:
+          type: array
+          items:
+            $ref: "#/components/schemas/NPUInfo"
+
+    # ── Broker schemas ──────────────────────────────────
+
+    RouteRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Model name or ID
+        objective:
+          type: string
+          enum: [latency, throughput, cost, balanced]
+          default: balanced
+        tenant:
+          type: string
+        latency_slo_ms:
+          type: number
+          description: Maximum acceptable TTFT in milliseconds
+
+    RouteResponse:
+      type: object
+      properties:
+        selected_engine:
+          type: string
+          enum: [vllm, sglang, ollama, trt-llm, cpu]
+        selected_pool:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        reason_codes:
+          type: array
+          items:
+            type: string
+
+    FailoverRequest:
+      type: object
+      required: [request_id, last_error]
+      properties:
+        request_id:
+          type: string
+        last_error:
+          type: string
+        allowed_downgrade:
+          type: boolean
+          default: true
+
+    FailoverResponse:
+      type: object
+      properties:
+        fallback_target:
+          type: string
+        degraded_mode:
+          type: boolean
+        endpoint:
+          type: string
+          format: uri
+
+    DrainRequest:
+      type: object
+      required: [target]
+      properties:
+        target:
+          type: string
+          description: Engine, pool, or node identifier
+        timeout_s:
+          type: integer
+          default: 30
+
+    DrainResponse:
+      type: object
+      properties:
+        drained_sessions:
+          type: integer
+        forced_evictions:
+          type: integer
+
+    # ── Model state machine ─────────────────────────────
+
+    ModelState:
+      type: string
+      enum: [PENDING, WARMING, READY, DEGRADED, DRAINING, OFFLINE, BLOCKED]
+      description: >
+        State transitions:
+        PENDING → WARMING: model download/load initiated
+        WARMING → READY: warmup complete, health check passed
+        READY → DEGRADED: TTFT/TPOT threshold exceeded, KV pressure, EPP latency
+        READY → DRAINING: version update, MIG reconfiguration, planned maintenance
+        READY → BLOCKED: signature/attestation/policy violation
+        DEGRADED → READY: metrics return to SLO compliance
+        DEGRADED → DRAINING: sustained degradation triggers drain
+        DRAINING → OFFLINE: all sessions drained
+        BLOCKED → PENDING: policy violation resolved, re-verification triggered
+        OFFLINE → PENDING: re-registration
+
+    # ── Stack / Recipe ──────────────────────────────────
+
+    StackEntry:
+      type: object
+      properties:
+        name:
+          type: string
+        file:
+          type: string
+        applied_at:
+          type: number
+        status:
+          type: string
+          enum: [pending, running, stopped, error]
+        services:
+          type: array
+          items:
+            type: object
+
+    ModelRegistration:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        digest:
+          type: string
+          description: "Expected SHA-256 digest (sha256:hex)"
+        format:
+          type: string
+          enum: [gguf, safetensors, onnx]
+        signed:
+          type: boolean
+
+    # ── SLO ─────────────────────────────────────────────
+
+    SLOStatus:
+      type: object
+      properties:
+        slo:
+          type: object
+          properties:
+            compliant:
+              type: boolean
+            violations:
+              type: array
+              items:
+                type: string
+            action:
+              type: string
+              enum: [none, scale_batch, drain, failover]
+        pressure:
+          $ref: "#/components/schemas/SystemPressure"
+        target:
+          $ref: "#/components/schemas/SLOTarget"
+
+    SystemPressure:
+      type: object
+      properties:
+        memory_some_avg10:
+          type: number
+        memory_some_avg60:
+          type: number
+        memory_full_avg10:
+          type: number
+        memory_full_avg60:
+          type: number
+        cpu_some_avg10:
+          type: number
+        io_some_avg10:
+          type: number
+
+    SLOTarget:
+      type: object
+      properties:
+        ttft_p95_ms:
+          type: number
+        itl_p95_ms:
+          type: number
+        tokens_per_sec_min:
+          type: number
+        error_rate_max:
+          type: number
+        queue_depth_max:
+          type: integer
+        kv_cache_max:
+          type: number
+        psi_memory_some_max:
+          type: number

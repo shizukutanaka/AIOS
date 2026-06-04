@@ -1,0 +1,61 @@
+apiVersion: aios/v1alpha1
+kind: Stack
+metadata:
+  name: local-rag-assistant
+spec:
+  mode: local-first
+  startup:
+    autoStart: true
+    preloadModels: true
+    stopIdleAfterMinutes: 20
+  placement:
+    strategy: local-prefer
+    allowSingleNodeDegradedMode: true
+  services:
+    - name: gateway
+      type: api-gateway
+      image: registry.example.internal/aios/gateway:1.0.0
+      expose:
+        - name: openai
+          port: 8080
+          bind: 127.0.0.1
+    - name: embedder
+      type: embedding
+      profile: cpu-or-small-gpu
+      modelBundleRef: bge-m3-local
+      replicas: 1
+    - name: retriever
+      type: rag-index
+      image: registry.example.internal/aios/retriever:1.0.0
+      storage:
+        - volumeRef: knowledge-base
+    - name: assistant
+      type: inference
+      profile: server-gpu-nvidia
+      modelBundleRef: qwen3-32b-instruct-local
+      qos:
+        class: gold
+        target:
+          p95LatencyMs: 1400
+          minTokensPerSecond: 35
+          maxQueueDelayMs: 250
+      continuity:
+        enabled: true
+        snapshotOnDrain: true
+      fabricPolicyRef: enterprise-hbm-cxl-policy
+  volumes:
+    - name: model-cache
+      kind: shared-model-cache
+      path: /var/lib/aios/models
+    - name: knowledge-base
+      kind: local-data
+      path: /var/lib/aios/data/rag
+  recipes:
+    installDemoUi: true
+  security:
+    loopbackOnly: true
+    signedModelsPreferred: true
+  observability:
+    openLocalConsole: true
+    showDesktopShortcut: true
+

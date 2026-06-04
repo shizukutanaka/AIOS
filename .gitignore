@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# State
+*.sqlite
+*.sqlite-journal
+.aios/
+*.jsonl
+
+# Go
+bin/
+go-port/aictl-go
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# OS
+tmp_*
+*.log
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/

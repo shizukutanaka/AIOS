@@ -1,0 +1,98 @@
+<svg viewBox="0 0 900 650" xmlns="http://www.w3.org/2000/svg" font-family="system-ui,-apple-system,sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="650" fill="url(#bg)" rx="8"/>
+
+  <!-- Title -->
+  <text x="450" y="35" text-anchor="middle" fill="#f1f5f9" font-size="18" font-weight="bold">AI Native Linux OS — Architecture</text>
+  <text x="450" y="52" text-anchor="middle" fill="#64748b" font-size="11">aictl v1.4.0 · 35 commands · 362 tests · 15K+ LOC</text>
+
+  <!-- User Layer -->
+  <rect x="30" y="70" width="840" height="50" rx="6" fill="#1e3a5f" stroke="#3b82f6" stroke-width="1"/>
+  <text x="50" y="100" fill="#93c5fd" font-size="13" font-weight="600">User</text>
+  <text x="130" y="100" fill="#cbd5e1" font-size="11">aictl CLI (35 cmds) · Local Console (React) · REST API :7700 · Proxy :8080</text>
+
+  <!-- CLI Layer -->
+  <rect x="30" y="135" width="410" height="80" rx="6" fill="#1a2744" stroke="#475569" stroke-width="0.5"/>
+  <text x="45" y="157" fill="#94a3b8" font-size="10" font-weight="600">CLI Commands</text>
+  <text x="45" y="173" fill="#64748b" font-size="9">init doctor ps apply down recipe model serve status</text>
+  <text x="45" y="186" fill="#64748b" font-size="9">recommend bench setup watch proxy warmup net cost</text>
+  <text x="45" y="199" fill="#64748b" font-size="9">mig audit apikey image fabric context scale tenant trace security convert</text>
+
+  <!-- Daemon Layer -->
+  <rect x="460" y="135" width="410" height="80" rx="6" fill="#1a2744" stroke="#475569" stroke-width="0.5"/>
+  <text x="475" y="157" fill="#94a3b8" font-size="10" font-weight="600">aiosd Daemon</text>
+  <text x="475" y="173" fill="#64748b" font-size="9">ThreadedHTTPServer · 20+ GET endpoints · POST endpoints</text>
+  <text x="475" y="186" fill="#64748b" font-size="9">SLO Governor (15s loop) · OTel export · Prometheus /metrics</text>
+  <text x="475" y="199" fill="#64748b" font-size="9">Completions Proxy · API Key Auth · Rate Limiting · Audit</text>
+
+  <!-- Runtime Layer -->
+  <rect x="30" y="230" width="270" height="110" rx="6" fill="#172032" stroke="#475569" stroke-width="0.5"/>
+  <text x="45" y="252" fill="#22d3ee" font-size="11" font-weight="600">Runtime Broker</text>
+  <text x="45" y="270" fill="#64748b" font-size="9">GPU/NPU/CPU Detection</text>
+  <text x="45" y="283" fill="#64748b" font-size="9">vLLM v0.19 Adapter (Prometheus)</text>
+  <text x="45" y="296" fill="#64748b" font-size="9">SGLang v0.3 Adapter (sglang_ prefix)</text>
+  <text x="45" y="309" fill="#64748b" font-size="9">Ollama v0.20 Adapter (native API)</text>
+  <text x="45" y="322" fill="#64748b" font-size="9">Router: hard filter → soft score</text>
+
+  <!-- Stack Layer -->
+  <rect x="315" y="230" width="270" height="110" rx="6" fill="#172032" stroke="#475569" stroke-width="0.5"/>
+  <text x="330" y="252" fill="#a78bfa" font-size="11" font-weight="600">Stack / Orchestration</text>
+  <text x="330" y="270" fill="#64748b" font-size="9">10 Built-in Recipes</text>
+  <text x="330" y="283" fill="#64748b" font-size="9">Podman Quadlet Generator (.container)</text>
+  <text x="330" y="296" fill="#64748b" font-size="9">KServe LLMInferenceService v0.17</text>
+  <text x="330" y="309" fill="#64748b" font-size="9">KEDA ScaledObject / HPA Generator</text>
+  <text x="330" y="322" fill="#64748b" font-size="9">systemctl integration</text>
+
+  <!-- Enterprise Layer -->
+  <rect x="600" y="230" width="270" height="110" rx="6" fill="#172032" stroke="#475569" stroke-width="0.5"/>
+  <text x="615" y="252" fill="#fbbf24" font-size="11" font-weight="600">Enterprise</text>
+  <text x="615" y="270" fill="#64748b" font-size="9">Multi-tenant (regulated/standard/dev)</text>
+  <text x="615" y="283" fill="#64748b" font-size="9">Fabric Memory (DRAM/CXL/NVMe/DAMON)</text>
+  <text x="615" y="296" fill="#64748b" font-size="9">Context Continuity (KV cache persist)</text>
+  <text x="615" y="309" fill="#64748b" font-size="9">MIG Partition Planner (A100/H100/H200)</text>
+  <text x="615" y="322" fill="#64748b" font-size="9">Security Scanner (10 checks, 0-100)</text>
+
+  <!-- Trust Layer -->
+  <rect x="30" y="355" width="270" height="80" rx="6" fill="#1a1a2e" stroke="#475569" stroke-width="0.5"/>
+  <text x="45" y="377" fill="#f87171" font-size="11" font-weight="600">Trust Chain</text>
+  <text x="45" y="395" fill="#64748b" font-size="9">Cosign v3 keyless signing/verification</text>
+  <text x="45" y="408" fill="#64748b" font-size="9">ORAS OCI model pull/push + SBOM</text>
+  <text x="45" y="421" fill="#64748b" font-size="9">SHA-256 digest verification</text>
+
+  <!-- Metrics Layer -->
+  <rect x="315" y="355" width="270" height="80" rx="6" fill="#1a1a2e" stroke="#475569" stroke-width="0.5"/>
+  <text x="330" y="377" fill="#34d399" font-size="11" font-weight="600">Observability</text>
+  <text x="330" y="395" fill="#64748b" font-size="9">OTel GenAI SemConv v1.40</text>
+  <text x="330" y="408" fill="#64748b" font-size="9">Prometheus /metrics endpoint</text>
+  <text x="330" y="421" fill="#64748b" font-size="9">SLO: TTFT/ITL/TPOT/PSI/KV cache</text>
+
+  <!-- Core Layer -->
+  <rect x="600" y="355" width="270" height="80" rx="6" fill="#1a1a2e" stroke="#475569" stroke-width="0.5"/>
+  <text x="615" y="377" fill="#fb923c" font-size="11" font-weight="600">Core</text>
+  <text x="615" y="395" fill="#64748b" font-size="9">State (JSON + SQLite) · Config · Events</text>
+  <text x="615" y="408" fill="#64748b" font-size="9">Audit Log · API Keys · Snapshots</text>
+  <text x="615" y="421" fill="#64748b" font-size="9">Cost Estimator · Model Formats</text>
+
+  <!-- OS Layer -->
+  <rect x="30" y="450" width="840" height="55" rx="6" fill="#14251a" stroke="#22c55e" stroke-width="1"/>
+  <text x="50" y="472" fill="#86efac" font-size="11" font-weight="600">Immutable OS</text>
+  <text x="50" y="490" fill="#64748b" font-size="9">bootc v1.15 (Fedora 42) · cgroup v2 · PSI · systemd-oomd · Podman + Quadlet · NVIDIA Container Toolkit v1.17.8</text>
+
+  <!-- K8s Layer -->
+  <rect x="30" y="520" width="840" height="55" rx="6" fill="#251420" stroke="#e879f9" stroke-width="1"/>
+  <text x="50" y="542" fill="#e879f9" font-size="11" font-weight="600">Cluster (optional)</text>
+  <text x="50" y="560" fill="#64748b" font-size="9">K3s v1.35 · KServe v0.17 LLMInferenceService · llm-d · KEDA v2.19 · GPU Operator v26.3 · Gateway API</text>
+
+  <!-- Go Port -->
+  <rect x="30" y="590" width="410" height="40" rx="6" fill="#1a2020" stroke="#475569" stroke-width="0.5"/>
+  <text x="45" y="615" fill="#94a3b8" font-size="10">Go Port: 14 commands · Cobra + net/http · 1,255 LOC · CGO_ENABLED=0</text>
+
+  <!-- Stats -->
+  <rect x="460" y="590" width="410" height="40" rx="6" fill="#1a2020" stroke="#475569" stroke-width="0.5"/>
+  <text x="475" y="615" fill="#94a3b8" font-size="10">Python: 79 modules · 14K LOC · 362 tests · stdlib only · MIT License</text>
+</svg>

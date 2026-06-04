@@ -1,0 +1,82 @@
+apiVersion: aios/v1alpha1
+kind: FabricPolicy
+metadata:
+  name: enterprise-hbm-cxl-policy
+spec:
+  objective:
+    primary: keep-latency-slo
+    secondary: maximize-session-resume
+  tiers:
+    - name: hbm
+      class: accelerator-memory
+      expectedBandwidth: ultra
+      intendedFor:
+        - active-kv-cache
+        - hot-adapters
+        - hot-weight-pages
+    - name: dram
+      class: system-memory
+      expectedBandwidth: high
+      intendedFor:
+        - warm-weights
+        - tokenizer
+        - rag-cache
+    - name: cxl
+      class: pooled-memory
+      expectedBandwidth: medium
+      intendedFor:
+        - cold-weights
+        - resumable-context
+        - cold-rag-cache
+    - name: nvme
+      class: persistent-cache
+      expectedBandwidth: low
+      intendedFor:
+        - snapshot
+        - spill
+        - staged-preload
+  signals:
+    damon:
+      enabled: true
+      collectionWindowMs: 5000
+    psi:
+      memory: true
+      io: true
+    gpuTelemetry:
+      vramPressure: true
+      copyEngineUtilization: true
+  rules:
+    - selector:
+        objectClass: base-weights
+        temperature: hot
+      placementOrder: [hbm, dram, cxl]
+      evictionPriority: 900
+    - selector:
+        objectClass: kv-cache
+        temperature: hot
+      placementOrder: [hbm, dram]
+      evictionPriority: 1000
+      protectWhenSloBreached: true
+    - selector:
+        objectClass: snapshot
+      placementOrder: [cxl, nvme]
+      encryptionRequired: true
+      evictionPriority: 200
+    - selector:
+        objectClass: rag-cache
+        temperature: cold
+      placementOrder: [cxl, nvme]
+      evictionPriority: 300
+  actions:
+    onSloRisk:
+      - promote-hot-kv-to-hbm
+      - throttle-low-priority-prefill
+      - delay-background-warmup
+    onMemoryPressure:
+      - demote-cold-rag-cache-to-cxl
+      - checkpoint-idle-context-to-nvme
+      - reject-new-bronze-admissions
+  resume:
+    snapshotOnDrain: true
+    preferredSnapshotTier: cxl
+    fallbackSnapshotTier: nvme

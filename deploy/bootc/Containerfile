@@ -1,0 +1,40 @@
+# AI Native Linux OS — bootc Container Image
+# Build: podman build -t ghcr.io/shizukutanaka/aios:1.5.0 -f deploy/bootc/Containerfile .
+# Deploy: sudo bootc switch ghcr.io/shizukutanaka/aios:1.5.0
+
+FROM quay.io/fedora/fedora-bootc:42
+
+LABEL maintainer="shizukutanaka"
+LABEL description="AI Native Linux OS — local-first AI inference infrastructure"
+LABEL version="1.5.0"
+LABEL org.opencontainers.image.source="https://github.com/shizukutanaka/aios"
+
+# System packages
+RUN dnf install -y --setopt=install_weak_deps=False \
+    python3 python3-pip \
+    podman podman-compose \
+    nvidia-container-toolkit \
+    numactl \
+    && dnf clean all
+
+# Install aictl
+COPY aictl/ /opt/aios/aictl/
+COPY pyproject.toml README.md LICENSE /opt/aios/
+RUN cd /opt/aios && pip install --break-system-packages -e .
+
+# Systemd service for aiosd daemon
+COPY deploy/systemd/aiosd.service /etc/systemd/system/aiosd.service
+RUN systemctl enable aiosd.service
+
+# Default state directory
+RUN mkdir -p /var/lib/aios && chmod 700 /var/lib/aios
+
+# OTel Collector config
+RUN mkdir -p /etc/otel
+COPY docs/ai_os/aiosd-openapi.yaml /etc/aios/openapi.yaml
+
+EXPOSE 7700 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s \
+    CMD curl -sf http://127.0.0.1:7700/v1/health || exit 1

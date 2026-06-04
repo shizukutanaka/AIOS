@@ -1,0 +1,25 @@
+# Open WebUI v0.8.12 via Podman Quadlet
+# Connects to local Ollama or vLLM
+
+[Unit]
+Description=Open WebUI — AI Chat Interface
+After=ollama.service
+Requires=ollama.service
+
+[Container]
+ContainerName=open-webui
+Image=ghcr.io/open-webui/open-webui:v0.8.12
+AutoUpdate=registry
+Volume=open-webui-data:/app/backend/data
+PublishPort=3000:8080
+Environment=OLLAMA_BASE_URL=http://host.containers.internal:11434
+HealthCmd=curl -sf http://localhost:8080/health || exit 1
+HealthInterval=30s
+Label=aios.service=webui
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
