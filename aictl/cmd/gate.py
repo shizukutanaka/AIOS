@@ -182,11 +182,15 @@ def run(args: argparse.Namespace) -> int:
             ["python3", "-m", "ruff", "check", "aictl/"],
             cwd=str(project_root), capture_output=True, text=True, timeout=60,
         )
-        ruff_clean = proc.returncode == 0
-        if ruff_clean:
+        # `python3 -m ruff` exits non-zero with "No module named ruff" on stderr
+        # when the optional linter isn't installed — that is NOT a lint failure.
+        if "No module named ruff" in proc.stderr:
+            results.append(("Ruff", True, "ruff not installed (skipped)"))
+        elif proc.returncode == 0:
             results.append(("Ruff", True, "All checks passed"))
         else:
-            n = proc.stdout.count("\n--> ") or proc.stdout.strip().splitlines()[-1]
+            lines = proc.stdout.strip().splitlines()
+            n = proc.stdout.count("\n--> ") or (lines[-1] if lines else "errors")
             results.append(("Ruff", False, f"errors found: {n}"))
     except FileNotFoundError:
         results.append(("Ruff", True, "ruff not installed (skipped)"))
@@ -203,17 +207,24 @@ def run(args: argparse.Namespace) -> int:
             ["python3", "-m", "mypy", "--strict", "aictl/"],
             cwd=str(project_root), capture_output=True, text=True, timeout=180,
         )
-        last_line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
-        import re as _re
-        m = _re.search(r"Found (\d+) error", last_line)
-        current = int(m.group(1)) if m else (0 if proc.returncode == 0 else 999999)
-        if current < baseline:
-            baseline_path.write_text(str(current) + "\n")  # ratchet down
-            results.append(("MyPy", True, f"{current} errors (improved from {baseline})"))
-        elif current == baseline:
-            results.append(("MyPy", True, f"{current} errors (baseline held)"))
+        # `python3 -m mypy` exits non-zero with "No module named mypy" on stderr
+        # when the optional type checker isn't installed. Without this guard the
+        # empty stdout falls through to the `999999` sentinel and reports a
+        # phantom regression that fails the gate.
+        if "No module named mypy" in proc.stderr:
+            results.append(("MyPy", True, "mypy not installed (skipped)"))
         else:
-            results.append(("MyPy", False, f"{current} errors > baseline {baseline} (regression)"))
+            last_line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+            import re as _re
+            m = _re.search(r"Found (\d+) error", last_line)
+            current = int(m.group(1)) if m else (0 if proc.returncode == 0 else 999999)
+            if current < baseline:
+                baseline_path.write_text(str(current) + "\n")  # ratchet down
+                results.append(("MyPy", True, f"{current} errors (improved from {baseline})"))
+            elif current == baseline:
+                results.append(("MyPy", True, f"{current} errors (baseline held)"))
+            else:
+                results.append(("MyPy", False, f"{current} errors > baseline {baseline} (regression)"))
     except FileNotFoundError:
         results.append(("MyPy", True, "mypy not installed (skipped)"))
     except Exception as e:

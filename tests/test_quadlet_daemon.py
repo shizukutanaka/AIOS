@@ -227,7 +227,8 @@ class TestQuadletValidation(unittest.TestCase):
 
     def test_ollama_example_valid(self):
         from aictl.stack.quadlet import validate_quadlet
-        content = Path("/home/claude/aios/examples/ollama.container").read_text()
+        example = Path(__file__).resolve().parent.parent / "examples" / "ollama.container"
+        content = example.read_text()
         issues = validate_quadlet(content)
         # Should have no critical issues (Image, Container sections present)
         critical = [i for i in issues if "Missing [Container]" in i or "Missing Image=" in i]
@@ -235,7 +236,8 @@ class TestQuadletValidation(unittest.TestCase):
 
     def test_open_webui_example_valid(self):
         from aictl.stack.quadlet import validate_quadlet
-        content = Path("/home/claude/aios/examples/open-webui.container").read_text()
+        example = Path(__file__).resolve().parent.parent / "examples" / "open-webui.container"
+        content = example.read_text()
         issues = validate_quadlet(content)
         critical = [i for i in issues if "Missing [Container]" in i or "Missing Image=" in i]
         self.assertEqual(len(critical), 0)
