@@ -17,7 +17,7 @@ print(answer.cost)  # '$0.000047' — per-call cost, always visible
 設定不要。モデル選定不要。aictl が自動で適切なモデルを選び、起動し、結果を返します。
 
 ```
-906 tests | 120+ modules | 22,000+ lines | zero external Python deps
+1380 tests | 147 modules | 25,000+ lines | zero external Python deps
 ```
 
 ## What aictl does that competitors don't
@@ -171,7 +171,7 @@ CLI (65 Python + 29 Go)
 ├── Core      Metering + Security + Cost + API Keys + Audit
 ├── Trust     Cosign v3 + ORAS
 ├── Metrics   OTel GenAI SemConv + Prometheus
-├── MCP       16 tools (stdio JSON-RPC 2.0)
+├── MCP       18 tools (stdio JSON-RPC 2.0)
 └── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
 ```
 
@@ -212,7 +212,7 @@ curl http://localhost:9999/v1/models   # Mock engine
 ## Testing
 
 ```bash
-make test       # 906 Python tests
+make test       # 1380 Python tests
 make go-test    # 17 Go tests
 make gate       # Full quality gate
 make demo       # E2E demo
@@ -230,7 +230,7 @@ MIT
 
 ## MCP Server — use aictl from Claude Desktop, Cursor, VS Code
 
-aictl exposes 16 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them.
+aictl exposes 18 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
 
 ```json
 // Claude Desktop config (~/.config/claude/mcp_servers.json):

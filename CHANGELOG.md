@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Quality & correctness fixes
+
+### Fixed
+- **Quality gate** (`aictl/cmd/gate.py`): when `ruff`/`mypy` are invoked via
+  `python3 -m <tool>` but not installed, the interpreter exits non-zero with
+  `No module named <tool>` on stderr and empty stdout. The MyPy step misread this
+  as a phantom `999999`-error regression (failing the gate) and the Ruff step hit
+  an `IndexError`. Both now detect the not-installed case and skip cleanly.
+- **Semantic cache** (`aictl/core/sem_cache.py`): `stats()` computed the DB lifetime
+  tokens-saved total then discarded it, reporting only the in-process session value.
+  Now exposed as `lifetime_tokens_saved`. Eviction `LIMIT` is parameter-bound.
+- **Router** (`aictl/runtime/router.py`): removed dead `fallback_used` branch in the
+  direct-selection path (the comparison was always false).
+- **RAG chunking** (`aictl/core/rag.py`): `chunk_text` no longer raises `ValueError`
+  or silently drops oversized paragraphs when `overlap >= chunk_size`.
+- **Route explain** (`aictl/cmd/route.py`): keyword labels strip the regex `\b`
+  token explicitly instead of `str.strip('\\b')` (which could mangle keywords).
+- Two tests in `tests/test_quadlet_daemon.py` used a hardcoded absolute path; now
+  repo-relative.
+
+### Changed
+- Project source is now tracked in the repository (was shipped only as a zip).
+- Documentation counts reconciled with reality: 1380 tests, 65 CLI commands,
+  18 MCP tools, 147 modules.
+- Added `tests/test_improvements_v16.py` (7 regression tests).
+
 ## v1.6.0 (2026-04-25) — Competitor Gap Release
 
 ### New Commands
