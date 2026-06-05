@@ -16,10 +16,10 @@
 | 4 | Semantic caching | `core/sem_cache` | ✅ done |
 | 5 | Guardrails, PII & prompt-injection safety | `core/guard,security,apikeys` | ✅ done |
 | 6 | Quantization & model compression | `cmd/quant`, `runtime/optimize` | ✅ done |
-| 7 | KV-cache management & request scheduling | `runtime/prefix_route,dynamo,autoscaler` | ⏳ pending |
-| 8 | Speculative & accelerated decoding | `cmd/spec`, `runtime/speculative` | ⏳ pending |
-| 9 | K8s orchestration, autoscaling & P/D disaggregation | `stack/*`, `runtime/mig,fabric` | ⏳ pending |
-| 10 | Observability, cost/TCO, metering & FinOps | `metrics/*`, `cmd/tco`, `core/metering,cost` | ⏳ pending |
+| 7 | KV-cache management & request scheduling | `runtime/prefix_route,dynamo,autoscaler` | ✅ done |
+| 8 | Speculative & accelerated decoding | `cmd/spec`, `runtime/speculative` | ✅ done |
+| 9 | K8s orchestration, autoscaling & P/D disaggregation | `stack/*`, `runtime/mig,fabric` | ✅ done |
+| 10 | Observability, cost/TCO, metering & FinOps | `metrics/*`, `cmd/tco`, `core/metering,cost` | ✅ done |
 
 ---
 
@@ -171,8 +171,123 @@ single-turn, input-side** only.
 
 ---
 
-## Pending (next loop iterations)
+## Category 7 — KV-cache management & request scheduling
 
-Categories 7–10 remain (≈10 arXiv/GitHub refs + improvement points each): KV-cache/scheduling,
-speculative decoding, K8s/disaggregation, and observability/FinOps. Each is backed by narrative
-analysis already in `docs/IMPROVEMENTS.md` (Parts 1–2).
+**Current aictl:** `runtime/prefix_route.py` (prefix-hash locality), `runtime/dynamo.py` (Dynamo
+KVBM + NIXL), `runtime/autoscaler.py`. No tiered KV offload or KV-budget-aware scheduling.
+
+**References (GitHub + arXiv):**
+1. [LMCache/LMCache](https://github.com/LMCache/LMCache) + [arXiv:2510.09665](https://arxiv.org/abs/2510.09665) — KV out of GPU, **shared across engines/queries**, PD-disagg transfer.
+2. [kvcache-ai/Mooncake](https://github.com/kvcache-ai/Mooncake) + [arXiv:2407.00079](https://arxiv.org/abs/2407.00079) — distributed CPU+SSD global KV cache; **FAST'25 Best Paper**.
+3. [vllm-project/production-stack](https://github.com/vllm-project/production-stack) — **KV-cache-aware router** + Prometheus/Grafana.
+4. KVcached (Yu et al., 2025) — KV across heterogeneous memory tiers.
+5. Tutti [arXiv:2605.03375](https://arxiv.org/html/2605.03375) — **SSD-backed** KV for long context.
+6. TraCT [arXiv:2512.18194](https://arxiv.org/html/2512.18194v1) — **CXL shared-memory** KV at rack scale.
+7. CacheFlow [arXiv:2604.25080](https://arxiv.org/html/2604.25080v1) — 3D-parallel KV restoration.
+8. Online scheduling with KV constraints [arXiv:2502.07115](https://arxiv.org/html/2502.07115v5).
+9. Locality-aware fair scheduling (DLPM) [arXiv:2501.14312](https://arxiv.org/html/2501.14312v1).
+10. NVIDIA Dynamo KVBM + NIXL (already integrated by aictl).
+
+**Improvement points:**
+- **Tiered KV-offload advisor** (LMCache/Mooncake): aictl has KVBM but no advice on CPU/SSD/CXL KV
+  tiers for cross-query prefix reuse + PD cache transfer — add to `deploy optimize`/`disagg`.
+- **KV-cache-aware router** (production-stack parity): extend `prefix_route` soft-score with a
+  **KV-budget** term and **DLPM locality** so dispatch preserves prefix reuse without starving tenants.
+- **SSD / long-context KV** recommendations (Tutti) keyed by context length.
+- Offer **LMCache** as a recommended layer in `modelservice`/`disagg` exports.
+
+## Category 8 — Speculative & accelerated decoding
+
+**Current aictl:** `cmd/spec.py` only pairs draft+target models (classic), capped at 3× speedup.
+
+**References (GitHub + arXiv):**
+1. [SafeAILab/EAGLE](https://github.com/SafeAILab/EAGLE) + EAGLE-3 [arXiv:2503.01840](https://arxiv.org/html/2503.01840v1) — **4.79×**, de-facto standard, vLLM+SGLang.
+2. [FasterDecoding/Medusa](https://github.com/FasterDecoding/Medusa) — multi-head parallel draft.
+3. [sgl-project/SpecForge](https://github.com/sgl-project/SpecForge) + [arXiv:2603.18567](https://arxiv.org/pdf/2603.18567) — drafter **training** framework.
+4. DeepSeek-V3 **multi-token prediction (MTP)** — pretraining-time spec heads.
+5. vLLM `--speculative-config` (method=eagle3/medusa/mtp).
+6. SGLang EAGLE integration.
+7. Lookahead decoding (n-gram, draft-free).
+8. SSSD: Simply-Scalable Speculative Decoding [arXiv:2411.05894](https://arxiv.org/html/2411.05894).
+9. Semi-clairvoyant scheduling of spec requests [arXiv:2505.17074](https://arxiv.org/pdf/2505.17074).
+10. Variational Speculative Decoding [arXiv:2602.05774](https://arxiv.org/html/2602.05774v1).
+
+**Improvement points:**
+- Add an **EAGLE-3 / Medusa / MTP / lookahead method dimension** to the advisor with an engine
+  support matrix and correct flags; recommend EAGLE-3 when a trained head exists. *(IMPROVEMENTS.md L)*
+- **Raise the speedup ceiling** (4.79× evidence vs the current hard 3.0 cap in `spec.py:41`).
+- **Spec-request scheduling** awareness (semi-clairvoyant) for the governor under mixed load.
+- Point users to **SpecForge** when no drafter exists for their model family.
+
+## Category 9 — K8s orchestration, autoscaling & P/D disaggregation
+
+**Current aictl:** `stack/*` exports 7 formats (KServe, Gateway API, KEDA, HPA, Dynamo, P/D
+Disagg, ModelService) + `runtime/mig,fabric`. Strong, but missing newer operators.
+
+**References (GitHub + arXiv):**
+1. [kserve/kserve](https://github.com/kserve/kserve) — **LLMInferenceService** (v0.16/0.17).
+2. [llm-d/llm-d](https://github.com/llm-d/llm-d) — CNCF-sandbox disaggregated + prefix-cache data plane.
+3. [kubeai-project/kubeai](https://github.com/kubeai-project/kubeai) — **scale-from-zero**, no Istio, lightweight operator.
+4. [vllm-project/aibrix](https://github.com/vllm-project/aibrix) — ByteDance; **StormService** P/D disagg + **high-density LoRA**.
+5. [ai-dynamo/dynamo](https://github.com/ai-dynamo/dynamo) — datacenter-scale, LeaderWorkerSet, disagg.
+6. vLLM production-stack — KV-aware router + observability bundle.
+7. K8s Gateway API **InferencePool** (already exported by aictl).
+8. KEDA / HPA autoscaling baselines.
+9. Ray Serve GPU scheduling ([2026 guide](https://blog.premai.io/deploying-llms-on-kubernetes-vllm-ray-serve-gpu-scheduling-guide-2026/)).
+10. Disaggregation pragmatics [arXiv:2506.05508](https://arxiv.org/html/2506.05508v1) + AFD [arXiv:2605.28302](https://arxiv.org/html/2605.28302v1).
+
+**Improvement points:**
+- **Add AIBrix StormService + KubeAI exports** to `stack/` (8th/9th formats) to widen platform reach.
+- **Scale-from-zero advisor** (KubeAI pattern) layered on the KEDA/HPA exports.
+- **High-density LoRA serving export** (AIBrix) surfacing `runtime/lora` to K8s.
+- Validate all exports against **KServe v0.17 LLMInferenceService** latest schema in CI.
+
+## Category 10 — Observability, cost/TCO, metering & FinOps
+
+**Current aictl:** `metrics/{otel,slo,prometheus,genai_spans}` (OTel GenAI SemConv), `cmd/tco`,
+`core/{metering,cost}`. Emits spans but not validated against the popular OTLP consumers, and
+several value-prop metrics aren't emitted.
+
+**References (GitHub + arXiv):**
+1. [traceloop/openllmetry](https://github.com/traceloop/openllmetry) — OTel-based, **40+ auto-instrumentations**.
+2. [langfuse/langfuse](https://github.com/langfuse/langfuse) — OTel-native observability/evals/prompt-mgmt (now ClickHouse).
+3. [helicone/helicone](https://github.com/helicone/helicone) — one-line LLM observability.
+4. Arize Phoenix — self-hosted tracing/eval.
+5. OpenLIT — OTel GenAI, Go/Java coverage.
+6. OpenCost / Kubecost — **GPU cost allocation**.
+7. OTel **GenAI SemConv** (already followed by aictl).
+8. FREESH energy/carbon scheduling [arXiv:2511.00807](https://arxiv.org/pdf/2511.00807).
+9. vLLM Prometheus/Grafana dashboards (`vllm:` metrics).
+10. [Self-hosted LLM observability guide 2026](https://www.spheron.network/blog/llm-observability-gpu-cloud-langfuse-arize-phoenix-helicone/).
+
+**Improvement points:**
+- **Validate OTLP export against Langfuse / OpenLLMetry / Phoenix** so aictl users get standard
+  dashboards for free — a big adoption lever for an already-OTel-native tool.
+- **Emit the ROI metrics** `aios.cache.tokens_saved`, `aios.route.cost_saved`,
+  `aios.guard.redactions` so FinOps dashboards *prove* the savings competitors only assert. *(IMPROVEMENTS.md J)*
+- **GPU cost allocation per tenant** (OpenCost parity) via existing `core/metering`.
+- **Carbon/energy in TCO** (FREESH): report kWh + CO₂e and GPU power-cap advice alongside dollars.
+- **Prompt-management / eval surface** (Langfuse parity) tying `cmd/eval` + `cmd/prompt` to traces.
+
+---
+
+## Synthesis — cross-category themes
+
+Three patterns recur across all 10 categories and point at the highest-leverage work:
+
+1. **The embedding path is load-bearing and currently fake offline.** It silently degrades RAG
+   (Cat 3), the semantic cache (Cat 4), and any future learned router (Cat 2). Fixing it —
+   stdlib hybrid retrieval now, real engine-embeddings + a *flagged* fallback — unblocks three
+   categories at once. **#1 priority.**
+2. **aictl is an advisor; the frontier moved, so the advice is stale.** Engines (Cat 1: LMDeploy/
+   TRT-LLM/MLX), spec-decode (Cat 8: EAGLE-3), quant (Cat 6: FP4, AutoAWQ deprecated), and K8s
+   (Cat 9: AIBrix/KubeAI) all advanced. Refreshing tables + adding adapters is low-risk,
+   high-coverage, and fits the zero-dep model perfectly.
+3. **The value props aren't measured.** Cache savings, route savings, fairness, carbon, guard
+   redactions (Cats 4/5/7/10) are claimed but not emitted as metrics or verified against attack
+   sets. Making them observable (OTLP + the `aios.*` counters) turns assertions into evidence.
+
+All improvement points are **zero-external-dep feasible** and land via aictl's standard flow
+(`cmd/*`/`runtime/*` + tests + `aictl gate`). This matrix backs the prioritized narrative in
+`docs/IMPROVEMENTS.md`; the single strongest next implementation remains **hybrid RAG retrieval
++ flagging the hash-embedding fallback** (Cat 3 / IMPROVEMENTS.md A).
