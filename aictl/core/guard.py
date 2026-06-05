@@ -67,6 +67,28 @@ def normalize_for_scan(text: str) -> str:
     return unicodedata.normalize("NFKC", cleaned)
 
 
+def _normalize_with_map(text: str) -> tuple[str, list[int]]:
+    """Normalize for scanning while tracking each char's original index.
+
+    Returns ``(normalized_text, orig_index)`` where ``orig_index[i]`` is the
+    position in the ORIGINAL ``text`` that produced normalized character ``i``.
+    Invisible/zero-width chars are dropped, homoglyphs folded, and each char
+    NFKC-normalized individually so the index map stays exact. This lets PII
+    detection run on a canonicalized copy (catching obfuscated tokens) while
+    still redacting the correct span — including embedded invisible chars — in
+    the original text (arXiv:2504.11168).
+    """
+    out: list[str] = []
+    orig_idx: list[int] = []
+    for i, ch in enumerate(text):
+        if _INVISIBLE.match(ch):
+            continue
+        for nch in unicodedata.normalize("NFKC", _HOMOGLYPHS.get(ch, ch)):
+            out.append(nch)
+            orig_idx.append(i)
+    return "".join(out), orig_idx
+
+
 # ── PII patterns ───────────────────────────────────────────
 
 @dataclass
@@ -156,13 +178,24 @@ def _luhn_valid(number: str) -> bool:
 
 
 def detect_pii(text: str) -> list[PIIMatch]:
-    """Find all PII-looking substrings. Returns a list of matches."""
+    """Find all PII-looking substrings. Returns a list of matches.
+
+    Scanning runs on a normalized copy (zero-width stripped, homoglyphs folded,
+    NFKC) so PII disguised with invisible chars or look-alike glyphs is caught;
+    match spans are mapped back to the original text so redaction stays exact.
+    """
+    norm, orig_idx = _normalize_with_map(text)
     matches: list[PIIMatch] = []
     seen_spans: set[tuple[int, int]] = set()
 
     for kind, pattern in _PII_PATTERNS:
-        for m in pattern.finditer(text):
-            span = (m.start(), m.end())
+        for m in pattern.finditer(norm):
+            if m.end() == m.start():
+                continue
+            # Map the normalized span back to original-text indices.
+            o_start = orig_idx[m.start()]
+            o_end = orig_idx[m.end() - 1] + 1
+            span = (o_start, o_end)
             if span in seen_spans:
                 continue
             value = m.group()
@@ -180,13 +213,13 @@ def detect_pii(text: str) -> list[PIIMatch]:
                 if _is_non_pii_ip(octets):
                     continue
                 # Skip version-number-like strings (e.g., "v1.2.3.4")
-                before = text[max(0, m.start() - 2):m.start()].lower()
+                before = norm[max(0, m.start() - 2):m.start()].lower()
                 if before.endswith("v") or before.endswith("n "):
                     continue
 
             seen_spans.add(span)
             matches.append(PIIMatch(kind=kind, value=value,
-                                    start=m.start(), end=m.end()))
+                                    start=o_start, end=o_end))
 
     return sorted(matches, key=lambda x: x.start)
 

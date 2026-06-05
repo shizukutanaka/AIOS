@@ -105,6 +105,44 @@ class TestRedact(unittest.TestCase):
         self.assertEqual(found, [])
 
 
+class TestPIIObfuscationEvasion(unittest.TestCase):
+    """PII detection must resist zero-width / full-width / homoglyph evasion."""
+
+    def test_zero_width_inside_email_detected(self):
+        from aictl.core.guard import detect_pii
+        # Zero-width space splitting the local part would defeat a raw regex.
+        matches = detect_pii("reach alice​@example.com now")
+        self.assertTrue(any(m.kind == "email" for m in matches))
+
+    def test_zero_width_email_fully_redacted(self):
+        from aictl.core.guard import redact
+        text, found = redact("mail: al​ice@example.com end")
+        self.assertTrue(found)
+        # The original span — including the embedded zero-width char — is gone.
+        self.assertNotIn("​", text)
+        self.assertNotIn("ice@example.com", text)
+        self.assertIn("[REDACTED]", text)
+
+    def test_fullwidth_at_sign_email_detected(self):
+        from aictl.core.guard import detect_pii
+        # Full-width '＠' (U+FF20) NFKC-folds to '@'.
+        matches = detect_pii("bob＠example.com")
+        self.assertTrue(any(m.kind == "email" for m in matches))
+
+    def test_homoglyph_digits_unaffected_plain_card_still_works(self):
+        from aictl.core.guard import detect_pii
+        # Sanity: normalization keeps a normal Luhn-valid card detectable.
+        matches = detect_pii("card 4111 1111 1111 1111")
+        self.assertTrue(any(m.kind == "credit_card" for m in matches))
+
+    def test_ascii_spans_unchanged(self):
+        from aictl.core.guard import detect_pii
+        # Identity mapping for pure ASCII: span must equal the raw substring.
+        text = "x alice@example.com"
+        m = [x for x in detect_pii(text) if x.kind == "email"][0]
+        self.assertEqual(text[m.start:m.end], "alice@example.com")
+
+
 class TestScanComposite(unittest.TestCase):
     def test_scan_passes_clean(self):
         from aictl.core.guard import scan
