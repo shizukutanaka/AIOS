@@ -286,5 +286,89 @@ class TestRagCli(unittest.TestCase):
         self.assertNotEqual(rc, 0)
 
 
+class TestHybridRetrieval(unittest.TestCase):
+    """Dense+lexical (BM25/RRF) hybrid retrieval and degraded-mode signalling."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "rag.db"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _index(self, texts):
+        from aictl.core.rag import RagStore, Chunk, _doc_id_for, _fallback_embedding
+        store = RagStore(self.db_path)
+        source = "/fake/doc.md"
+        doc_id = _doc_id_for(source)
+        chunks = [
+            Chunk(doc_id=doc_id, chunk_idx=i, source=source,
+                  text=t, embedding=_fallback_embedding(t))
+            for i, t in enumerate(texts)
+        ]
+        store.upsert_doc(source, mtime=1.0, size=100, chunks=chunks)
+        return store
+
+    def test_bm25_ranks_lexical_match_first(self):
+        from aictl.core.rag import Chunk, bm25_rank
+        chunks = [
+            Chunk("d", 0, "s", "the quick brown fox jumps"),
+            Chunk("d", 1, "s", "kubernetes autoscaling with KEDA and HPA"),
+            Chunk("d", 2, "s", "a lazy dog sleeps all day"),
+        ]
+        ranked = bm25_rank("kubernetes autoscaling", chunks)
+        self.assertTrue(ranked, "BM25 should return a match")
+        # The chunk that shares both query terms must rank first.
+        self.assertEqual(ranked[0][1].chunk_idx, 1)
+
+    def test_bm25_no_shared_terms_returns_empty(self):
+        from aictl.core.rag import Chunk, bm25_rank
+        chunks = [Chunk("d", 0, "s", "alpha beta gamma")]
+        self.assertEqual(bm25_rank("zzz qqq", chunks), [])
+
+    def test_rrf_rewards_agreement(self):
+        from aictl.core.rag import Chunk, reciprocal_rank_fusion
+        a = Chunk("d", 0, "s", "a")
+        b = Chunk("d", 1, "s", "b")
+        # 'a' is rank0 in one list, rank0 in the other → highest fused score.
+        r1 = [((a.doc_id, 0), a), ((b.doc_id, 1), b)]
+        r2 = [((a.doc_id, 0), a), ((b.doc_id, 1), b)]
+        fused = reciprocal_rank_fusion([r1, r2])
+        self.assertEqual(fused[0][0].chunk_idx, 0)
+        self.assertGreater(fused[0][1], fused[1][1])
+
+    def test_hybrid_search_finds_lexical_match_with_fallback_embeddings(self):
+        # The core fix: with non-semantic fallback embeddings, lexical BM25 must
+        # still surface the relevant chunk — dense-only cosine on hash vectors
+        # would rank near-randomly.
+        from aictl.core.rag import search
+        store = self._index([
+            "general notes about cooking pasta and sauce",
+            "the refund policy allows returns within thirty days",
+            "weather patterns over the pacific ocean",
+        ])
+        matches = search("refund policy returns", store, k=3)
+        self.assertTrue(matches)
+        self.assertIn("refund policy", matches[0][0].text)
+
+    def test_empty_query_returns_nothing(self):
+        from aictl.core.rag import search
+        store = self._index(["something"])
+        self.assertEqual(search("   ", store), [])
+
+    def test_stats_flags_fallback_embeddings(self):
+        # 64-dim fallback vectors → degraded; wider vectors → semantic.
+        store = self._index(["hello world"])
+        self.assertFalse(store.stats()["semantic_embeddings"])
+
+        from aictl.core.rag import RagStore, Chunk, _doc_id_for
+        store2 = RagStore(Path(self.tmp.name) / "rag2.db")
+        src = "/fake/real.md"
+        store2.upsert_doc(src, 1.0, 10, [
+            Chunk(_doc_id_for(src), 0, src, "real", embedding=[0.01] * 384),
+        ])
+        self.assertTrue(store2.stats()["semantic_embeddings"])
+
+
 if __name__ == "__main__":
     unittest.main()

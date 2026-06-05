@@ -212,9 +212,16 @@ def run_status(args: argparse.Namespace) -> int:
     print(f"    Documents:    {stats['documents']}")
     print(f"    Chunks:       {stats['chunks']}")
     print(f"    Embedded:     {stats['embedded']}")
+    retrieval = "semantic + lexical (hybrid)" if stats.get("semantic_embeddings") \
+        else "lexical BM25 only (no embedding model — degraded)"
+    print(f"    Retrieval:    {retrieval}")
     print(f"    Database:     {stats['db_path']}")
     print(f"    Size:         {stats['db_size_mb']:.2f} MB")
     print()
+    if stats['embedded'] and not stats.get("semantic_embeddings"):
+        warn("Embeddings are the non-semantic hash fallback; "
+             "re-index with an embedding model reachable for full quality.")
+        print()
     return 0
 
 

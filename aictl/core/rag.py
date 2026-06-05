@@ -36,6 +36,19 @@ DEFAULT_OVERLAP = 200
 # Top-K retrieval default
 DEFAULT_K = 5
 
+# Hybrid retrieval (dense cosine + lexical BM25, fused with Reciprocal Rank
+# Fusion). Dense+sparse hybrid is the field-standard quality lever (Haystack,
+# txtai) and—crucially—keeps retrieval useful even when only the non-semantic
+# fallback embedding is available, since BM25 needs no embedding model.
+BM25_K1 = 1.5          # term-frequency saturation
+BM25_B = 0.75          # length normalization
+RRF_K = 60             # Reciprocal Rank Fusion constant (standard default)
+
+# Dimension of the deterministic hash fallback embedding. Real embedding
+# models never emit this width, so a stored vector of this length is a
+# reliable signal that retrieval is running in degraded (non-semantic) mode.
+FALLBACK_DIM = 64
+
 # File extensions we know how to read
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".markdown", ".rst", ".org",
@@ -178,10 +191,22 @@ class RagStore:
             embedded = c.execute(
                 "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
             ).fetchone()[0]
+            sample = c.execute(
+                "SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1"
+            ).fetchone()
+        # A stored vector of FALLBACK_DIM width means the hash fallback was used
+        # at index time (no real embedding model reachable) → degraded retrieval.
+        semantic = False
+        if sample and sample[0]:
+            try:
+                semantic = len(json.loads(sample[0])) != FALLBACK_DIM
+            except Exception:
+                semantic = False
         return {
             "documents": doc_count,
             "chunks": chunk_count,
             "embedded": embedded,
+            "semantic_embeddings": semantic,
             "db_path": str(self.db_path),
             "db_size_mb": self.db_path.stat().st_size / (1024 * 1024)
                           if self.db_path.exists() else 0,
@@ -318,7 +343,7 @@ def embed_text(texts: list[str]) -> list[list[float]]:
         return [_fallback_embedding(t) for t in texts]
 
 
-def _fallback_embedding(text: str, dim: int = 64) -> list[float]:
+def _fallback_embedding(text: str, dim: int = FALLBACK_DIM) -> list[float]:
     """Deterministic hash embedding for offline tests.
 
     Uses the byte distribution of the text. Same input → same vector,
@@ -423,25 +448,117 @@ def index_directory(
     }
 
 
+# ─── Lexical retrieval (BM25) ──────────────────────────────
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    """Lowercase word/number tokens for BM25. Pure-stdlib, language-agnostic."""
+    return _TOKEN_RE.findall(text.lower())
+
+
+def _chunk_key(chunk: Chunk) -> tuple[str, int]:
+    """Stable identity for fusing rankings (Chunk isn't hashable)."""
+    return (chunk.doc_id, chunk.chunk_idx)
+
+
+def bm25_rank(query: str, chunks: list[Chunk]) -> list[tuple[tuple[str, int], Chunk]]:
+    """Rank chunks by Okapi BM25 against the query (best first).
+
+    Returns only chunks with a positive score, so a query that shares no terms
+    with the corpus contributes nothing to fusion (graceful dense-only fallback).
+    """
+    import math
+
+    q_terms = set(_tokenize(query))
+    if not q_terms or not chunks:
+        return []
+
+    docs_tokens = [_tokenize(c.text) for c in chunks]
+    n = len(chunks)
+    avgdl = sum(len(d) for d in docs_tokens) / n if n else 0.0
+
+    df: dict[str, int] = {}
+    for toks in docs_tokens:
+        for t in set(toks):
+            df[t] = df.get(t, 0) + 1
+
+    scored: list[tuple[float, tuple[str, int], Chunk]] = []
+    for chunk, toks in zip(chunks, docs_tokens):
+        if not toks:
+            continue
+        tf: dict[str, int] = {}
+        for t in toks:
+            tf[t] = tf.get(t, 0) + 1
+        dl = len(toks)
+        score = 0.0
+        for t in q_terms:
+            f = tf.get(t, 0)
+            if f == 0:
+                continue
+            idf = math.log(1 + (n - df[t] + 0.5) / (df[t] + 0.5))
+            denom = f + BM25_K1 * (1 - BM25_B + BM25_B * dl / avgdl) if avgdl else 1.0
+            score += idf * (f * (BM25_K1 + 1)) / denom
+        if score > 0:
+            scored.append((score, _chunk_key(chunk), chunk))
+
+    scored.sort(key=lambda x: -x[0])
+    return [(key, chunk) for _, key, chunk in scored]
+
+
+def reciprocal_rank_fusion(
+    rankings: list[list[tuple[tuple[str, int], Chunk]]],
+    rrf_k: int = RRF_K,
+) -> list[tuple[Chunk, float]]:
+    """Fuse several best-first rankings via Reciprocal Rank Fusion.
+
+    RRF combines rankings without needing to normalize their (incomparable)
+    score scales — the standard way to merge dense and lexical results.
+    """
+    scores: dict[tuple[str, int], float] = {}
+    items: dict[tuple[str, int], Chunk] = {}
+    for ranking in rankings:
+        for rank, (key, chunk) in enumerate(ranking):
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+            items[key] = chunk
+    fused = [(items[key], score) for key, score in scores.items()]
+    fused.sort(key=lambda x: -x[1])
+    return fused
+
+
+# ─── Hybrid retrieval ──────────────────────────────────────
+
 def search(
     query: str,
     store: RagStore,
     k: int = DEFAULT_K,
 ) -> list[tuple[Chunk, float]]:
-    """Return top-K chunks for the query, sorted by similarity desc."""
+    """Return top-K chunks for the query via hybrid dense+lexical retrieval.
+
+    Dense cosine and BM25 rankings are fused with Reciprocal Rank Fusion. If the
+    query has no lexical tokens, this degrades cleanly to dense-only ranking; if
+    embeddings are the non-semantic fallback, BM25 still carries the retrieval.
+    """
     if not query.strip():
         return []
+
+    chunks = [c for c in store.all_chunks_with_embeddings() if c.embedding is not None]
+    if not chunks:
+        return []
+
+    # Dense ranking (cosine over embeddings).
     [query_vec] = embed_text([query])
+    dense_scored = sorted(
+        ((_chunk_key(c), c, cosine(query_vec, c.embedding)) for c in chunks),
+        key=lambda t: -t[2],
+    )
+    dense_ranking = [(key, c) for key, c, _ in dense_scored]
 
-    results: list[tuple[Chunk, float]] = []
-    for chunk in store.all_chunks_with_embeddings():
-        if chunk.embedding is None:
-            continue
-        score = cosine(query_vec, chunk.embedding)
-        results.append((chunk, score))
+    # Lexical ranking (BM25 over chunk text).
+    lexical_ranking = bm25_rank(query, chunks)
 
-    results.sort(key=lambda x: -x[1])
-    return results[:k]
+    return reciprocal_rank_fusion([dense_ranking, lexical_ranking])[:k]
 
 
 def answer(
