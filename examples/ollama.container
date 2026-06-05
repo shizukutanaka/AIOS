@@ -1,0 +1,30 @@
+# Ollama via Podman Quadlet (NVIDIA GPU)
+# Place in ~/.config/containers/systemd/ (rootless) or /etc/containers/systemd/ (root)
+# Prerequisite: nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+
+[Unit]
+Description=Ollama Local LLM Server
+After=network-online.target
+
+[Container]
+ContainerName=ollama
+Image=docker.io/ollama/ollama:latest
+AutoUpdate=registry
+Volume=/var/lib/aios/models:/root/.ollama
+PublishPort=11434:11434
+AddDevice=nvidia.com/gpu=all
+Environment=OLLAMA_KEEP_ALIVE=5m
+Environment=OLLAMA_FLASH_ATTENTION=1
+Environment=OLLAMA_KV_CACHE_TYPE=q8_0
+HealthCmd=curl -sf http://localhost:11434/api/tags || exit 1
+HealthInterval=30s
+HealthRetries=3
+Label=aios.service=ollama
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

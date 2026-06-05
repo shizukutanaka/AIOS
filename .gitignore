@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# State
+*.sqlite
+*.sqlite-journal
+.aios/
+*.jsonl
+
+# Go
+bin/
+go-port/aictl-go
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# OS
+tmp_*
+*.log
+
+# Test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+
+# CI workflow: this repository is maintained by a GitHub App that lacks the
+# `workflows` permission and therefore cannot push .github/workflows/*. The
+# file is kept on disk for local validation (tests skipUnless it is present);
+# add it to the remote via the GitHub web UI or with workflows permission.
+.github/workflows/ci.yml

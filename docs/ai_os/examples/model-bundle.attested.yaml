@@ -1,0 +1,48 @@
+apiVersion: aios/v1alpha1
+kind: ModelBundle
+metadata:
+  name: qwen3-72b-regulated
+spec:
+  ociRef: registry.example.internal/models/qwen3-72b-regulated:2026.04.0
+  artifacts:
+    - kind: weights
+      format: safetensors
+      digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+    - kind: tokenizer
+      format: json
+      digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+    - kind: adapter
+      format: safetensors
+      digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+    - kind: sbom
+      format: spdx-json
+      digest: sha256:4444444444444444444444444444444444444444444444444444444444444444
+  integrity:
+    signatureRequired: true
+    sbomRequired: true
+    signatureVerifier: cosign
+    trustedSigners:
+      - https://github.com/example-ai/release
+  confidentiality:
+    encryptionRequired: true
+    keyRelease:
+      mode: attested
+      provider: trustee
+      acceptedTees:
+        - amd-sev-snp
+        - intel-tdx
+      expectedMeasurements:
+        - sha256:guest-kernel-measurement
+        - sha256:guest-rootfs-measurement
+  execution:
+    allowedProfiles:
+      - server-gpu-nvidia
+      - server-gpu-amd
+    egressPolicy: deny-by-default
+    contextExportAllowed: false
+  streamingHints:
+    gpudirectStoragePreferred: true
+    stagedWarmup:
+      - tokenizer
+      - adapter
+      - weights

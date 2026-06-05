@@ -1,0 +1,32 @@
+[Unit]
+Description=AI OS Daemon (aiosd)
+Documentation=https://github.com/shizukutanaka/aios
+After=network-online.target podman.socket
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aictl serve
+Restart=always
+RestartSec=5
+Environment=AIOS_STATE_DIR=/var/lib/aios
+Environment=PYTHONUNBUFFERED=1
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/aios
+PrivateTmp=yes
+
+# OOM protection for inference coordination
+OOMScoreAdjust=-500
+MemoryMax=2G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aiosd
+
+[Install]
+WantedBy=multi-user.target

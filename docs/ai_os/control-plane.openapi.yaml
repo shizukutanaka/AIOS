@@ -1,0 +1,733 @@
+openapi: 3.1.0
+info:
+  title: AI Native Linux OS Control Plane API
+  version: 0.1.0
+  summary: Control plane for enterprise AI-native Linux OS
+  description: >
+    This API defines the control surface for workload admission, model attestation,
+    memory fabric placement, context continuity, and GPU slice management.
+servers:
+  - url: https://aios-control.example.internal
+tags:
+  - name: Profiles
+  - name: Workloads
+  - name: ModelBundles
+  - name: Slices
+  - name: Attestation
+  - name: Contexts
+  - name: Fabric
+  - name: Upgrades
+  - name: LocalOps
+  - name: Stacks
+  - name: Nodes
+  - name: Recipes
+paths:
+  /v1/local/bootstrap:
+    post:
+      tags: [LocalOps]
+      summary: Bootstrap a single-node local AI OS installation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalBootstrapRequest"
+      responses:
+        "201":
+          description: Local node initialized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalBootstrapStatus"
+  /v1/profiles:
+    get:
+      tags: [Profiles]
+      summary: List hardware and runtime profiles
+      responses:
+        "200":
+          description: Available profiles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Profile"
+  /v1/model-bundles:
+    get:
+      tags: [ModelBundles]
+      summary: List registered model bundles
+      responses:
+        "200":
+          description: Model bundle list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModelBundle"
+    post:
+      tags: [ModelBundles]
+      summary: Register a signed model bundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelBundle"
+      responses:
+        "201":
+          description: Registered
+  /v1/attestations/verify:
+    post:
+      tags: [Attestation]
+      summary: Verify attestation evidence and return execution decision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AttestationRequest"
+      responses:
+        "200":
+          description: Attestation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationDecision"
+  /v1/fabric/placements/plan:
+    post:
+      tags: [Fabric]
+      summary: Calculate placement plan for weights, KV cache, adapters, and snapshots
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FabricPlacementRequest"
+      responses:
+        "200":
+          description: Placement plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FabricPlacementPlan"
+  /v1/slices/reservations:
+    post:
+      tags: [Slices]
+      summary: Request a GPU slice reservation with SLO targets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SliceReservationRequest"
+      responses:
+        "201":
+          description: Slice reserved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SliceReservation"
+  /v1/workloads:
+    post:
+      tags: [Workloads]
+      summary: Create an inference workload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Workload"
+      responses:
+        "201":
+          description: Workload accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkloadStatus"
+    get:
+      tags: [Workloads]
+      summary: List workloads
+      responses:
+        "200":
+          description: Workload list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WorkloadStatus"
+  /v1/stacks:
+    get:
+      tags: [Stacks]
+      summary: List declarative AI stacks
+      responses:
+        "200":
+          description: Stack list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Stack"
+    post:
+      tags: [Stacks]
+      summary: Apply a stack manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Stack"
+      responses:
+        "201":
+          description: Stack accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StackStatus"
+  /v1/recipes:
+    get:
+      tags: [Recipes]
+      summary: List built-in recipes for local deployment
+      responses:
+        "200":
+          description: Recipe list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Recipe"
+  /v1/nodes/pairings:
+    post:
+      tags: [Nodes]
+      summary: Create a short-lived pairing token for a new node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingRequest"
+      responses:
+        "201":
+          description: Pairing token created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingToken"
+  /v1/nodes/join:
+    post:
+      tags: [Nodes]
+      summary: Join a new node to the lightweight orchestration mesh
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeJoinRequest"
+      responses:
+        "201":
+          description: Node joined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeJoinStatus"
+  /v1/contexts/snapshots:
+    post:
+      tags: [Contexts]
+      summary: Create a continuity snapshot for a running session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextSnapshotRequest"
+      responses:
+        "201":
+          description: Snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextSnapshot"
+  /v1/upgrades/plans:
+    post:
+      tags: [Upgrades]
+      summary: Create a zero-downtime upgrade plan with drain and resume steps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpgradePlanRequest"
+      responses:
+        "201":
+          description: Upgrade plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpgradePlan"
+components:
+  schemas:
+    Profile:
+      type: object
+      required: [name, acceleratorClass, runtime]
+      properties:
+        name:
+          type: string
+          example: server-gpu-nvidia
+        acceleratorClass:
+          type: string
+          enum: [nvidia-gpu, amd-gpu, intel-npu, amd-npu]
+        runtime:
+          type: string
+          example: podman
+        supportsMig:
+          type: boolean
+        supportsCxl:
+          type: boolean
+        supportsAttestation:
+          type: boolean
+    LocalBootstrapRequest:
+      type: object
+      properties:
+        nodeName:
+          type: string
+        profilePreference:
+          type: string
+          enum: [auto, server-gpu, edge-npu, cpu-only]
+        localConsoleEnabled:
+          type: boolean
+          default: true
+        recipes:
+          type: array
+          items:
+            type: string
+    LocalBootstrapStatus:
+      type: object
+      properties:
+        nodeName:
+          type: string
+        detectedProfile:
+          type: string
+        localConsoleUrl:
+          type: string
+        nextSteps:
+          type: array
+          items:
+            type: string
+    ModelBundle:
+      type: object
+      required: [name, version, ociRef, integrity, executionPolicy]
+      properties:
+        name:
+          type: string
+          example: qwen3-72b-enterprise
+        version:
+          type: string
+          example: 2026.04.0
+        ociRef:
+          type: string
+          example: registry.example.com/models/qwen3-72b-enterprise:2026.04.0
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelArtifact"
+        integrity:
+          $ref: "#/components/schemas/IntegrityPolicy"
+        executionPolicy:
+          $ref: "#/components/schemas/ExecutionPolicy"
+    ModelArtifact:
+      type: object
+      required: [kind, digest]
+      properties:
+        kind:
+          type: string
+          enum: [weights, tokenizer, adapter, config, sbom]
+        digest:
+          type: string
+          example: sha256:1234abcd
+        sizeBytes:
+          type: integer
+          format: int64
+    IntegrityPolicy:
+      type: object
+      properties:
+        signatureRequired:
+          type: boolean
+          default: true
+        sbomRequired:
+          type: boolean
+          default: true
+        encryptionRequired:
+          type: boolean
+          default: false
+        signerIdentities:
+          type: array
+          items:
+            type: string
+    ExecutionPolicy:
+      type: object
+      properties:
+        attestationRequired:
+          type: boolean
+          default: false
+        acceptedTees:
+          type: array
+          items:
+            type: string
+            enum: [amd-sev-snp, intel-tdx, none]
+        networkEgress:
+          type: string
+          enum: [deny-by-default, allow]
+          default: deny-by-default
+    AttestationRequest:
+      type: object
+      required: [teeType, evidence, modelBundle]
+      properties:
+        teeType:
+          type: string
+          enum: [amd-sev-snp, intel-tdx, none]
+        evidence:
+          type: string
+        modelBundle:
+          type: string
+        expectedMeasurements:
+          type: array
+          items:
+            type: string
+    AttestationDecision:
+      type: object
+      required: [allowed]
+      properties:
+        allowed:
+          type: boolean
+        reason:
+          type: string
+        releasedSecrets:
+          type: array
+          items:
+            type: string
+    FabricPlacementRequest:
+      type: object
+      required: [workloadName, objects, capacity]
+      properties:
+        workloadName:
+          type: string
+        objects:
+          type: array
+          items:
+            $ref: "#/components/schemas/FabricObject"
+        capacity:
+          $ref: "#/components/schemas/FabricCapacity"
+        signals:
+          $ref: "#/components/schemas/FabricSignals"
+    FabricObject:
+      type: object
+      required: [name, class, sizeGiB, temperature]
+      properties:
+        name:
+          type: string
+        class:
+          type: string
+          enum: [base-weights, adapter, kv-cache, rag-cache, snapshot]
+        sizeGiB:
+          type: number
+        temperature:
+          type: string
+          enum: [hot, warm, cold]
+        recomputeCost:
+          type: string
+          enum: [low, medium, high]
+        resumeCritical:
+          type: boolean
+    FabricCapacity:
+      type: object
+      properties:
+        hbmGiB:
+          type: number
+        dramGiB:
+          type: number
+        cxlGiB:
+          type: number
+        nvmeGiB:
+          type: number
+    FabricSignals:
+      type: object
+      properties:
+        psiMemoryPressure:
+          type: number
+        ioPressure:
+          type: number
+        queueDepth:
+          type: integer
+        activeSessions:
+          type: integer
+    FabricPlacementPlan:
+      type: object
+      properties:
+        placements:
+          type: array
+          items:
+            type: object
+            properties:
+              objectName:
+                type: string
+              targetTier:
+                type: string
+                enum: [hbm, dram, cxl, nvme]
+              rationale:
+                type: string
+        violations:
+          type: array
+          items:
+            type: string
+    SliceReservationRequest:
+      type: object
+      required: [tenant, qosClass, target]
+      properties:
+        tenant:
+          type: string
+        qosClass:
+          type: string
+          enum: [bronze, silver, gold, platinum]
+        target:
+          $ref: "#/components/schemas/SloTarget"
+        acceleratorPreference:
+          type: string
+          enum: [nvidia, amd, any]
+    SliceReservation:
+      type: object
+      properties:
+        reservationId:
+          type: string
+        granted:
+          type: boolean
+        vendor:
+          type: string
+        profile:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    SloTarget:
+      type: object
+      properties:
+        p95LatencyMs:
+          type: integer
+        minTokensPerSecond:
+          type: integer
+        maxQueueDelayMs:
+          type: integer
+    Workload:
+      type: object
+      required: [name, modelBundle, profile, qos]
+      properties:
+        name:
+          type: string
+        modelBundle:
+          type: string
+        profile:
+          type: string
+        qos:
+          $ref: "#/components/schemas/SloTarget"
+        continuity:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            snapshotOnDrain:
+              type: boolean
+            maxResumeAgeSeconds:
+              type: integer
+        fabricPolicyRef:
+          type: string
+        tenantClassRef:
+          type: string
+    WorkloadStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        phase:
+          type: string
+          enum: [pending, admitted, running, draining, failed]
+        sliceReservationId:
+          type: string
+        endpoint:
+          type: string
+        lastDecision:
+          type: string
+    Stack:
+      type: object
+      required: [name, services]
+      properties:
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [local-first, cluster-capable]
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/StackService"
+        placementStrategy:
+          type: string
+          enum: [local-prefer, latency-first, cost-first, isolation-first]
+        loopbackOnly:
+          type: boolean
+    StackService:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [inference, embedding, rag-index, api-gateway, ui]
+        modelBundleRef:
+          type: string
+        profile:
+          type: string
+        replicas:
+          type: integer
+        continuityEnabled:
+          type: boolean
+    StackStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        phase:
+          type: string
+          enum: [pending, applying, running, degraded, failed]
+        endpoints:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    Recipe:
+      type: object
+      properties:
+        name:
+          type: string
+        summary:
+          type: string
+        category:
+          type: string
+          enum: [chat, rag, vision, audio, coding]
+        recommendedProfile:
+          type: string
+    PairingRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [gpu-worker, cpu-worker, storage-cache, edge-gateway]
+        ttlMinutes:
+          type: integer
+    PairingToken:
+      type: object
+      properties:
+        token:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        managerAddress:
+          type: string
+    NodeJoinRequest:
+      type: object
+      required: [token, managerAddress, nodeName]
+      properties:
+        token:
+          type: string
+        managerAddress:
+          type: string
+        nodeName:
+          type: string
+        detectedProfile:
+          type: string
+        requestedRoles:
+          type: array
+          items:
+            type: string
+    NodeJoinStatus:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+        assignedRoles:
+          type: array
+          items:
+            type: string
+        managerCertificateFingerprint:
+          type: string
+    ContextSnapshotRequest:
+      type: object
+      required: [workloadName, sessionId]
+      properties:
+        workloadName:
+          type: string
+        sessionId:
+          type: string
+        reason:
+          type: string
+          enum: [drain, upgrade, failover, policy]
+        ttlSeconds:
+          type: integer
+    ContextSnapshot:
+      type: object
+      properties:
+        snapshotId:
+          type: string
+        storageTier:
+          type: string
+          enum: [dram, cxl, nvme]
+        encrypted:
+          type: boolean
+        resumableUntil:
+          type: string
+          format: date-time
+    UpgradePlanRequest:
+      type: object
+      required: [targetVersion, workloads]
+      properties:
+        targetVersion:
+          type: string
+        workloads:
+          type: array
+          items:
+            type: string
+        continuityRequired:
+          type: boolean
+    UpgradePlan:
+      type: object
+      properties:
+        planId:
+          type: string
+        steps:
+          type: array
+          items:
+            type: string
+        estimatedImpact:
+          type: string
+          enum: [none, low, medium, high]

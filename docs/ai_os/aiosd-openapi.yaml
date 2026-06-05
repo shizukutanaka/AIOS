@@ -1,0 +1,91 @@
+openapi: "3.0.3"
+info:
+  title: aiosd — AI Native Linux OS Daemon API
+  version: "1.5.0"
+  description: |
+    REST API for the AI Native Linux OS daemon (aiosd).
+    22 GET endpoints + 4 POST endpoints for inference orchestration.
+servers:
+  - url: http://127.0.0.1:7700
+paths:
+  /v1/health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: Daemon health status
+  /v1/node:
+    get:
+      summary: Node hardware info (GPUs, CPU, RAM)
+  /v1/runtime:
+    get:
+      summary: Runtime configuration
+  /v1/stacks:
+    get:
+      summary: Active stack deployments
+  /v1/services:
+    get:
+      summary: Running services
+  /v1/models:
+    get:
+      summary: Available models across engines
+  /v1/recipes:
+    get:
+      summary: Available deployment recipes
+  /v1/metrics/slo:
+    get:
+      summary: SLO metrics (TTFT, ITL, queue depth)
+  /v1/metrics/psi:
+    get:
+      summary: Pressure Stall Information (memory/CPU/IO)
+  /v1/upgrade/plan:
+    get:
+      summary: Upgrade plan for OS + engines
+  /v1/broker/engines:
+    get:
+      summary: Engine health and reachability
+  /v1/broker/governor:
+    get:
+      summary: SLO governor state and history
+  /v1/cluster:
+    get:
+      summary: Cluster status and K3s readiness
+  /metrics:
+    get:
+      summary: Prometheus metrics (text/plain)
+  /v1/events:
+    get:
+      summary: Recent system events
+  /v1/fabric:
+    get:
+      summary: Memory fabric tiers (DRAM/CXL/NVMe)
+  /v1/context:
+    get:
+      summary: Context continuity (KV cache) status
+  /v1/recommend:
+    get:
+      summary: Model recommendations for current hardware
+  /v1/apikeys:
+    get:
+      summary: API key list (names only, not secrets)
+  /v1/audit:
+    get:
+      summary: Recent audit log entries
+  /v1/dynamo:
+    get:
+      summary: NVIDIA Dynamo status (KVBM + NIXL)
+  /v1/metering:
+    get:
+      summary: Token metering — per-entity usage and totals
+  /v1/node/join:
+    post:
+      summary: Join a node to the cluster
+  /v1/broker/route:
+    post:
+      summary: Route an inference request
+  /v1/broker/failover:
+    post:
+      summary: Trigger engine failover
+  /v1/broker/drain:
+    post:
+      summary: Drain an engine for maintenance

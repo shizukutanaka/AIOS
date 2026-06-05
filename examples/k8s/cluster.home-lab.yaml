@@ -1,0 +1,21 @@
+# K3s Home Lab Cluster — 3 nodes, 1 GPU
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aios-cluster-config
+  namespace: default
+data:
+  mode: "k3s"
+  leader: "gpu-workstation"
+  workers: "nuc-1,nuc-2"
+  gpu_operator_version: "v26.3.0"
+  kserve_version: "v0.17.0"
+---
+# GPU node label
+# kubectl label node gpu-workstation nvidia.com/gpu.product=NVIDIA-RTX-4090
+---
+# Install sequence:
+# 1. Leader: curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='server --cluster-init' sh -
+# 2. Workers: K3S_URL=https://gpu-workstation:6443 K3S_TOKEN=<token> k3s agent
+# 3. GPU Operator: helm install gpu-operator nvidia/gpu-operator --version=v26.3.0
+# 4. KServe: curl -fsSL .../llmisvc-dependency-install.sh | bash

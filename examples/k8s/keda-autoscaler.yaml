@@ -1,0 +1,20 @@
+# KEDA ScaledObject for vLLM — scale on queue depth
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-autoscaler
+  namespace: default
+spec:
+  scaleTargetRef:
+    name: aios-team-rag-llm
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  pollingInterval: 15
+  cooldownPeriod: 300
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus:9090
+        metricName: vllm:num_requests_waiting
+        query: avg(vllm:num_requests_waiting)
+        threshold: "5"

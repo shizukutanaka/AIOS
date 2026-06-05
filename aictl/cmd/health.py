@@ -1,0 +1,119 @@
+"""aictl health — comprehensive one-shot system health check.
+
+Combines: hardware, security, fabric, engines, daemon, and tests
+into a single pass/fail report with a health score.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import argparse
+from aictl.core.constants import DAEMON_HOST, DAEMON_PORT
+
+import socket
+from aictl.core.output import print_json
+from aictl.core.state import StateStore
+from aictl.runtime.broker import full_detect
+
+
+def register(sub: Any) -> None:
+    """Register CLI subcommand and arguments."""
+    p = sub.add_parser("health", help="Comprehensive system health check")
+    p.set_defaults(func=run)
+
+
+def run(args: argparse.Namespace) -> int:
+    """Execute the health command."""
+    store = StateStore(getattr(args, "state_dir", None))
+    results: list[dict[str, Any]] = []
+    score = 0
+    total = 0
+
+    def check(name: str, passed: bool, detail: str = "") -> None:
+        """Check."""
+        nonlocal score, total
+        total += 1
+        if passed:
+            score += 1
+        results.append({"check": name, "passed": passed, "detail": detail})
+
+    # 1. Node initialized
+    check("Node initialized", store.is_initialized())
+
+    # 2. Hardware detection
+    report = full_detect()
+    check("CPU detected", report.system.cpu_cores > 0,
+          f"{report.system.cpu_cores} cores")
+    check("RAM adequate", report.system.ram_total_mb >= 4096,
+          f"{report.system.ram_total_mb} MB")
+    check("Disk space", report.system.disk_free_gb > 5,
+          f"{report.system.disk_free_gb:.1f} GB free")
+
+    # 3. Security
+    from aictl.core.security import scan
+    sec = scan(store.dir)
+    check("Security score >= 50", sec.score >= 50, f"{sec.score}/100")
+
+    # 4. Fabric
+    from aictl.runtime.fabric import detect_memory_fabric
+    fabric = detect_memory_fabric()
+    check("Memory tiers detected", len(fabric.tiers) > 0,
+          f"{len(fabric.tiers)} tiers, {fabric.total_capacity_gb:.0f} GB")
+
+    # 5. Container runtime
+    check("Container runtime", report.container_runtime != "none",
+          report.container_runtime or "none")
+
+    # 6. Engine reachability
+    from aictl.core.config import load_config
+    config = load_config(store.dir)
+    engines = config.engines.to_dict()
+    for name, url in engines.items():
+        host = url.replace("http://", "").replace("https://", "").split(":")[0]
+        port_s = url.replace("http://", "").replace("https://", "").split(":")[-1].split("/")[0]
+        try:
+            port = int(port_s)
+            sock = socket.create_connection((host, port), timeout=2)
+            sock.close()
+            check(f"Engine: {name}", True, url)
+        except Exception:
+            check(f"Engine: {name}", False, f"{url} unreachable")
+
+    # 7. Daemon
+    try:
+        import urllib.request
+        import json
+        with urllib.request.urlopen(f"http://{DAEMON_HOST}:{DAEMON_PORT}/v1/health", timeout=2) as r:
+            data = json.loads(r.read())
+        check("Daemon (aiosd)", data.get("status") == "ok", "port 7700")
+    except Exception:
+        check("Daemon (aiosd)", False, "not running")
+
+    # 8. Recipes available
+    from aictl.stack.manifest import list_recipes
+    recipes = list_recipes()
+    check("Recipes loaded", len(recipes) >= 8, f"{len(recipes)} recipes")
+
+    # 9. Model recommendations
+    from aictl.runtime.recommend import recommend
+    recs = recommend(ram_mb=report.system.ram_total_mb, max_results=1)
+    check("Model recommendations", len(recs) > 0)
+
+    # Output
+    if getattr(args, "json", False):
+        print_json({"score": score, "total": total, "pct": round(score/total*100),
+                    "checks": results})
+        return 0
+
+    pct = round(score / total * 100)
+    icon = "\u2713" if pct >= 80 else ("\u26a0" if pct >= 50 else "\u2717")
+    print(f"\n  {icon} Health: {score}/{total} ({pct}%)\n")
+
+    for r in results:
+        icon = "\u2713" if r["passed"] else "\u2717"
+        detail = f" — {r['detail']}" if r["detail"] else ""
+        print(f"  {icon} {r['check']}{detail}")
+
+    print()
+    return 0 if pct >= 50 else 1

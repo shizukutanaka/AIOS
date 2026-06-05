@@ -1,0 +1,33 @@
+# aictl Quick Start with Docker Compose
+#
+# Usage:
+#   docker compose up -d
+#   curl http://localhost:7700/v1/health
+#   curl http://localhost:9999/v1/models
+#
+# This starts:
+#   - aiosd daemon on :7700 (22 REST API endpoints)
+#   - Mock inference engine on :9999 (OpenAI-compatible)
+#   - Proxy on :8080 (routes to mock engine)
+
+services:
+  aiosd:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "7700:7700"   # Daemon API
+      - "8080:8080"   # Proxy
+    environment:
+      - AIOS_STATE_DIR=/var/lib/aios
+    volumes:
+      - aios-state:/var/lib/aios
+    command: ["python3", "-m", "aictl", "demo", "--auto"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:7700/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  aios-state:

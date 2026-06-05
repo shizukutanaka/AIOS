@@ -1,0 +1,21 @@
+# AI OS Stack: Local RAG with vLLM + Embedding
+name: local-rag
+version: "1"
+services:
+  - name: llm
+    runtime: vllm
+    model: meta-llama/Llama-3.2-8B-Instruct
+    port: 8000
+    gpu_required: true
+    env:
+      VLLM_PERFORMANCE_MODE: balanced
+  - name: embedding
+    runtime: ollama
+    model: nomic-embed-text
+    port: 11435
+  - name: ui
+    image: ghcr.io/open-webui/open-webui:v0.8.12
+    port: 3000
+    env:
+      OPENAI_API_BASE_URL: http://llm:8000/v1
+trust_policy: warn

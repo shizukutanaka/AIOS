@@ -1,0 +1,34 @@
+apiVersion: aios/v1alpha1
+kind: NodeGroup
+metadata:
+  name: home-lab-mini-cluster
+spec:
+  manager:
+    advertiseAddress: 192.168.10.12
+    localConsolePort: 1787
+  joinPolicy:
+    tokenTtlMinutes: 15
+    requireSignedHost: true
+    autoAssignRoles:
+      - gpu-worker
+      - storage-cache
+  scheduling:
+    strategy: latency-first
+    spillToCpuWorkers: true
+    rebalanceOnJoin: true
+  storage:
+    shareModelCacheIndex: true
+    allowRemoteWarmCache: true
+  continuity:
+    replicateCriticalSnapshots: true
+    maxCrossNodeResumeAgeSeconds: 900
+  nodes:
+    - name: aios-main
+      roles:
+        - control
+        - gpu-worker
+    - name: aios-sidecar
+      roles:
+        - storage-cache
+        - cpu-worker
+

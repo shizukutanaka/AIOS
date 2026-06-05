@@ -1,0 +1,87 @@
+# Prometheus Alerting Rules for aictl
+# Install: cp prometheus-alerts.yml /etc/prometheus/rules/aios.yml
+# Reload: curl -X POST http://localhost:9090/-/reload
+
+groups:
+  - name: aios.inference.slo
+    rules:
+      # TTFT exceeds SLO (500ms p95)
+      - alert: HighTTFT
+        expr: histogram_quantile(0.95, rate(vllm:time_to_first_token_seconds_bucket[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TTFT p95 exceeds 500ms SLO"
+          description: "Instance {{ $labels.instance }} TTFT p95 is {{ $value | humanizeDuration }}"
+
+      # KV cache near full (>90%)
+      - alert: KVCacheNearFull
+        expr: vllm:gpu_cache_usage_perc > 0.9
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "KV cache utilization above 90%"
+          description: "{{ $labels.instance }} KV cache at {{ $value | humanizePercentage }}"
+
+      # Queue depth growing
+      - alert: HighQueueDepth
+        expr: vllm:num_requests_waiting > 50
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Request queue depth exceeds 50"
+          description: "{{ $labels.instance }} has {{ $value }} waiting requests"
+
+      # No requests (engine may be down)
+      - alert: NoInferenceTraffic
+        expr: rate(vllm:request_success_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "No inference traffic for 10 minutes"
+
+  - name: aios.system
+    rules:
+      # Memory pressure (PSI > 25%)
+      - alert: HighMemoryPressure
+        expr: aios_psi_memory_some_avg10 > 25
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory pressure above 25%"
+          description: "PSI memory some avg10 = {{ $value }}%"
+
+      # GPU OOM risk
+      - alert: GPUMemoryLow
+        expr: DCGM_FI_DEV_FB_FREE < 1024
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU free memory below 1GB"
+          description: "{{ $labels.gpu }} has only {{ $value }}MB free"
+
+      # Daemon health
+      - alert: DaemonUnhealthy
+        expr: up{job="aiosd"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "aictl daemon is down"
+
+  - name: aios.cost
+    rules:
+      # Token usage spike
+      - alert: HighTokenUsage
+        expr: increase(aios_tokens_total[1h]) > 1000000
+        labels:
+          severity: info
+        annotations:
+          summary: "Over 1M tokens used in the last hour"
+          description: "Entity {{ $labels.entity }} used {{ $value | humanize }} tokens"
