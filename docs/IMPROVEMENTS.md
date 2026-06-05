@@ -180,3 +180,86 @@ arXiv: [Taming the Titans survey 2504.19720](https://arxiv.org/abs/2504.19720) �
 [Guardrail evasion 2504.11168](https://arxiv.org/abs/2504.11168).
 Guardrails tooling: [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) ·
 [Microsoft Presidio (via NeMo guide)](https://medium.com/@zbalogh/a-guide-to-setup-nemo-guardrails-to-instruct-aws-bedrocks-meta-llama-2-with-llama-guard-and-9bbefdc62ff3).
+
+---
+
+# Part 2 — second-pass gaps (structured decoding · spec-decode frontier · fairness/energy · agent interop)
+
+A deeper sweep surfaced four more areas, each grounded in an existing module.
+
+## K. Constrained / structured-decoding advisor — entirely missing
+
+- **Current:** no guided-decoding support anywhere. aictl emits schema-shaped data
+  everywhere (`--json` on every command, the JSON-RPC MCP server) yet offers no advice on
+  *making the model* produce valid JSON.
+- **SOTA:** **XGrammar** is the default structured-generation backend for **vLLM, SGLang and
+  TensorRT-LLM as of 2026** (<40µs/token); **llguidance** (~50µs, Rust Earley), **Outlines**
+  (regex→FSM), **Guidance** (~2× faster). JSONSchemaBench (arXiv:2501.10868) benchmarks six
+  frameworks over 10K real schemas.
+- **Proposal (zero-dep):** (1) add guided-decoding flags to `deploy optimize` with an
+  **engine→backend support matrix** (XGrammar/Outlines/llguidance) and ready-to-paste serve
+  flags (e.g. vLLM `--guided-decoding-backend xgrammar`); (2) a stdlib **JSON-Schema validator
+  helper in `aictl/sdk.py`** so SDK callers can enforce/repair structured outputs locally;
+  (3) optional schema enforcement on MCP tool results.
+
+## L. Speculative-decoding advisor is a generation behind
+
+- **Current:** `cmd/spec.py` only pairs a **draft + target model** (classic spec decoding);
+  its docstring tops out at "2–3× speedup". No EAGLE/Medusa/MTP awareness.
+- **SOTA:** **EAGLE-3** (arXiv:2503.01840) is now the **de-facto industrial standard** — up to
+  **4.79× on Llama-3.3-70B with no quality loss**, supported by vLLM and SGLang; **Medusa**
+  (multi-head) and **DeepSeek-V3 multi-token-prediction (MTP)** are mainstream; SpecForge
+  (2603.18567) trains drafters.
+- **Proposal:** extend the advisor with a **method dimension** — `draft-pairing | EAGLE-3 |
+  Medusa | MTP` — each with an engine-support matrix and correct flags (e.g. vLLM
+  `--speculative-config '{"method":"eagle3",...}'`). Recommend EAGLE-3 when a trained head
+  exists for the family; fall back to draft-pairing otherwise. Raise the speedup ceiling.
+
+## M. Fairness & carbon/energy-aware scheduling — counters exist, policy doesn't
+
+- **Current:** aictl has per-tenant **metering** (`core/metering.py`), **tenant** quotas
+  (`core/tenant.py`), an **autoscaler** (`runtime/autoscaler.py`) and a **governor**
+  (`daemon/governor.py`) — but no fair-share scheduling and **no energy/carbon objective**
+  (confirmed: `cmd/tco.py` has no carbon/energy term).
+- **SOTA:** **VTC** fair scheduling; **Equinox** holistic fairness (arXiv:2508.16646, worst-case
+  service-gap −42%, avg −86% vs VTC); **DLPM** locality-aware fair scheduling that preserves
+  prefix locality (arXiv:2501.14312); **FREESH** (arXiv:2511.00807) cuts **28.6% energy /
+  45.5% emissions** via Least-Laxity-First + dynamic GPU-frequency scaling.
+- **Proposal (zero-dep, advisory-first):** (1) a **VTC/DLPM-style fair-share counter** in the
+  governor/router that blends the token usage aictl already meters with prefix-locality from
+  `prefix_route.py`; (2) a **carbon/energy advisor in `cmd/tco.py`** — accept a carbon-intensity
+  input, recommend **GPU power-cap / frequency-scaling** settings and report kWh + CO₂e
+  alongside dollars, turning TCO into TCO+carbon.
+
+## N. MCP server & agent interoperability — observability/streaming gap
+
+- **Current:** an 18-tool JSON-RPC MCP server (`aictl/mcp_server`). aictl ships OTel GenAI
+  spans (`metrics/genai_spans.py`) elsewhere, but the MCP path doesn't emit per-tool spans or
+  stream progress.
+- **Field:** the 2026 agent frameworks (Claude Agent SDK, LangGraph, OpenAI Agents SDK, AWS
+  **Strands**) all converge on **MCP + OTel + streaming + persistence**; Strands in particular
+  plugs straight into any OTel backend. Observability is now the differentiator, not tool count.
+- **Proposal:** (1) emit an **OTel span per MCP tool call** (reuse `genai_spans.py`) so aictl is
+  a first-class OTel-observable MCP backend; (2) add **streaming/progress notifications** for
+  long tools (deploy, bench); (3) optional **session persistence** for multi-step agent flows.
+
+## Updated priority (Parts 1 + 2)
+
+After the two passes, the cheapest high-impact wins are still **A** (hybrid retrieval) and
+**G** (guard unicode-hardening); **K** (guided-decoding advisor) and **L** (EAGLE-3 in the
+spec advisor) join the front of the queue because both are **pure advisory + flag-emission**
+work that fits aictl's model perfectly and needs no runtime or external dep. **M** and **N**
+are larger but leverage infrastructure aictl already owns (metering, OTel).
+
+## Sources (Part 2)
+
+Structured/constrained decoding: [JSONSchemaBench 2501.10868](https://arxiv.org/html/2501.10868v1) ·
+[Awesome-Constrained-Decoding](https://github.com/Saibo-creator/Awesome-LLM-Constrained-Decoding) ·
+[structured-output guide 2026](https://collinwilkins.com/articles/structured-output).
+Speculative decoding: [EAGLE-3 2503.01840](https://arxiv.org/html/2503.01840v1) ·
+[SpecForge 2603.18567](https://arxiv.org/pdf/2603.18567).
+Fairness/energy scheduling: [Equinox 2508.16646](https://arxiv.org/html/2508.16646v1) ·
+[DLPM locality-aware fair 2501.14312](https://arxiv.org/html/2501.14312v1) ·
+[FREESH 2511.00807](https://arxiv.org/pdf/2511.00807).
+Agent frameworks: [2026 framework showdown](https://qubittool.com/blog/ai-agent-framework-comparison-2026) ·
+[8 SDKs / ACP trade-offs](https://www.morphllm.com/ai-agent-framework).
