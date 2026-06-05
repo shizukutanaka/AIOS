@@ -13,9 +13,9 @@
 | 1 | Inference engines & serving runtimes | `runtime/adapters,broker,health,nodes` | ✅ done |
 | 2 | Model routing & LLM gateways | `cmd/route`, `stack/gateway`, `daemon/proxy` | ✅ done |
 | 3 | RAG & retrieval | `core/rag` | ✅ done |
-| 4 | Semantic caching | `core/sem_cache` | ⏳ pending |
-| 5 | Guardrails, PII & prompt-injection safety | `core/guard,security,apikeys` | ⏳ pending |
-| 6 | Quantization & model compression | `cmd/quant`, `runtime/optimize` | ⏳ pending |
+| 4 | Semantic caching | `core/sem_cache` | ✅ done |
+| 5 | Guardrails, PII & prompt-injection safety | `core/guard,security,apikeys` | ✅ done |
+| 6 | Quantization & model compression | `cmd/quant`, `runtime/optimize` | ✅ done |
 | 7 | KV-cache management & request scheduling | `runtime/prefix_route,dynamo,autoscaler` | ⏳ pending |
 | 8 | Speculative & accelerated decoding | `cmd/spec`, `runtime/speculative` | ⏳ pending |
 | 9 | K8s orchestration, autoscaling & P/D disaggregation | `stack/*`, `runtime/mig,fabric` | ⏳ pending |
@@ -95,9 +95,84 @@ and a **64-dim SHA-256 hash fallback embedding** explicitly marked "NOT semantic
 
 ---
 
+## Category 4 — Semantic caching
+
+**Current aictl:** `core/sem_cache.py` — SQLite store, embeds via the same weak path as RAG,
+matches on a **single global cosine similarity floor**, LRU eviction by `last_hit_at`.
+
+**References (GitHub + arXiv):**
+1. [zilliztech/GPTCache](https://github.com/zilliztech/GPTCache) — 6k★ semantic cache library, the baseline.
+2. vCache — Verified Semantic Prompt Caching [arXiv:2502.03771](https://arxiv.org/abs/2502.03771): **per-prompt online-learned threshold** with user-defined error rate.
+3. MeanCache [arXiv:2403.02694](https://arxiv.org/abs/2403.02694): user-centric/federated, **−83% storage**, +11% match speed, +17% F-score vs GPTCache.
+4. *From Exact Hits to Close Enough* [arXiv:2603.03301](https://arxiv.org/html/2603.03301v1).
+5. GPT Semantic Cache [arXiv:2411.05276](https://arxiv.org/pdf/2411.05276).
+6. Asynchronous Verified Semantic Caching for tiered LLMs [arXiv:2602.13165](https://arxiv.org/html/2602.13165).
+7. InstCache / GenerativeCache — generative cache, infinite-cache assumption (no eviction).
+8. Portkey / Bifrost gateway semantic caches (30–50% cost cut claims).
+9. CacheBlend — RAG-aware KV/prefix cache reuse.
+10. LangChain / LlamaIndex cache backends (exact + semantic).
+
+**Improvement points:**
+- **Per-prompt adaptive (verified) threshold** (vCache): replaces aictl's single global floor that
+  lives in the "similarity grey zone" where paraphrases and distinct intents overlap → fewer false
+  hits. The online-learning estimator is pure-Python-feasible.
+- **Embedding compression** (MeanCache): cut the SQLite store ~83% and speed matching.
+- **Bounded-error verification / negative cache** so a wrong hit can't silently return.
+- **Expose cache-decision quality** (precision / F-score, tokens-saved) as metrics, not just hit-rate.
+
+## Category 5 — Guardrails, PII & prompt-injection safety
+
+**Current aictl:** `core/guard.py` — 9 regex PII types + Luhn + 4 content policies, **literal,
+single-turn, input-side** only.
+
+**References (GitHub + arXiv):**
+1. [guardrails-ai/guardrails](https://github.com/guardrails-ai/guardrails) — input/output guards framework.
+2. [NVIDIA-NeMo/Guardrails](https://github.com/NVIDIA-NeMo/Guardrails) — programmable dialog rails.
+3. [presidio-oss/hai-guardrails](https://github.com/presidio-oss/hai-guardrails) — PII + injection + leakage guards.
+4. protectai/llm-guard — input/output scanners (PII, toxicity, injection).
+5. Microsoft Presidio — entity recognition + reversible redaction.
+6. LlamaFirewall [arXiv:2505.03574](https://arxiv.org/pdf/2505.03574) — open-source **agent** guardrail (Meta).
+7. Llama Guard 3 / Prompt Guard — model-based input classifiers.
+8. Guardrail evasion [arXiv:2504.11168](https://arxiv.org/html/2504.11168) — up to 100% bypass via **Unicode obfuscation / character smuggling**.
+9. Adversarial prompt benchmarking [arXiv:2502.15427](https://arxiv.org/html/2502.15427v1) — ASR 60–92% across products.
+10. [llm-guardrails topic](https://github.com/topics/llm-guardrails).
+
+**Improvement points:**
+- **Unicode NFKC normalization + homoglyph/character-smuggling folding** before matching — the
+  benchmarks show 87–91% ASR exploits exactly this; cheap, pure-stdlib, highest ROI here.
+- **Output-side PII redaction** with reversible tokens (Presidio parity) + more entity types.
+- **Agent/tool-call guardrails** (LlamaFirewall pattern) wrapping the MCP server's tool I/O.
+- **Adversarial benchmark harness** that replays public attack sets and tracks ASR per release.
+- Optional **model-based check** (Llama Guard via local engine) behind a flag; regex stays the zero-dep default.
+
+## Category 6 — Quantization & model compression
+
+**Current aictl:** `cmd/quant.py` advises FP16/FP8/Q8/**AWQ**/Q4/Q3 on "April 2026 empirical" data.
+
+**References (GitHub + arXiv):**
+1. [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor) — **FP4 (MXFP4 + NVFP4)**, vLLM-native export.
+2. [intel/auto-round](https://github.com/intel/auto-round) — SOTA low-bit, MXFP4/NVFP4, **CPU/XPU/CUDA**, vLLM+SGLang compatible.
+3. [ModelCloud/GPTQModel](https://github.com/modelcloud/gptqmodel) — AWQ/GPTQ/FP8/GGUF/EXL3 configs, HW-accelerated.
+4. [casper-hansen/AutoAWQ](https://github.com/casper-hansen/AutoAWQ) — **officially deprecated / unmaintained** (aictl still names AWQ as a primary path).
+5. [AutoGPTQ/AutoGPTQ](https://github.com/AutoGPTQ/AutoGPTQ) — classic GPTQ.
+6. [pprp/Awesome-LLM-Quantization](https://github.com/pprp/awesome-llm-quantization).
+7. bitsandbytes — 8/4-bit runtime quant.
+8. GGUF / llama.cpp — **Q4_K_M** community sweet spot (92% quality, 75% smaller).
+9. NVFP4 / MXFP4 4-bit microscale formats (Blackwell-class HW).
+10. AWQ + GPTQ original papers (activation-aware / second-order weight quant).
+
+**Improvement points:**
+- **Add FP4 (NVFP4/MXFP4) rows** with per-engine support flags — now mainstream in
+  llm-compressor / AutoRound / GPTQModel.
+- **Refresh tooling references**: AutoAWQ is deprecated → point to llm-compressor / GPTQModel /
+  AutoRound, and surface the **export format per engine** (GGUF/AWQ-Marlin/GPTQ).
+- **Surface the Q4_K_M sweet-spot** call-out in `quant recommend`.
+- **CPU/XPU quant path** (AutoRound) — ties into the heterogeneous-offload advisor (Cat 1).
+
+---
+
 ## Pending (next loop iterations)
 
-Categories 4–10 will be filled the same way (≈10 arXiv/GitHub refs + improvement points each):
-semantic caching, guardrails/safety, quantization, KV-cache/scheduling, speculative decoding,
-K8s/disaggregation, and observability/FinOps. Several already have narrative analysis in
-`docs/IMPROVEMENTS.md` (Parts 1–2) that this matrix will back with concrete source links.
+Categories 7–10 remain (≈10 arXiv/GitHub refs + improvement points each): KV-cache/scheduling,
+speculative decoding, K8s/disaggregation, and observability/FinOps. Each is backed by narrative
+analysis already in `docs/IMPROVEMENTS.md` (Parts 1–2).
