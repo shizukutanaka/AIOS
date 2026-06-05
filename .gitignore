@@ -38,3 +38,9 @@ htmlcov/
 # Tool caches
 .ruff_cache/
 .mypy_cache/
+
+# CI workflow: this repository is maintained by a GitHub App that lacks the
+# `workflows` permission and therefore cannot push .github/workflows/*. The
+# file is kept on disk for local validation (tests skipUnless it is present);
+# add it to the remote via the GitHub web UI or with workflows permission.
+.github/workflows/ci.yml
