@@ -26,7 +26,7 @@ CMD_DIR = Path(__file__).resolve().parent.parent / "aictl" / "cmd"
 # entry here, fails the suite.
 G1_EXEMPT = {
     "completion", "dash", "logs", "otel", "proxy",
-    "serve", "setup", "update", "watch",
+    "serve", "setup", "watch",
 }
 
 # A module "honors JSON" if it reads the flag or emits a JSON artifact.
@@ -191,6 +191,61 @@ class TestG2ExitCodes(unittest.TestCase):
             self.assertEqual(rc, 0)  # idempotent teardown is success
         finally:
             down.stop_stack = orig
+
+
+class TestUpdateJson(unittest.TestCase):
+    """`update` (check/models/self) emits JSON and is no longer G1-exempt."""
+
+    def _run_json(self, func, **ns):
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = func(argparse.Namespace(json=True, **ns))
+        return rc, json.loads(buf.getvalue())
+
+    def test_check_json_up_to_date(self):
+        from aictl.cmd import update
+        from aictl.core.constants import AICTL_VERSION
+        orig = update._fetch_latest_version
+        update._fetch_latest_version = lambda: AICTL_VERSION
+        try:
+            rc, data = self._run_json(update.run_check)
+        finally:
+            update._fetch_latest_version = orig
+        self.assertEqual(rc, 0)
+        self.assertFalse(data["update_available"])
+        self.assertTrue(data["reachable"])
+        self.assertEqual(data["current"], AICTL_VERSION)
+
+    def test_check_json_update_available(self):
+        from aictl.cmd import update
+        orig = update._fetch_latest_version
+        update._fetch_latest_version = lambda: "99.0.0"
+        try:
+            _, data = self._run_json(update.run_check)
+        finally:
+            update._fetch_latest_version = orig
+        self.assertTrue(data["update_available"])
+        self.assertEqual(data["latest"], "99.0.0")
+
+    def test_self_dry_run_json(self):
+        from aictl.cmd import update
+        orig = update._find_repo_root
+        update._find_repo_root = lambda: None  # force pip path, no subprocess
+        try:
+            rc, data = self._run_json(update.run_self, dry_run=True)
+        finally:
+            update._find_repo_root = orig
+        self.assertEqual(rc, 0)
+        self.assertEqual(data["method"], "pip")
+        self.assertFalse(data["executed"])
+
+    def test_update_subcommands_accept_json(self):
+        from aictl.__main__ import build_parser
+        p = build_parser()
+        for sub in ("check", "models", "self"):
+            self.assertTrue(p.parse_args(["update", sub, "--json"]).json)
+            self.assertTrue(p.parse_args(["--json", "update", sub]).json)
 
 
 if __name__ == "__main__":

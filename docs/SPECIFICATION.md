@@ -24,7 +24,7 @@ These hold for the whole CLI and are machine-checked.
   **Exempt** are commands that produce no computed data:
   - interactive/TUI: `chat`, `dash`, `watch`, `demo`
   - long-running servers: `serve`, `proxy`
-  - guided/action with no data payload: `setup`, `completion`, `update`
+  - guided/action with no data payload: `setup`, `completion`
   - passthrough to another tool: `logs` (delegates to the container runtime)
   - non-JSON artifact generators: `otel` (emits OTel Collector **YAML**)
 
@@ -51,7 +51,7 @@ These hold for the whole CLI and are machine-checked.
 
 | Area | Commands |
 |------|----------|
-| Lifecycle | `init`, `setup`*, `doctor`, `gate`, `selftest`, `update`*, `upgrade`, `completion`* |
+| Lifecycle | `init`, `setup`*, `doctor`, `gate`, `selftest`, `update`, `upgrade`, `completion`* |
 | Inventory/status | `ps`, `status`, `info`, `health`, `report`, `watch`*, `dash`*, `net` |
 | Models | `model`, `recommend`, `fit`, `quant`, `convert`, `image`, `warmup` |
 | Serving | `serve`*, `proxy`*, `deploy`, `apply`, `down`, `scale`, `recipe`, `chat`* |
@@ -124,8 +124,11 @@ data command without `--json`, or a stale exemption, fails the suite), G2
 defaults equal the constants; `nodes.py` carries no `7700` literal), and G5
 (every `cmd/*` module registers).
 
+### Resolved since first audit
+- `update` now emits JSON for all three subcommands (`check`/`models`/`self`)
+  and is no longer G1-exempt.
+
 ### Future candidates (not gaps today)
-- `update` could emit a JSON change summary (currently an action command).
 - MCP tool calls could emit OTel spans (tracked in `docs/IMPROVEMENTS.md` N).
 - Manifest generators could optionally source engine-default ports from the
   `*_DEFAULT_PORT` constants for a single source of truth.
