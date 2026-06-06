@@ -202,7 +202,10 @@ def main() -> int:
     try:
         with measure(cmd_name) as perf_ctx:
             rc = args.func(args)
-            perf_ctx["exit_code"] = rc if isinstance(rc, int) else 0
+            # G2: a handler that returns None (no explicit return) means success;
+            # always hand sys.exit a well-defined int.
+            rc = rc if isinstance(rc, int) else 0
+            perf_ctx["exit_code"] = rc
             return rc
     except KeyboardInterrupt:
         print("\n  Cancelled.", file=sys.stderr)

@@ -32,6 +32,9 @@ These hold for the whole CLI and are machine-checked.
   emits Kubernetes manifests as JSON already.)
 - **G2 — Exit codes.** `0` = success; non-zero = failure. Advisors that find
   "nothing matched" return non-zero (e.g. `spec recommend <unknown>` → 1).
+  `main()` normalizes a handler that returns `None` to `0`. Message severity
+  must agree with the exit code: a command that exits `0` reports with `ok`/
+  `warn`, never `err` (benign no-ops are warnings, not errors).
 - **G3 — No external Python dependencies.** Only the 3.11+ standard library may
   be imported by `aictl/**`. (Enforced socially + by `aictl gate` import check.)
 - **G4 — Centralized constants.** Ports, versions, and engine metric prefixes
@@ -108,10 +111,18 @@ manifest/quadlet generators are the **engines' own** well-known defaults
 (vLLM/Ollama/SGLang) used as fallbacks for `svc.port or <default>`; these are
 domain defaults, not aios configuration, and are out of G4 scope.
 
+A third pass audited **G2** (exit codes) and found two issues:
+
+| Location | Before | Resolution |
+|----------|--------|------------|
+| `__main__.py` | `return rc` passed a handler's `None` straight to `sys.exit`. | Normalize: `rc = rc if isinstance(rc, int) else 0`. |
+| `cmd/down.py` | Reported a benign "nothing to stop" no-op via `err(...)` yet returned `0` (severity/exit-code mismatch). | Use `warn(...)`; idempotent teardown stays exit `0`. |
+
 `tests/test_spec_conformance.py` enforces G1 (exempt set is exact — adding a
-data command without `--json`, or a stale exemption, fails the suite), G4 (aios
-port defaults must equal the constants; `nodes.py` carries no `7700` literal),
-and G5 (every `cmd/*` module registers).
+data command without `--json`, or a stale exemption, fails the suite), G2
+(`main` normalizes non-int returns; `down` no-op exits `0`), G4 (aios port
+defaults equal the constants; `nodes.py` carries no `7700` literal), and G5
+(every `cmd/*` module registers).
 
 ### Future candidates (not gaps today)
 - `update` could emit a JSON change summary (currently an action command).

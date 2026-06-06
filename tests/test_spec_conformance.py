@@ -151,5 +151,47 @@ class TestG4CentralizedConstants(unittest.TestCase):
                          "nodes.py must reference DAEMON_PORT, not the literal 7700")
 
 
+class TestG2ExitCodes(unittest.TestCase):
+    """G2: exit codes are always well-defined ints; benign no-ops succeed."""
+
+    def test_main_normalizes_non_int_return(self):
+        # A handler returning None must yield exit code 0, not None.
+        import aictl.__main__ as m
+
+        class _Args:
+            command = "noop"
+            func = staticmethod(lambda a: None)
+        argv = sys.argv
+        sys.argv = ["aictl", "noop"]
+        try:
+            # Patch parse to return our fake args without building the parser.
+            orig_build = m.build_parser
+
+            class _P:
+                def parse_args(self_inner):
+                    return _Args()
+            m.build_parser = lambda: _P()
+            rc = m.main()
+        finally:
+            m.build_parser = orig_build
+            sys.argv = argv
+        self.assertEqual(rc, 0)
+        self.assertIsInstance(rc, int)
+
+    def test_down_benign_noop_returns_success(self):
+        from aictl.cmd import down
+        from contextlib import redirect_stdout
+        orig = down.stop_stack
+        down.stop_stack = lambda name: []          # no container runtime needed
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                args = argparse.Namespace(name="nope", state_dir=Path(tmp), json=False)
+                with redirect_stdout(io.StringIO()):
+                    rc = down.run(args)
+            self.assertEqual(rc, 0)  # idempotent teardown is success
+        finally:
+            down.stop_stack = orig
+
+
 if __name__ == "__main__":
     unittest.main()

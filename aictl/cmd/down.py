@@ -6,7 +6,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, err, print_json
+from aictl.core.output import ok, warn, print_json
 from aictl.core.state import StateStore
 from aictl.stack.orchestrator import stop_stack
 
@@ -31,6 +31,7 @@ def run(args: argparse.Namespace) -> int:
     if stopped:
         ok(f"Stack '{args.name}' stopped ({len(stopped)} services)")
     else:
-        err(f"No running services found for stack '{args.name}'")
+        # Idempotent teardown: nothing running is a benign no-op, not an error.
+        warn(f"No running services found for stack '{args.name}'")
 
     return 0
