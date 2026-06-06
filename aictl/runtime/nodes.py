@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from aictl.core.state import StateStore
+from aictl.core.constants import DAEMON_PORT
 
 
 @dataclass
@@ -25,7 +26,7 @@ class PeerNode:
     node_id: str
     hostname: str
     address: str          # IP or hostname
-    port: int = 7700      # aiosd port
+    port: int = DAEMON_PORT  # aiosd port
     role: str = "worker"  # leader | worker
     paired_at: float = 0.0
     last_seen: float = 0.0
@@ -96,14 +97,14 @@ class NodeManager:
             "node_id": node.node_id,
             "hostname": node.hostname,
             "address": local_addr,
-            "port": 7700,
+            "port": DAEMON_PORT,
             "token": token,
         }
 
         # Send to remote
         import urllib.request
         import urllib.error
-        url = f"http://{address}:7700/v1/node/join"
+        url = f"http://{address}:{DAEMON_PORT}/v1/node/join"
         try:
             req = urllib.request.Request(
                 url,
@@ -150,7 +151,7 @@ class NodeManager:
             node_id=join_data.get("node_id", ""),
             hostname=join_data.get("hostname", ""),
             address=join_data.get("address", ""),
-            port=join_data.get("port", 7700),
+            port=join_data.get("port", DAEMON_PORT),
             role="worker",
             paired_at=time.time(),
             last_seen=time.time(),

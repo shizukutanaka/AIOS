@@ -63,9 +63,11 @@ subset of the above; parity with Python is intentionally partial, not a gap.
 
 ## 4. Daemon REST API (`aiosd`)
 
-`aictl serve` starts `aiosd`, exposing 22 REST endpoints (health, models,
-completions, metrics, governor, tenants). Health is `GET /v1/health`. The
-OpenAI-compatible proxy (`aictl proxy`) exposes `/health` and `/v1/*`.
+`aictl serve` starts `aiosd`, exposing 29 distinct `/v1/*` paths across GET/POST
+(health, models, recommend, broker/governor, recipes, stacks, cluster/node,
+metering, audit, apikeys, metrics/slo+psi, dynamo, fabric, context, upgrade).
+Health is `GET /v1/health`. The OpenAI-compatible proxy (`aictl proxy`) exposes
+`/health` and `/v1/*`.
 
 ## 5. MCP server
 
@@ -91,10 +93,28 @@ that computed data but ignored `--json` entirely:
 | `selftest` | Printed unittest's text runner output only. | Added `--json` emitting `{tests_run, failures, errors, skipped, success}`. |
 
 Both are now covered, leaving the exempt set in §2 as the complete list of
-non-JSON commands. `tests/test_spec_conformance.py` enforces G1 (the
-exempt set is exact — adding a data command without `--json`, or leaving a stale
-exemption, fails the suite) and G5 (every `cmd/*` module registers).
+non-JSON commands.
+
+A second pass audited **G4** (no hardcoded ports/versions outside
+`constants.py`) and found aios's own ports duplicated as literals:
+
+| Location | Before | Resolution |
+|----------|--------|------------|
+| `runtime/nodes.py` | aiosd port `7700` hardcoded in 4 places (peer default, join payload, join URL, accept default). | Import and use `DAEMON_PORT`. |
+| `daemon/proxy.py` | `serve_proxy()` defaulted to literal `8080` / `"127.0.0.1"`. | Default from `PROXY_PORT` / `DAEMON_HOST`. |
+
+The engine ports (`8000`/`11434`/`30000`) that remain as literals in
+manifest/quadlet generators are the **engines' own** well-known defaults
+(vLLM/Ollama/SGLang) used as fallbacks for `svc.port or <default>`; these are
+domain defaults, not aios configuration, and are out of G4 scope.
+
+`tests/test_spec_conformance.py` enforces G1 (exempt set is exact — adding a
+data command without `--json`, or a stale exemption, fails the suite), G4 (aios
+port defaults must equal the constants; `nodes.py` carries no `7700` literal),
+and G5 (every `cmd/*` module registers).
 
 ### Future candidates (not gaps today)
 - `update` could emit a JSON change summary (currently an action command).
 - MCP tool calls could emit OTel spans (tracked in `docs/IMPROVEMENTS.md` N).
+- Manifest generators could optionally source engine-default ports from the
+  `*_DEFAULT_PORT` constants for a single source of truth.

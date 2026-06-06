@@ -127,5 +127,29 @@ class TestG5Registration(unittest.TestCase):
         self.assertGreaterEqual(len(top.choices), 62)
 
 
+class TestG4CentralizedConstants(unittest.TestCase):
+    """G4: aios's own ports must come from constants.py, not literals."""
+
+    def test_peernode_default_port_is_daemon_port(self):
+        from aictl.runtime.nodes import PeerNode
+        from aictl.core.constants import DAEMON_PORT
+        self.assertEqual(PeerNode("a", "b", "c").port, DAEMON_PORT)
+
+    def test_serve_proxy_defaults_from_constants(self):
+        import inspect
+        from aictl.daemon.proxy import serve_proxy
+        from aictl.core.constants import PROXY_PORT, DAEMON_HOST
+        params = inspect.signature(serve_proxy).parameters
+        self.assertEqual(params["port"].default, PROXY_PORT)
+        self.assertEqual(params["host"].default, DAEMON_HOST)
+
+    def test_nodes_module_has_no_bare_daemon_port_literal(self):
+        # Regression lock: the 7700 literal must not creep back into nodes.py.
+        src = (Path(__file__).resolve().parent.parent
+               / "aictl" / "runtime" / "nodes.py").read_text()
+        self.assertNotIn("7700", src,
+                         "nodes.py must reference DAEMON_PORT, not the literal 7700")
+
+
 if __name__ == "__main__":
     unittest.main()

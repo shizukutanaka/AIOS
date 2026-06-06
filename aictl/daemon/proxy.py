@@ -20,6 +20,7 @@ from typing import Any
 from aictl.runtime.router import BrokerRouter, RouteRequest
 from aictl.core.config import load_config
 from aictl.core.state import StateStore
+from aictl.core.constants import PROXY_PORT, DAEMON_HOST
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -334,7 +335,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self._json(status, data)
 
 
-def serve_proxy(host: str = "127.0.0.1", port: int = 8080,
+def serve_proxy(host: str = DAEMON_HOST, port: int = PROXY_PORT,
                 store: StateStore | None = None) -> None:
     """Start the completions proxy."""
     if store is None:
