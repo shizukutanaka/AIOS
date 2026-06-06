@@ -7,8 +7,9 @@ Research: same model family pairs achieve 80-90% acceptance rate → 2-3x speedu
 Implementation: built into vLLM v0.20, SGLang v0.5.
 
 Usage:
-  aictl spec recommend llama3.1:70b   # best draft model
+  aictl spec recommend llama3.1:70b   # best draft model (classic pairing)
   aictl spec recommend --all           # full pairing table
+  aictl spec methods <model>           # EAGLE-3 / MTP / NGRAM method advisor
   aictl spec bench llama3.1:70b --draft llama3.2:1b
   aictl spec auto <model>              # legacy compat
 """
@@ -77,6 +78,12 @@ def register(sub: Any) -> None:
     r.add_argument("--json", action="store_true")
     r.set_defaults(func=run_recommend)
 
+    m = sp.add_parser("methods", help="EAGLE-3 / P-EAGLE / MTP / NGRAM method advisor.")
+    m.add_argument("model", nargs="?", default=None)
+    m.add_argument("--all", action="store_true", help="Show the full method matrix.")
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=run_methods)
+
     b = sp.add_parser("bench", help="Estimate speedup for a pair.")
     b.add_argument("target")
     b.add_argument("--draft", required=True)
@@ -114,6 +121,7 @@ def run_default(args: argparse.Namespace) -> int:
     print()
     print("    aictl spec recommend llama3.1:70b   # best draft model")
     print("    aictl spec recommend --all           # full pairing table")
+    print("    aictl spec methods <model>           # EAGLE-3 / MTP / NGRAM advisor")
     print("    aictl spec bench llama3.1:70b --draft llama3.2:1b")
     print()
     return 0
@@ -179,7 +187,119 @@ def run_recommend(args: argparse.Namespace) -> int:
         print(f"    {line}")
     print()
     print(f"  Notes: {best.notes}")
-    print("\n  Source: arxiv.org/abs/2402.01528 · blog.premai.io/speculative-decoding-2026\n")
+    print(f"\n  ↑ classic draft pairing. For EAGLE-3 (often faster): "
+          f"aictl spec methods {model}")
+    print("  Source: arxiv.org/abs/2402.01528 · arxiv.org/abs/2503.01840 (EAGLE-3)\n")
+    return 0
+
+
+# ── Modern method advisor (EAGLE-3 / P-EAGLE / MTP / NGRAM) ─────────
+# Classic draft-pairing (PAIRS, above) is one method; the 2026 frontier is
+# EAGLE-3 (de-facto standard, up to ~4.8x on large models). This advisor
+# surfaces the method dimension, backed by runtime/speculative.py so the CLI
+# and the actual arg-generation never drift.
+
+# method → (engines, requirement, when_to_use)
+_METHOD_INFO: list[tuple[str, str, str, str]] = [
+    ("eagle3",     "vLLM + SGLang", "trained EAGLE-3 head (~277MB)",
+     "Best general choice when a head exists for the model family."),
+    ("p-eagle",    "vLLM",          "EAGLE-3 head + parallel drafting",
+     "Extra latency win on supported models (e.g. GPT-OSS)."),
+    ("mtp",        "SGLang",        "model-native MTP weights",
+     "DeepSeek-V3/R1 and Qwen3 — no separate draft model."),
+    ("ngram",      "vLLM + SGLang", "none (GPU n-gram matching)",
+     "Any model, zero setup; modest gain on repetitive output."),
+    ("standalone", "SGLang",        "any smaller same-family model",
+     "No EAGLE head available but you have a small draft."),
+]
+
+
+def run_methods(args: argparse.Namespace) -> int:
+    """Advise on the speculative *method* (EAGLE-3/MTP/NGRAM), with engine flags."""
+    from aictl.runtime.speculative import (
+        auto_select_method, generate_vllm_args, generate_sglang_args,
+        estimate_speedup, EAGLE3_DRAFTS, MTP_MODELS, SpeculativeConfig,
+    )
+    model = getattr(args, "model", None)
+    show_all = getattr(args, "all", False)
+    use_json = getattr(args, "json", False)
+
+    def _est(method: str) -> dict[str, Any]:
+        cfg = SpeculativeConfig(method=method, parallel_drafting=(method == "p-eagle"))
+        return estimate_speedup(cfg)
+
+    if show_all or not model:
+        matrix = []
+        for method, engines, requirement, when in _METHOD_INFO:
+            est = _est(method)
+            matrix.append({
+                "method": method, "engines": engines, "requirement": requirement,
+                "latency_speedup": est["estimated_latency_speedup"],
+                "throughput_speedup": est["estimated_throughput_speedup"],
+                "when_to_use": when,
+            })
+        if use_json:
+            from aictl.core.output import print_json
+            print_json(matrix)
+            return 0
+        print()
+        print(f"  {'METHOD':<11} {'ENGINES':<15} {'LAT':>5} {'THRPUT':>7}  REQUIREMENT")
+        print(f"  {'-'*11} {'-'*15} {'-'*5} {'-'*7}  {'-'*30}")
+        for r in matrix:
+            print(f"  {r['method']:<11} {r['engines']:<15} "
+                  f"{r['latency_speedup']:>4.1f}x {r['throughput_speedup']:>6.1f}x  {r['requirement']}")
+        print()
+        print("  EAGLE-3 is the 2026 de-facto standard (vLLM + SGLang).")
+        print("  aictl spec methods <model>   # auto-select + ready-to-paste flags\n")
+        return 0
+
+    cfg = auto_select_method(model)
+    est = estimate_speedup(cfg)
+    vllm = generate_vllm_args(cfg)
+    sglang = generate_sglang_args(cfg)
+    native_mtp = model in MTP_MODELS or any(
+        m in model for m in ["DeepSeek-R1", "DeepSeek-V3", "Qwen3"])
+    eagle_draft = EAGLE3_DRAFTS.get(model)
+
+    if use_json:
+        from aictl.core.output import print_json
+        print_json({
+            "model": model,
+            "method": est["method"],
+            "draft_model": cfg.draft_model or None,
+            "estimated_latency_speedup": est["estimated_latency_speedup"],
+            "estimated_throughput_speedup": est["estimated_throughput_speedup"],
+            "vllm_args": vllm,
+            "sglang_args": sglang,
+            "note": est["note"],
+        })
+        return 0
+
+    print()
+    print(f"  Speculative method for: {model}")
+    print()
+    print(f"  Selected: {est['method'].upper()}   ({est['note']})")
+    if eagle_draft:
+        print(f"  EAGLE-3 draft head: {eagle_draft}")
+    elif native_mtp:
+        print("  Native multi-token-prediction weights (no separate draft).")
+    else:
+        print("  No EAGLE-3 head known → NGRAM fallback (zero setup).")
+    print(f"  Expected: ~{est['estimated_latency_speedup']:.1f}x latency / "
+          f"~{est['estimated_throughput_speedup']:.1f}x throughput")
+    print()
+    if vllm:
+        print("  vLLM:")
+        for a in vllm:
+            print(f"    vllm serve {model} \\\n      {a}")
+    if sglang:
+        print("  SGLang:")
+        print(f"    python -m sglang.launch_server --model {model} \\")
+        print("      " + " ".join(sglang))
+    print()
+    print("  Tip: 'aictl spec methods --all' for the full matrix; "
+          "'aictl spec recommend' for classic draft pairing.")
+    print("  Source: arxiv.org/abs/2503.01840 (EAGLE-3)\n")
     return 0
 
 
