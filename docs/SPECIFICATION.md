@@ -130,5 +130,11 @@ defaults equal the constants; `nodes.py` carries no `7700` literal), and G5
 
 ### Future candidates (not gaps today)
 - MCP tool calls could emit OTel spans (tracked in `docs/IMPROVEMENTS.md` N).
-- Manifest generators could optionally source engine-default ports from the
-  `*_DEFAULT_PORT` constants for a single source of truth.
+- **Engine-default ports in manifest generators — evaluated, deferred.** The
+  `8000` in the quadlet/orchestrator generators is a *serving convention*
+  (both vLLM and SGLang quadlets launch with `--port 8000`), not unambiguously
+  an engine's canonical default. Swapping it for `VLLM_DEFAULT_PORT` would be
+  semantically misleading for the SGLang path, and `SGLANG_DEFAULT_PORT`
+  (30000) would change behavior. These literals therefore stay as explicit
+  serving-convention values; recipe data in `manifest.py` likewise declares
+  explicit per-recipe ports. (Audited 2026-06.)

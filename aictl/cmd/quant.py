@@ -7,7 +7,8 @@ and engine availability.
 April 2026 quality retention benchmarks:
   FP16:    100% (baseline)
   FP8:      99% (Hopper/Blackwell, ~zero loss)
-  AWQ 4b:   95% (best 4-bit GPU)
+  NVFP4:    97% (Blackwell 4-bit float; microscaling beats INT4)
+  AWQ 4b:   95% (best INT4 GPU on Ampere/Ada)
   GGUF Q4:  92% (best portability, CPU-friendly)
   GPTQ 4b:  90% (simpler than AWQ)
   GGUF Q3:  88% (aggressive, code suffers)
@@ -32,10 +33,17 @@ QUANT_DATA: dict[str, dict[str, Any]] = {
                "size": 0.50, "engines": ["vllm", "sglang"], "cc": 89,
                "speed": 1.30, "reasoning_risk": 0.03,
                "notes": "Best on H100/H200/B200/RTX 5090; near-lossless (W8A8-FP)."},
+    "nvfp4":  {"q_chat": 0.97, "q_code": 0.96, "q_reasoning": 0.95,
+               "size": 0.27, "engines": ["vllm", "sglang"], "cc": 100,
+               "speed": 2.80, "reasoning_risk": 0.12,
+               "notes": "4-bit float (NVFP4/MXFP4) on Blackwell; AWQ-class size, "
+                        "better accuracy via microscaling. Export: llm-compressor/AutoRound."},
     "awq":    {"q_chat": 0.96, "q_code": 0.95, "q_reasoning": 0.94,
                "size": 0.28, "engines": ["vllm"], "cc": 75,
                "speed": 2.50, "reasoning_risk": 0.32,
-               "notes": "Best 4-bit chat quality; reasoning loss up to 32% (arXiv:2501.03035)."},
+               "notes": "Best INT4 chat quality (Ampere/Ada); reasoning loss up to 32% "
+                        "(arXiv:2501.03035). AutoAWQ is deprecated — export via "
+                        "llm-compressor/GPTQModel."},
     "q4_k_m": {"q_chat": 0.93, "q_code": 0.92, "q_reasoning": 0.91,
                "size": 0.30, "engines": ["ollama", "llama.cpp"], "cc": 0,
                "speed": 1.80, "reasoning_risk": 0.25,

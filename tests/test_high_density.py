@@ -495,12 +495,22 @@ class TestQuantContracts(unittest.TestCase):
 
     def test_quant_data_complete(self):
         from aictl.cmd.quant import QUANT_DATA
-        required = ["fp16", "fp8", "awq", "q4_k_m", "gptq", "q3_k_m"]
+        required = ["fp16", "fp8", "nvfp4", "awq", "q4_k_m", "gptq", "q3_k_m"]
         for k in required:
             self.assertIn(k, QUANT_DATA)
             self.assertIn("q_chat", QUANT_DATA[k])
             self.assertIn("q_code", QUANT_DATA[k])
             self.assertIn("engines", QUANT_DATA[k])
+
+    def test_nvfp4_is_blackwell_gated(self):
+        # FP4 (NVFP4/MXFP4) is a Blackwell feature → must require CC ≥ 100,
+        # beat AWQ on quality, and stay AWQ-class in size.
+        from aictl.cmd.quant import QUANT_DATA
+        nvfp4, awq = QUANT_DATA["nvfp4"], QUANT_DATA["awq"]
+        self.assertGreaterEqual(nvfp4["cc"], 100)
+        self.assertGreater(nvfp4["q_reasoning"], awq["q_reasoning"])
+        self.assertLessEqual(nvfp4["size"], awq["size"] + 0.02)
+        self.assertIn("vllm", nvfp4["engines"])
 
     def test_quant_quality_range(self):
         from aictl.cmd.quant import QUANT_DATA
