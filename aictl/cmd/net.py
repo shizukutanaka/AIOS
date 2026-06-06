@@ -17,52 +17,78 @@ from aictl.core.state import StateStore
 def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("net", help="Network diagnostics")
+    # SUPPRESS default so the local flag never clobbers a global `aictl --json`.
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                   help="Emit results as JSON")
     p.set_defaults(func=run)
 
 
-def run(args: argparse.Namespace) -> int:
-    """Execute the net command."""
+def collect_diagnostics(args: argparse.Namespace) -> dict[str, Any]:
+    """Probe engine endpoints, daemon, proxy and DNS. Returns a results dict."""
     store = StateStore(getattr(args, "state_dir", None))
     config = load_config(store.dir)
     endpoints = config.engines.to_dict()
 
-    print("Network diagnostics")
-    print()
-
-    # Check each engine endpoint
+    engines = []
     for name, url in endpoints.items():
         host, port = _parse_endpoint(url)
         reachable, latency = _check_tcp(host, port)
-        icon = "\u2713" if reachable else "\u2717"
-        lat = f"{latency:.0f}ms" if reachable else "unreachable"
-        print(f"  {icon} {name:10s} {url:35s} {lat}")
+        engines.append({"name": name, "url": url, "reachable": reachable,
+                        "latency_ms": round(latency, 1) if reachable else None})
 
-    # Check daemon
-    print()
     daemon_url = f"http://{config.daemon.host}:{config.daemon.port}"
-    reachable, latency = _check_http(f"{daemon_url}/v1/health")
-    icon = "\u2713" if reachable else "\u2717"
-    lat = f"{latency:.0f}ms" if reachable else "not running"
-    print(f"  {icon} {'aiosd':10s} {daemon_url:35s} {lat}")
+    d_ok, d_lat = _check_http(f"{daemon_url}/v1/health")
+    daemon = {"url": daemon_url, "reachable": d_ok,
+              "latency_ms": round(d_lat, 1) if d_ok else None}
 
-    # Check proxy
     from aictl.core.constants import PROXY_PORT
     proxy_url = f"http://127.0.0.1:{PROXY_PORT}"
-    reachable, latency = _check_http(f"{proxy_url}/health")
-    icon = "\u2713" if reachable else "\u2717"
-    lat = f"{latency:.0f}ms" if reachable else "not running"
-    print(f"  {icon} {'proxy':10s} {proxy_url:35s} {lat}")
+    p_ok, p_lat = _check_http(f"{proxy_url}/health")
+    proxy = {"url": proxy_url, "reachable": p_ok,
+             "latency_ms": round(p_lat, 1) if p_ok else None}
 
-    # DNS
-    print()
+    dns = []
     for host in ["ghcr.io", "registry.ollama.ai", "huggingface.co"]:
         t0 = time.monotonic()
         try:
             socket.getaddrinfo(host, 443, socket.AF_INET, socket.SOCK_STREAM)
-            latency = (time.monotonic() - t0) * 1000
-            print(f"  \u2713 DNS  {host:35s} {latency:.0f}ms")
+            dns.append({"host": host, "resolved": True,
+                        "latency_ms": round((time.monotonic() - t0) * 1000, 1)})
         except socket.gaierror:
-            print(f"  \u2717 DNS  {host:35s} failed")
+            dns.append({"host": host, "resolved": False, "latency_ms": None})
+
+    return {"engines": engines, "daemon": daemon, "proxy": proxy, "dns": dns}
+
+
+def run(args: argparse.Namespace) -> int:
+    """Execute the net command."""
+    result = collect_diagnostics(args)
+
+    if getattr(args, "json", False):
+        from aictl.core.output import print_json
+        print_json(result)
+        return 0
+
+    print("Network diagnostics")
+    print()
+    for e in result["engines"]:
+        icon = "\u2713" if e["reachable"] else "\u2717"
+        lat = f"{e['latency_ms']:.0f}ms" if e["reachable"] else "unreachable"
+        print(f"  {icon} {e['name']:10s} {e['url']:35s} {lat}")
+
+    print()
+    for label, info, down in (("aiosd", result["daemon"], "not running"),
+                              ("proxy", result["proxy"], "not running")):
+        icon = "\u2713" if info["reachable"] else "\u2717"
+        lat = f"{info['latency_ms']:.0f}ms" if info["reachable"] else down
+        print(f"  {icon} {label:10s} {info['url']:35s} {lat}")
+
+    print()
+    for d in result["dns"]:
+        if d["resolved"]:
+            print(f"  \u2713 DNS  {d['host']:35s} {d['latency_ms']:.0f}ms")
+        else:
+            print(f"  \u2717 DNS  {d['host']:35s} failed")
 
     return 0
 
