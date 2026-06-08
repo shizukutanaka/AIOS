@@ -93,7 +93,58 @@ def generate_metrics_text(store: StateStore) -> str:
     models = store.list_models()
     _gauge(lines, "aios_models_registered", "Number of registered models", len(models))
 
+    # ── Value-prop metrics ────────────────────────────────────────────
+    # The headline claims (cache savings, cost avoided, tokens metered) that
+    # peers (LiteLLM/Portkey/Helicone) expose as counters — emitted here so
+    # dashboards can *prove* the ROI instead of asserting it. All best-effort:
+    # a failure in any block must not break the /metrics endpoint.
+    _emit_value_prop_metrics(lines)
+
     return "\n".join(lines) + "\n"
+
+
+def _emit_value_prop_metrics(lines: list[str]) -> None:
+    """Emit cache-savings, cost-avoided, and metering counters (best-effort)."""
+    from aictl.core.constants import PRICE_PER_MILLION_INPUT, PRICE_PER_MILLION_OUTPUT
+    # Cache responses avoid both prompt re-send and generation; blend the two.
+    blended_price_per_million = (PRICE_PER_MILLION_INPUT + PRICE_PER_MILLION_OUTPUT) / 2
+
+    # Semantic cache: lifetime savings (the core "30-50% cost cut" claim).
+    try:
+        from aictl.core.sem_cache import get_default_cache
+        stats = get_default_cache().stats()
+        tokens_saved = int(stats.get("lifetime_tokens_saved", 0) or 0)
+        cost_saved_usd = tokens_saved / 1_000_000 * blended_price_per_million
+        _gauge(lines, "aios_cache_entries",
+               "Semantic cache entries", int(stats.get("entries", 0) or 0))
+        _counter(lines, "aios_cache_hits_total",
+                 "Lifetime semantic cache hits", int(stats.get("lifetime_hits", 0) or 0))
+        _counter(lines, "aios_cache_tokens_saved_total",
+                 "Lifetime tokens served from cache (not re-inferred)", tokens_saved)
+        _counter(lines, "aios_cache_cost_saved_usd_total",
+                 "Estimated USD saved by cache hits", round(cost_saved_usd, 6))
+        _gauge(lines, "aios_cache_hit_rate",
+               "Session cache hit rate (0-1)", stats.get("session_hit_rate", 0.0))
+    except Exception:
+        pass  # cache DB may be absent; skip silently
+
+    # Metering: tokens and cost attributed across tenants/keys.
+    try:
+        from aictl.core.metering import TokenMeter
+        buckets = TokenMeter().list_usage()
+        total_tokens = sum(b.total_tokens for b in buckets)
+        total_prompt = sum(b.prompt_tokens for b in buckets)
+        total_completion = sum(b.completion_tokens for b in buckets)
+        metered_cost = (total_prompt / 1_000_000 * PRICE_PER_MILLION_INPUT
+                        + total_completion / 1_000_000 * PRICE_PER_MILLION_OUTPUT)
+        _counter(lines, "aios_tokens_metered_total",
+                 "Total tokens metered across all entities", total_tokens)
+        _counter(lines, "aios_cost_metered_usd_total",
+                 "Estimated USD cost of metered tokens", round(metered_cost, 6))
+        _gauge(lines, "aios_metered_entities",
+               "Number of metered tenants/keys", len(buckets))
+    except Exception:
+        pass  # metering store may be empty; skip silently
 
 
 def _gauge(lines: list[str], name: str, help_text: str,
@@ -101,6 +152,18 @@ def _gauge(lines: list[str], name: str, help_text: str,
     """Execute gauge."""
     lines.append(f"# HELP {name} {help_text}")
     lines.append(f"# TYPE {name} gauge")
+    if labels:
+        label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
+        lines.append(f"{name}{{{label_str}}} {value}")
+    else:
+        lines.append(f"{name} {value}")
+
+
+def _counter(lines: list[str], name: str, help_text: str,
+             value: Any, labels: dict[str, str] | None = None) -> None:
+    """Emit a Prometheus counter (monotonic; convention: _total suffix)."""
+    lines.append(f"# HELP {name} {help_text}")
+    lines.append(f"# TYPE {name} counter")
     if labels:
         label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
         lines.append(f"{name}{{{label_str}}} {value}")

@@ -140,7 +140,15 @@ The gaps below are where it trails current peers or recent research — not gree
   and have `fit`/`recommend` reason about **unified memory** (model can use system RAM as VRAM),
   which today's VRAM-only math gets wrong on Macs.
 
-## J. Observability of the value props
+## J. Observability of the value props — ✅ implemented (v1.6)
+
+> **Status:** the `/metrics` endpoint (`metrics/prometheus.py`) now emits value-prop counters
+> peers (LiteLLM/Portkey/Helicone) expose: `aios_cache_tokens_saved_total`,
+> `aios_cache_hits_total`, `aios_cache_cost_saved_usd_total`, `aios_cache_entries`,
+> `aios_cache_hit_rate`, plus metering totals `aios_tokens_metered_total` /
+> `aios_cost_metered_usd_total`. All best-effort (a failed read never breaks `/metrics`),
+> typed as Prometheus counters with the `_total` convention. Route-savings/guard-redaction
+> counters still need persistent tallies and remain future work.
 
 - **Current:** OTel GenAI spans + Prometheus exist (`metrics/`).
 - **Gap:** the headline claims (cache savings, route savings, TCO) aren't all emitted as

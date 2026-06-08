@@ -134,6 +134,58 @@ class TestPrometheusMetrics(unittest.TestCase):
                 parts = line.split()
                 self.assertGreaterEqual(len(parts), 2, f"Bad line: {line}")
 
+    def test_contains_value_prop_counters(self):
+        # The ROI metrics peers (LiteLLM/Portkey) expose: cache savings + cost.
+        text = generate_metrics_text(self.store)
+        self.assertIn("aios_cache_tokens_saved_total", text)
+        self.assertIn("aios_cache_cost_saved_usd_total", text)
+        self.assertIn("aios_tokens_metered_total", text)
+        self.assertIn("aios_cost_metered_usd_total", text)
+
+    def test_value_prop_metrics_typed_as_counter(self):
+        text = generate_metrics_text(self.store)
+        # Each _total metric must declare TYPE counter (Prometheus convention).
+        for name in ("aios_cache_tokens_saved_total",
+                     "aios_cache_cost_saved_usd_total",
+                     "aios_tokens_metered_total"):
+            self.assertIn(f"# TYPE {name} counter", text,
+                          f"{name} must be a counter")
+
+    def test_cache_cost_saved_matches_tokens(self):
+        # Seed the cache with a known savings and confirm the emitted cost is
+        # tokens_saved/1e6 * blended price.
+        import tempfile as _tf
+        import os as _os
+        from aictl.core.constants import (PRICE_PER_MILLION_INPUT,
+                                          PRICE_PER_MILLION_OUTPUT)
+        from aictl.core import sem_cache
+        with _tf.TemporaryDirectory() as td:
+            _os.environ["AIOS_STATE_DIR"] = td
+            sem_cache._DEFAULT_CACHE = None  # force fresh DB in temp dir
+            try:
+                cache = sem_cache.get_default_cache()
+                # Explicit embedding avoids any engine dependency offline.
+                cache.store("what is 2+2?", "4", model="m", tokens=120,
+                            embedding=[0.1] * 8)
+                # An exact hit bumps the stored row's hit count; lifetime saved
+                # = SUM(tokens_saved * hits) = 120 * 1.
+                got = cache.lookup("what is 2+2?", model="m")
+                self.assertIsNotNone(got)
+                text = generate_metrics_text(self.store)
+                blended = (PRICE_PER_MILLION_INPUT + PRICE_PER_MILLION_OUTPUT) / 2
+                # Find the emitted saved-tokens value.
+                saved = None
+                for line in text.splitlines():
+                    if line.startswith("aios_cache_tokens_saved_total "):
+                        saved = int(line.split()[-1])
+                self.assertIsNotNone(saved)
+                self.assertGreaterEqual(saved, 120)
+                expected_cost = round(saved / 1_000_000 * blended, 6)
+                self.assertIn(f"aios_cache_cost_saved_usd_total {expected_cost}", text)
+            finally:
+                sem_cache._DEFAULT_CACHE = None
+                _os.environ.pop("AIOS_STATE_DIR", None)
+
 
 class TestWarmupManager(unittest.TestCase):
     def setUp(self):
