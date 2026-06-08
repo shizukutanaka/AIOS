@@ -127,9 +127,11 @@ defaults equal the constants; `nodes.py` carries no `7700` literal), and G5
 ### Resolved since first audit
 - `update` now emits JSON for all three subcommands (`check`/`models`/`self`)
   and is no longer G1-exempt.
+- MCP tool calls now emit OTel `ToolSpan` records via `aictl.metrics.genai_spans`;
+  each call is appended to a bounded ring buffer (maxlen 200) and optionally
+  exported via OTLP/HTTP when `AIOS_OTEL_ENDPOINT` is set. (2026-06.)
 
 ### Future candidates (not gaps today)
-- MCP tool calls could emit OTel spans (tracked in `docs/IMPROVEMENTS.md` N).
 - **Engine-default ports in manifest generators — evaluated, deferred.** The
   `8000` in the quadlet/orchestrator generators is a *serving convention*
   (both vLLM and SGLang quadlets launch with `--port 8000`), not unambiguously
