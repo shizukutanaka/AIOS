@@ -7,7 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aictl.mcp_server import handle_tool, handle_request, TOOLS
+import aictl.mcp_server as _mcp
+from aictl.mcp_server import handle_tool, handle_request, TOOLS, get_tool_spans
 
 
 class TestMCPTools(unittest.TestCase):
@@ -121,6 +122,77 @@ class TestMCPProtocol(unittest.TestCase):
             "params": {"name": "aictl_status", "arguments": {}},
         })
         self.assertIn("content", resp["result"])
+
+
+class TestMCPToolSpans(unittest.TestCase):
+    """OTel span instrumentation for MCP tool calls."""
+
+    def setUp(self):
+        # Clear the ring buffer before each test.
+        _mcp._TOOL_SPANS.clear()
+
+    def test_span_recorded_on_success(self):
+        handle_tool("aictl_health", {})
+        spans = get_tool_spans()
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].tool_name, "aictl_health")
+        self.assertTrue(spans[0].success)
+        self.assertEqual(spans[0].error, "")
+
+    def test_span_records_error_flag(self):
+        handle_tool("nonexistent_tool_xyz", {})
+        spans = get_tool_spans()
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].tool_name, "nonexistent_tool_xyz")
+        self.assertFalse(spans[0].success)
+        self.assertNotEqual(spans[0].error, "")
+
+    def test_span_has_positive_duration(self):
+        handle_tool("aictl_status", {})
+        spans = get_tool_spans()
+        self.assertGreater(spans[0].duration_ms(), 0.0)
+
+    def test_ring_bounded_at_200(self):
+        from aictl.metrics.genai_spans import ToolSpan
+        for i in range(210):
+            _mcp._TOOL_SPANS.append(ToolSpan(tool_name=f"t{i}"))
+        # deque(maxlen=200) silently drops oldest; never exceeds 200.
+        self.assertEqual(len(_mcp._TOOL_SPANS), 200)
+        # Oldest entries are gone; only the last 200 survive.
+        self.assertEqual(_mcp._TOOL_SPANS[-1].tool_name, "t209")
+
+    def test_otel_attributes_shape(self):
+        from aictl.metrics.genai_spans import ToolSpan
+        span = ToolSpan(tool_name="aictl_health", success=True,
+                        start_time_ns=1_000_000, end_time_ns=2_000_000)
+        attrs = span.to_otel_attributes()
+        self.assertEqual(attrs["gen_ai.operation.name"], "tool")
+        self.assertEqual(attrs["aios.mcp.tool_name"], "aictl_health")
+        self.assertTrue(attrs["aios.mcp.success"])
+        self.assertAlmostEqual(attrs["aios.mcp.duration_ms"], 1.0, places=3)
+        self.assertNotIn("aios.mcp.error", attrs)
+
+    def test_otel_attributes_include_error_when_failed(self):
+        from aictl.metrics.genai_spans import ToolSpan
+        span = ToolSpan(tool_name="bad_tool", success=False,
+                        start_time_ns=1_000_000, end_time_ns=3_000_000,
+                        error="Unknown tool: bad_tool")
+        attrs = span.to_otel_attributes()
+        self.assertFalse(attrs["aios.mcp.success"])
+        self.assertIn("aios.mcp.error", attrs)
+        self.assertIn("bad_tool", attrs["aios.mcp.error"])
+
+    def test_otlp_span_structure(self):
+        from aictl.metrics.genai_spans import ToolSpan
+        span = ToolSpan(tool_name="aictl_cost", success=True,
+                        start_time_ns=5_000_000_000, end_time_ns=5_001_000_000)
+        otlp = span.to_otlp_span()
+        self.assertEqual(otlp["name"], "mcp aictl_cost")
+        self.assertEqual(otlp["kind"], 3)
+        self.assertEqual(otlp["status"]["code"], 1)
+        keys = {a["key"] for a in otlp["attributes"]}
+        self.assertIn("gen_ai.operation.name", keys)
+        self.assertIn("aios.mcp.tool_name", keys)
 
     def test_mcp_ping_endpoint(self):
         resp = handle_request({"jsonrpc": "2.0", "id": 4, "method": "ping"})

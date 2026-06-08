@@ -32,9 +32,11 @@ Usage:
 
 from __future__ import annotations
 
-
 import json
+import os
 import sys
+import time
+from collections import deque
 from typing import Any
 
 
@@ -243,9 +245,57 @@ TOOLS = [
 ]
 
 
-# ── Tool Handlers ──
+# ── Tool Span Ring Buffer ──
+# Bounded ring of the 200 most-recent MCP tool spans; never grows unboundedly.
+_TOOL_SPANS: deque = deque(maxlen=200)
+
+
+def get_tool_spans() -> list:
+    """Return a snapshot of the recent MCP tool-call spans (for testing/inspection)."""
+    return list(_TOOL_SPANS)
+
+
+def _first_text(result: dict) -> str:
+    """Extract the first text content fragment from an MCP result dict."""
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            return item.get("text", "")[:200]
+    return ""
+
+
 def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Execute a tool and return MCP result."""
+    """Execute a tool, record an OTel ToolSpan, and return the MCP result.
+
+    The span is always appended to the in-process ring buffer.  If the env var
+    AIOS_OTEL_ENDPOINT is set the span is also fire-and-forget exported via
+    OTLP/HTTP.  Observability failures never propagate to the caller.
+    """
+    start_ns = time.monotonic_ns()
+    result = _dispatch_tool(name, arguments)
+    end_ns = time.monotonic_ns()
+
+    try:
+        from aictl.metrics.genai_spans import ToolSpan, export_tool_spans
+        span = ToolSpan(
+            tool_name=name,
+            success=not result.get("isError", False),
+            start_time_ns=start_ns,
+            end_time_ns=end_ns,
+            error="" if not result.get("isError") else _first_text(result),
+        )
+        _TOOL_SPANS.append(span)
+        endpoint = os.environ.get("AIOS_OTEL_ENDPOINT", "")
+        if endpoint:
+            export_tool_spans([span], endpoint=endpoint)
+    except Exception:
+        pass  # observability must never break the serving path
+
+    return result
+
+
+# ── Tool Handlers ──
+def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch to a specific tool implementation and return MCP result."""
     try:
         if name == "aictl_health":
             return _tool_health()
