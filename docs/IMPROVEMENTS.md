@@ -221,7 +221,15 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
   `--speculative-config '{"method":"eagle3",...}'`). Recommend EAGLE-3 when a trained head
   exists for the family; fall back to draft-pairing otherwise. Raise the speedup ceiling.
 
-## M. Fairness & carbon/energy-aware scheduling — counters exist, policy doesn't
+## M. Fairness & carbon/energy-aware scheduling — carbon advisor ✅ implemented (v1.6); fair-share TBD
+
+> **Carbon/energy advisor status:** shipped as `aictl tco carbon` and `aictl tco --carbon-intensity`.
+> Shows kWh + CO₂e (regional IEA 2024 grid intensities), GPU power-cap flags (`nvidia-smi -pl`),
+> projected savings, and FREESH-style scheduling projections (28.6% energy / 45.5% emissions).
+> The `aictl_tco` MCP tool now also accepts `region` / `carbon_intensity`. The VTC/DLPM
+> fair-share scheduling component remains a future item.
+
+## M original. Fairness & carbon/energy-aware scheduling — counters exist, policy doesn't
 
 - **Current:** aictl has per-tenant **metering** (`core/metering.py`), **tenant** quotas
   (`core/tenant.py`), an **autoscaler** (`runtime/autoscaler.py`) and a **governor**

@@ -234,11 +234,13 @@ TOOLS = [
     },
     {
         "name": "aictl_tco",
-        "description": "True Cost of Ownership: GPU depreciation + electricity vs cloud API pricing.",
+        "description": "True Cost of Ownership: GPU depreciation + electricity + CO₂e emissions vs cloud API pricing. Includes GPU power-cap advisory from FREESH (arXiv:2511.00807).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "period_days": {"type": "integer", "default": 30},
+                "carbon_intensity": {"type": "number", "description": "Grid carbon intensity in gCO₂e/kWh (default: 500 world avg)"},
+                "region": {"type": "string", "description": "Grid region shortcode for automatic carbon intensity (e.g. jp, us, eu, fr, cn)", "default": "global"},
             },
         },
     },
@@ -671,13 +673,17 @@ def _tool_troubleshoot(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
-    """True cost of ownership."""
+    """True cost of ownership + carbon/energy advisory."""
     import io as _io
     from contextlib import redirect_stdout
-    from aictl.cmd.tco import run_summary
+    from aictl.cmd.tco import run_summary, CARBON_INTENSITY_BY_REGION
+    # Resolve carbon intensity: explicit value takes precedence over region shortcode.
+    ci = args.get("carbon_intensity") or CARBON_INTENSITY_BY_REGION.get(
+        args.get("region", "global"), 500)
     class _A:
         json = False
         period_days = args.get("period_days", 30)
+        carbon_intensity = ci
         command = "tco"
     buf = _io.StringIO()
     with redirect_stdout(buf):
