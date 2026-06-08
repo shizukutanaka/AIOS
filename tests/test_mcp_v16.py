@@ -167,7 +167,7 @@ class TestMCPToolSchemas(unittest.TestCase):
 
     def test_tool_count(self):
         from aictl.mcp_server import TOOLS
-        self.assertEqual(len(TOOLS), 18)
+        self.assertEqual(len(TOOLS), 19)
 
 
 if __name__ == "__main__":

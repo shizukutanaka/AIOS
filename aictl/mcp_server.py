@@ -242,6 +242,18 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "aictl_guided",
+        "description": "Recommend a structured/guided-decoding backend (XGrammar/Outlines/llguidance) and ready-to-paste serve flags so a model emits valid JSON. Optionally validate a JSON instance against a JSON Schema locally.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "engine": {"type": "string", "enum": ["vllm", "sglang", "tensorrt-llm", "ollama"], "default": "vllm"},
+                "instance": {"type": "object", "description": "Optional JSON instance to validate against `schema`"},
+                "schema": {"type": "object", "description": "Optional JSON Schema; if given with `instance`, returns validation errors"},
+            },
+        },
+    },
 ]
 
 
@@ -333,6 +345,8 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return _tool_troubleshoot(arguments)
         elif name == "aictl_tco":
             return _tool_tco(arguments)
+        elif name == "aictl_guided":
+            return _tool_guided(arguments)
         else:
             return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
     except Exception as e:
@@ -669,6 +683,38 @@ def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
     with redirect_stdout(buf):
         run_summary(_A())
     return {"content": [{"type": "text", "text": buf.getvalue().strip()}]}
+
+
+def _tool_guided(args: dict[str, Any]) -> dict[str, Any]:
+    """Recommend a guided-decoding backend and/or validate against a schema."""
+    from aictl.runtime.guided import (
+        recommend_backend, vllm_flags, sglang_flags, ENGINE_BACKENDS,
+        validate_json_schema,
+    )
+    engine = args.get("engine", "vllm").lower()
+    out: dict[str, Any] = {}
+
+    # Optional local JSON-Schema validation.
+    if "schema" in args and "instance" in args:
+        errors = validate_json_schema(args["instance"], args["schema"])
+        out["validation"] = {"valid": not errors, "errors": errors}
+
+    if engine not in ENGINE_BACKENDS:
+        return {"content": [{"type": "text", "text": f"Unknown engine: {engine}"}],
+                "isError": True}
+    backend = recommend_backend(engine)
+    if backend is None:
+        out["engine"] = engine
+        out["backend"] = None
+        out["native"] = True
+        out["note"] = "Ollama enforces JSON via its `format` field — no serve flag."
+    else:
+        flags = vllm_flags(backend) if engine in ("vllm", "tensorrt-llm") else sglang_flags(backend)
+        out["engine"] = engine
+        out["backend"] = backend
+        out["serve_flags"] = flags
+        out["alternatives"] = ENGINE_BACKENDS[engine][1:]
+    return {"content": [{"type": "text", "text": json.dumps(out, indent=2)}]}
 
 
 # ── JSON-RPC 2.0 Handler ──

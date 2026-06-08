@@ -379,7 +379,7 @@ class TestGateChecks(unittest.TestCase):
 
     def test_mcp_tool_count(self):
         from aictl.mcp_server import TOOLS
-        self.assertEqual(len(TOOLS), 18)
+        self.assertEqual(len(TOOLS), 19)
         names = {t["name"] for t in TOOLS}
         for required in ["aictl_fit", "aictl_quant", "aictl_guard_scan",
                          "aictl_rag_ask", "aictl_troubleshoot", "aictl_tco"]:

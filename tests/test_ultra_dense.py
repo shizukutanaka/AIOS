@@ -282,7 +282,7 @@ class TestMCPContracts(unittest.TestCase):
         from aictl.mcp_server import handle_request
         r = handle_request({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
         tools = r["result"]["tools"]
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 19)
         for t in tools:
             self.assertIn("name", t)
             self.assertIn("description", t)
@@ -1023,7 +1023,7 @@ class TestExactly200(unittest.TestCase):
         from aictl.mcp_server import TOOLS
         self.assertEqual(AICTL_VERSION, "1.6.0")
         self.assertEqual(OLLAMA_DEFAULT_PORT, 11434)
-        self.assertEqual(len(TOOLS), 18)
+        self.assertEqual(len(TOOLS), 19)
         self.assertGreater(len(AICTL_VERSION), 0)
 
     def test_ratio_2_0_achieved(self):

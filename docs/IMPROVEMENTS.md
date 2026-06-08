@@ -14,7 +14,7 @@ routing (`runtime/adapters.py`, `runtime/router.py`), VRAM-fit + quant advisors
 (`cmd/fit.py`, `cmd/quant.py`), a speculative-decoding advisor (`cmd/spec.py`),
 RadixAttention-style prefix-cache routing (`runtime/prefix_route.py`), a local semantic
 cache (`core/sem_cache.py`), zero-config RAG (`core/rag.py`), PII/guardrails
-(`core/guard.py`), 7 K8s export formats, Dynamo/MIG/LoRA, and an 18-tool MCP server.
+(`core/guard.py`), 7 K8s export formats, Dynamo/MIG/LoRA, and a 19-tool MCP server.
 The gaps below are where it trails current peers or recent research — not greenfield.
 
 ---
@@ -187,7 +187,13 @@ Guardrails tooling: [NeMo Guardrails](https://github.com/NVIDIA-NeMo/Guardrails)
 
 A deeper sweep surfaced four more areas, each grounded in an existing module.
 
-## K. Constrained / structured-decoding advisor — entirely missing
+## K. Constrained / structured-decoding advisor — ✅ implemented (v1.6)
+
+> **Status:** shipped as `aictl guided` (`cmd/guided.py` + `runtime/guided.py`) and the
+> `aictl_guided` MCP tool. Provides the engine→backend support matrix
+> (XGrammar/llguidance/Outlines/lm-format-enforcer) with ready-to-paste serve flags
+> (`guided recommend`/`guided matrix`) **and** a dependency-free JSON-Schema validator
+> (`guided validate`, also exposed to SDK/MCP callers via `runtime.guided.validate_json_schema`).
 
 - **Current:** no guided-decoding support anywhere. aictl emits schema-shaped data
   everywhere (`--json` on every command, the JSON-RPC MCP server) yet offers no advice on
@@ -233,7 +239,7 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
 
 ## N. MCP server & agent interoperability — observability/streaming gap
 
-- **Current:** an 18-tool JSON-RPC MCP server (`aictl/mcp_server`). aictl ships OTel GenAI
+- **Current:** a 19-tool JSON-RPC MCP server (`aictl/mcp_server`). aictl ships OTel GenAI
   spans (`metrics/genai_spans.py`) elsewhere, but the MCP path doesn't emit per-tool spans or
   stream progress.
 - **Field:** the 2026 agent frameworks (Claude Agent SDK, LangGraph, OpenAI Agents SDK, AWS

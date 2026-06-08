@@ -159,6 +159,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Complexity-aware smart routing (saves 2-5x on cost)
     route.register(sub)
 
+    # Structured / guided-decoding advisor + local JSON-Schema validator
+    from aictl.cmd import guided
+    guided.register(sub)
+
     # LLM regression testing — v1.7.0
     from aictl.cmd import eval as eval_cmd
     eval_cmd.register(sub)

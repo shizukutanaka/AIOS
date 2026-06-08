@@ -47,7 +47,7 @@ These hold for the whole CLI and are machine-checked.
 
 ## 3. Command catalog
 
-65 Python commands, grouped by area. All honor **G1** unless marked *exempt*.
+66 Python commands, grouped by area. All honor **G1** unless marked *exempt*.
 
 | Area | Commands |
 |------|----------|
@@ -55,7 +55,7 @@ These hold for the whole CLI and are machine-checked.
 | Inventory/status | `ps`, `status`, `info`, `health`, `report`, `watch`*, `dash`*, `net` |
 | Models | `model`, `recommend`, `fit`, `quant`, `convert`, `image`, `warmup` |
 | Serving | `serve`*, `proxy`*, `deploy`, `apply`, `down`, `scale`, `recipe`, `chat`* |
-| Inference quality | `route`, `spec`, `rag`, `guard`, `cache`, `eval`, `prompt`, `bench`, `perf` |
+| Inference quality | `route`, `spec`, `guided`, `rag`, `guard`, `cache`, `eval`, `prompt`, `bench`, `perf` |
 | Multi-tenant/cost | `tenant`, `quota`, `meter`, `cost`, `tco`, `batch` |
 | Cluster/hardware | `cluster`, `node`, `mig`, `lora`, `fabric`, `context` |
 | Observability | `otel`*, `trace`, `log`, `logs`*, `audit`, `snapshot`, `diff` |
@@ -74,7 +74,7 @@ Health is `GET /v1/health`. The OpenAI-compatible proxy (`aictl proxy`) exposes
 
 ## 5. MCP server
 
-`aictl mcp_server` speaks JSON-RPC 2.0 over stdio and registers 18 tools
+`aictl mcp_server` speaks JSON-RPC 2.0 over stdio and registers 19 tools
 mapping to core advisors (recommend, fit, quant, spec, route, rag, guard, …).
 Tool inputs/outputs are JSON; tool descriptions are audited for poisoning
 (`core/guard.audit_tools`).

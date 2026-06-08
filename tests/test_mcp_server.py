@@ -114,7 +114,7 @@ class TestMCPProtocol(unittest.TestCase):
     def test_tools_list(self):
         resp = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tools = resp["result"]["tools"]
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 19)
 
     def test_tools_call(self):
         resp = handle_request({

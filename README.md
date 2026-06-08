@@ -164,14 +164,14 @@ aictl scale keda <stack>               # KEDA ScaledObject
 ## Architecture
 
 ```
-CLI (65 Python + 29 Go)
+CLI (66 Python + 29 Go)
 ├── Runtime   Broker → Router → AutoScaler → Fabric → Isolation
 ├── Daemon    22 REST API + Proxy + SLO Governor + Mock Engine
 ├── Stack     10 Recipes + Quadlet + KServe + Gateway API + llm-d
 ├── Core      Metering + Security + Cost + API Keys + Audit
 ├── Trust     Cosign v3 + ORAS
 ├── Metrics   OTel GenAI SemConv + Prometheus
-├── MCP       18 tools (stdio JSON-RPC 2.0)
+├── MCP       19 tools (stdio JSON-RPC 2.0)
 └── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
 ```
 
@@ -230,7 +230,7 @@ MIT
 
 ## MCP Server — use aictl from Claude Desktop, Cursor, VS Code
 
-aictl exposes 18 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
+aictl exposes 19 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
 
 ```json
 // Claude Desktop config (~/.config/claude/mcp_servers.json):
