@@ -90,7 +90,13 @@ The gaps below are where it trails current peers or recent research — not gree
   **long-context KV advisor** to `cmd/optimize.py` recommending eviction/compression flags
   (e.g. vLLM cache settings) by context length — advisory-only, zero-dep.
 
-## F. Prefill/decode & MoE serving advisors
+## F. Prefill/decode & MoE serving advisors — ✅ implemented (v1.6)
+
+> **Status:** shipped as `aictl deploy strategy <model> --gpu-count N --objective ...`
+> (`cmd/deploy.py` + `runtime/serving_strategy.py`). Detects dense vs MoE, then recommends
+> **aggregated (chunked-prefill)** vs **P/D-disaggregation** vs **AFD (Attention–FFN)** with
+> ready-to-paste vLLM flags and the `aictl deploy disagg/optimize` command to materialize it.
+
 
 - **Current:** `stack/disagg.py` already exports P/D-disaggregated manifests (NIXL/LMCache) and
   `runtime/dynamo.py` covers KVBM. Strong base.

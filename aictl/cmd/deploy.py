@@ -65,6 +65,18 @@ def register(sub: Any) -> None:
     opt.add_argument("--speculative", action="store_true")
     opt.set_defaults(func=run_optimize)
 
+    strat = dsub.add_parser(
+        "strategy",
+        help="Advise serving topology: aggregated vs P/D-disagg vs AFD.")
+    strat.add_argument("model", help="Model name")
+    strat.add_argument("--gpu-count", type=int, default=1)
+    strat.add_argument("--objective", default="balanced",
+                       choices=["balanced", "latency", "throughput"])
+    strat.add_argument("--model-type", default="auto",
+                       choices=["auto", "dense", "moe"],
+                       help="Override dense/MoE detection.")
+    strat.set_defaults(func=run_strategy)
+
     ms = dsub.add_parser("modelservice", help="Generate llm-d ModelService Helm values")
     ms.add_argument("model", help="Model name")
     ms.add_argument("--preset", default="balanced", choices=["balanced", "latency", "throughput"])
@@ -247,6 +259,46 @@ def run_optimize(args: argparse.Namespace) -> int:
     if result.estimated_throughput_tps:
         print(f"\n  Estimated: ~{result.estimated_throughput_tps} tokens/sec")
 
+    return 0
+
+
+def run_strategy(args: argparse.Namespace) -> int:
+    """Advise on serving topology (aggregated / P/D-disagg / AFD)."""
+    from aictl.runtime.serving_strategy import recommend_strategy
+
+    model_type = None if args.model_type == "auto" else args.model_type
+    rec = recommend_strategy(
+        model=args.model,
+        gpu_count=args.gpu_count,
+        objective=args.objective,
+        model_type=model_type,
+    )
+
+    if getattr(args, "json", False):
+        print_json(rec.to_dict())
+        return 0
+
+    ok(f"Recommended serving strategy: {rec.strategy.upper()}")
+    print()
+    print_kv([
+        ("Model",      args.model),
+        ("Model type", rec.model_type),
+        ("GPUs",       str(rec.gpu_count)),
+        ("Objective",  rec.objective),
+    ])
+    print()
+    print(f"  Why: {rec.rationale}")
+    print()
+    if rec.vllm_flags:
+        print("  vLLM flags:")
+        for f in rec.vllm_flags:
+            print(f"    {f}")
+        print()
+    print(f"  Materialize:  {rec.next_command}")
+    print()
+    for ref in rec.references:
+        print(f"  Source: {ref}")
+    print()
     return 0
 
 
