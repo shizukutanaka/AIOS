@@ -82,7 +82,6 @@ def run_list(args: argparse.Namespace) -> int:
         used = cfg.get("used_tokens", 0)
         limit = cfg["tokens_per_month"]
         pct = used / limit * 100 if limit > 0 else 0
-        "█" * min(20, int(pct / 5)) + "░" * (20 - min(20, int(pct / 5)))
         rows.append({
             "TEAM": name,
             "USED": f"{used:,}",

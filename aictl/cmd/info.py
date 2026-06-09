@@ -32,7 +32,8 @@ def _count_tests() -> str:
             if not f.startswith("test_") or not f.endswith(".py"):
                 continue
             try:
-                tree = ast.parse(open(os.path.join(tests_dir, f)).read())
+                with open(os.path.join(tests_dir, f)) as _fh:
+                    tree = ast.parse(_fh.read())
                 for node in ast.walk(tree):
                     if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                         count += 1

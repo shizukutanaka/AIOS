@@ -117,7 +117,7 @@ def cloud_completion(
         "model": target_model,
         "messages": messages,
         "max_tokens": max_tokens or config.max_tokens,
-        "stream": False,  # Streaming requires chunked response handling
+        "stream": stream,
     }
 
     url = f"{provider.base_url.rstrip('/')}/chat/completions"

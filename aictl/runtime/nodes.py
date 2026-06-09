@@ -198,10 +198,7 @@ class NodeManager:
         if len(active_peers) == 0:
             return False, "No active peers — staying in local mode"
 
-        if len(active_peers) >= 1:
-            return True, f"{len(active_peers) + 1} nodes active — K3s promotion recommended"
-
-        return False, "Conditions not met"
+        return True, f"{len(active_peers) + 1} nodes active — K3s promotion recommended"
 
 
 def _get_local_ip() -> str:

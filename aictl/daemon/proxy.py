@@ -246,7 +246,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             entity_id = "anonymous"
             if auth.startswith("Bearer ") and auth[7:].startswith("aios-"):
-                entity_id = auth[7:20]
+                entity_id = auth[7:]  # full key after "Bearer " for correct attribution
 
             model = request_body.get("model", "unknown")
             from aictl.core.metering import TokenMeter
