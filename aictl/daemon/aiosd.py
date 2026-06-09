@@ -63,8 +63,11 @@ class AIOSHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> dict[str, Any]:
         """Read and return data from the source."""
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
             return {}
         raw = self.rfile.read(length)
         return json.loads(raw)
@@ -128,7 +131,11 @@ class AIOSHandler(BaseHTTPRequestHandler):
         }
         handler = routes.get(path)
         if handler:
-            handler()
+            try:
+                handler()
+            except json.JSONDecodeError:
+                # Malformed request body — a client error, not a server crash.
+                self._json_response({"error": "invalid JSON in request body"}, 400)
         else:
             self._json_response({"error": "not found", "path": path}, 404)
 

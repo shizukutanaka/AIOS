@@ -190,7 +190,7 @@ def _to_deployment(svc: ServiceDef, stack_name: str, namespace: str) -> list[dic
         "metadata": {
             "name": name,
             "namespace": namespace,
-            "labels": {"aios.stack": stack_name, "aios.service": svc.name},
+            "labels": {"aios.stack": stack_name, "aios.service": f"{stack_name}-{svc.name}"},
         },
         "spec": {
             "replicas": svc.replicas,
