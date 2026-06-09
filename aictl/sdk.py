@@ -755,8 +755,7 @@ def _complete(
                 raise RuntimeError("cloud fallback returned no response")
             text = resp.get("text", "")
             tokens = int(resp.get("tokens", 0))
-            out: tuple[str, int] = (text, tokens)
-            return out
+            return text, tokens
         except Exception as fallback_exc:
             raise RuntimeError(
                 f"Inference failed (local: {e}; cloud fallback: {fallback_exc})"

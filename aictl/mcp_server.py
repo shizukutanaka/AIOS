@@ -596,6 +596,8 @@ def _tool_fit(args: dict[str, Any]) -> dict[str, Any]:
 def _tool_quant(args: dict[str, Any]) -> dict[str, Any]:
     """Compare quantization formats."""
     model = args.get("model", "")
+    if not model:
+        return {"content": [{"type": "text", "text": "model required"}], "isError": True}
     use_case = args.get("use_case", "chat")
     from aictl.cmd.quant import QUANT_DATA
     qk = f"q_{use_case}"
