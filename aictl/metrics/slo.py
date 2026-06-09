@@ -139,7 +139,7 @@ def check_slo(metrics: InferenceMetrics, pressure: SystemPressure,
 
     # Determine action
     if not v.compliant:
-        critical = any("Error rate" in v or "PSI" in v for v in v.violations)
+        critical = any("Error rate" in vi or "PSI" in vi for vi in v.violations)
         if critical:
             v.action = "failover"
         elif len(v.violations) >= 3:
