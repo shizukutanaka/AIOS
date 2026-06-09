@@ -104,7 +104,7 @@ def _compute_energy(cfg: dict, period_days: int, records: list) -> tuple[float, 
     """Return (estimated_gpu_hours, kwh) for the period."""
     active_seconds = sum(r.duration_ms / 1000 for r in records
                          if r.command in ("serve", "chat", "demo", "bench"))
-    estimated_gpu_hours = max(active_seconds / 3600, 0.1) * 8
+    estimated_gpu_hours = max(active_seconds / 3600, 0.1)
     kwh = (cfg["gpu_watts"] / 1000) * estimated_gpu_hours
     return estimated_gpu_hours, kwh
 

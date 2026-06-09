@@ -90,11 +90,14 @@ class TestApiKeyTpm(unittest.TestCase):
 
 
 class TestPrefixCacheNoSquaring(unittest.TestCase):
-    """prefix_cache.py: sglang token count must not be squared."""
+    """prefix_cache.py: sglang_cache_total_tokens is capacity, not hit count."""
 
     def test_sglang_total_tokens_not_squared(self):
         from aictl.runtime import prefix_cache
-        metrics_text = "sglang_cache_total_tokens 10000\n"
+        # sglang_cache_total_tokens is cache *capacity*, not hit count.
+        # It must NOT be mapped to prefix_hit_tokens (neither raw nor squared).
+        # sglang_cache_hit_rate IS the correct hit-rate source for SGLang.
+        metrics_text = "sglang_cache_hit_rate 0.75\nsglang_cache_total_tokens 10000\n"
 
         class _Resp:
             def __enter__(self): return self
@@ -102,7 +105,10 @@ class TestPrefixCacheNoSquaring(unittest.TestCase):
             def read(self): return metrics_text.encode()
         with mock.patch("urllib.request.urlopen", return_value=_Resp()):
             stats = prefix_cache.scrape_cache_stats("sglang", "http://x")
-        self.assertEqual(stats.prefix_hit_tokens, 10000)  # not 100_000_000
+        # Capacity must not pollute prefix_hit_tokens (would be 10000 or 100_000_000)
+        self.assertEqual(stats.prefix_hit_tokens, 0)
+        # Hit rate is correctly captured from sglang_cache_hit_rate
+        self.assertAlmostEqual(stats.hit_rate, 0.75)
 
 
 class TestPrometheusLabelEscaping(unittest.TestCase):

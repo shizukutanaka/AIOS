@@ -70,6 +70,7 @@ def scan(state_dir: Path | None = None) -> SecurityReport:
                 report.checks_passed += 1
         except Exception:
             report.checks_total += 1
+            report.checks_failed += 1
 
     report.score = max(0, report.score)
     return report

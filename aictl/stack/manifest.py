@@ -94,8 +94,11 @@ def _build_manifest(data: dict[str, Any], source: str) -> StackManifest:
 
     services: list[ServiceDef] = []
     for sd in data.get("services", []):
+        svc_name = sd.get("name", "")
+        if not svc_name:
+            raise StackParseError("Each service entry must have a non-empty 'name' field")
         services.append(ServiceDef(
-            name=sd.get("name", ""),
+            name=svc_name,
             image=sd.get("image", ""),
             runtime=sd.get("runtime", "auto"),
             model=sd.get("model", ""),
@@ -109,8 +112,11 @@ def _build_manifest(data: dict[str, Any], source: str) -> StackManifest:
 
     models: list[ModelRef] = []
     for md in data.get("models", []):
+        model_name = md.get("name", "")
+        if not model_name:
+            raise StackParseError("Each model entry must have a non-empty 'name' field")
         models.append(ModelRef(
-            name=md.get("name", ""),
+            name=model_name,
             source=md.get("source", ""),
             digest=md.get("digest", ""),
             format=md.get("format", "gguf"),

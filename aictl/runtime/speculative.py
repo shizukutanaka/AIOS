@@ -149,7 +149,7 @@ def generate_sglang_args(config: SpeculativeConfig) -> list[str]:
             args.append(f"--speculative-draft-model-path={config.draft_model}")
         args.append(f"--speculative-num-steps={config.num_steps}")
         args.append(f"--speculative-eagle-topk={config.eagle_topk}")
-        args.append(f"--speculative-num-draft-tokens={config.num_speculative_tokens * config.eagle_topk}")
+        args.append(f"--speculative-num-draft-tokens={config.num_speculative_tokens}")
 
     elif config.method == "mtp":
         args.append("--speculative-algorithm=MTP")

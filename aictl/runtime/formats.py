@@ -47,7 +47,7 @@ RUNTIME_COMPAT: dict[str, list[str]] = {
 
 # Magic bytes for format detection
 GGUF_MAGIC = b"GGUF"               # First 4 bytes
-SAFETENSORS_START = b"{"            # JSON header
+SAFETENSORS_MIN_HDR = 8             # header is uint64-le length + JSON
 ONNX_MAGIC = b"\x08"               # Protobuf field 1
 PYTORCH_MAGIC = b"PK"              # ZIP archive (PyTorch saves as ZIP)
 
@@ -103,8 +103,12 @@ def detect_format(path: str | Path) -> ModelFormat:
         return ModelFormat(format="gguf", size_bytes=size)
     if header[:2] == PYTORCH_MAGIC:
         return ModelFormat(format="pytorch", size_bytes=size)
-    if header[:1] == SAFETENSORS_START:
-        return ModelFormat(format="safetensors", size_bytes=size)
+    # SafeTensors: first 8 bytes are a little-endian uint64 JSON-header length.
+    # The file never starts with b"{"; checking that byte is always wrong.
+    if len(header) >= SAFETENSORS_MIN_HDR:
+        hdr_len = struct.unpack("<Q", header[:8])[0]
+        if 0 < hdr_len < 10_000_000:  # plausible JSON header (< 10 MB)
+            return ModelFormat(format="safetensors", size_bytes=size)
 
     return ModelFormat(format="unknown", size_bytes=size)
 

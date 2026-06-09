@@ -88,8 +88,8 @@ def scrape_cache_stats(engine: str, endpoint: str) -> CacheStats:
         # SGLang metrics
         elif name == "sglang_cache_hit_rate":
             stats.hit_rate = val
-        elif name == "sglang_cache_total_tokens":
-            stats.prefix_hit_tokens = int(val)
+        # sglang_cache_total_tokens = total cache capacity tokens (not hit count);
+        # hit rate is already captured via sglang_cache_hit_rate above.
 
     # Estimate savings
     if stats.prefix_hit_tokens > 0:
