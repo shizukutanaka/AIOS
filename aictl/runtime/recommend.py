@@ -136,7 +136,8 @@ def recommend(
             # CPU-only: only ollama models with small VRAM req
             if m.runtime != "ollama":
                 continue
-            if m.ram_required_mb > ram_mb:
+            # ram_mb <= 0 means "unknown" — don't filter every model out.
+            if ram_mb > 0 and m.ram_required_mb > ram_mb:
                 continue
 
         # Use case filter

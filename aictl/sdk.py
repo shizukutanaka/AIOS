@@ -392,7 +392,9 @@ class _AI:
 
         # 3. Post-inference: usage tracking, cache store, cost
         ctx.note_usage(tokens)
-        if not private:
+        # Don't cache empty/garbage responses — a cached "" would poison every
+        # identical prompt for the full TTL.
+        if not private and text.strip():
             _cache_store(full, text, chosen_model, tokens)
         cost = _compute_call_cost(chosen_model, full, tokens, ctx.endpoint)
 
@@ -678,14 +680,36 @@ def _compute_call_cost(
     """Return (cost_usd, cost_jpy) for one inference call."""
     try:
         from aictl.core.cost_per_call import compute
-        is_local = endpoint.startswith(("http://localhost", "http://127."))
+        is_local = _is_local_endpoint(endpoint)
+        # `tokens` is the API's total (prompt + completion); split it so input
+        # tokens aren't billed twice (once via the char heuristic, once in total).
+        input_tokens = max(1, len(prompt) // 4)
+        output_tokens = max(1, tokens - input_tokens)
         cc = compute(model,
-                     input_tokens=max(1, len(prompt) // 4),
-                     output_tokens=max(1, tokens),
+                     input_tokens=input_tokens,
+                     output_tokens=output_tokens,
                      is_local=is_local)
         return (cc.cost_usd, cc.cost_jpy)
     except Exception:
         return (0.0, 0.0)
+
+
+def _is_local_endpoint(endpoint: str) -> bool:
+    """True for loopback or RFC-1918 / link-local hosts (self-hosted engines)."""
+    from urllib.parse import urlparse
+    host = (urlparse(endpoint).hostname or "").lower()
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    if host in ("0.0.0.0", "::1"):
+        return True
+    if host.startswith(("127.", "10.", "192.168.", "169.254.")):
+        return True
+    # 172.16.0.0/12
+    if host.startswith("172."):
+        parts = host.split(".")
+        if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+            return True
+    return False
 
 
 def _complete(
@@ -734,8 +758,10 @@ def _complete(
             tokens = int(resp.get("tokens", 0))
             out: tuple[str, int] = (text, tokens)
             return out
-        except Exception:
-            raise RuntimeError(f"Inference failed: {e}")
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"Inference failed (local: {e}; cloud fallback: {fallback_exc})"
+            ) from fallback_exc
 
 
 def _stream_complete(
@@ -765,9 +791,11 @@ def _stream_complete(
     with urllib.request.urlopen(req, timeout=60) as r:
         for line in r:
             line = line.decode().strip()
-            if not line or not line.startswith("data: "):
+            # SSE allows "data:" with or without a trailing space; some engines
+            # (vLLM/SGLang) omit it. Match the prefix, then strip leading space.
+            if not line or not line.startswith("data:"):
                 continue
-            payload = line[6:]
+            payload = line[5:].lstrip()
             if payload == "[DONE]":
                 break
             try:

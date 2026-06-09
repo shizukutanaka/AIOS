@@ -26,7 +26,7 @@ def register(sub: Any) -> None:
         default="auto",
     )
     p.add_argument("--simulate", help="Simulate fitting a model without running it")
-    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON")
     p.set_defaults(func=run)
 
 

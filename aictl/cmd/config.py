@@ -69,14 +69,18 @@ def run_set(args: argparse.Namespace) -> int:
 
     # Type coerce
     old_val = obj[last]
-    if isinstance(old_val, bool):
-        obj[last] = args.value.lower() in ("true", "1", "yes")
-    elif isinstance(old_val, int):
-        obj[last] = int(args.value)
-    elif isinstance(old_val, float):
-        obj[last] = float(args.value)
-    else:
-        obj[last] = args.value
+    try:
+        if isinstance(old_val, bool):
+            obj[last] = args.value.lower() in ("true", "1", "yes")
+        elif isinstance(old_val, int):
+            obj[last] = int(args.value)
+        elif isinstance(old_val, float):
+            obj[last] = float(args.value)
+        else:
+            obj[last] = args.value
+    except ValueError:
+        err(f"{args.key} expects a {type(old_val).__name__}, got: {args.value!r}")
+        return 1
 
     # Rebuild config
     config = _dict_to_config(d)

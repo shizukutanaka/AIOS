@@ -42,6 +42,12 @@ def run_list(args: argparse.Namespace) -> int:
     mgr = LoRAManager()
     adapters = mgr.list_adapters(base_model=getattr(args, "base", ""))
 
+    if getattr(args, "json", False):
+        print_json([{"name": a.name, "base": a.base_model, "rank": a.rank,
+                     "vram_overhead_mb": a.vram_overhead_mb, "active": a.active}
+                    for a in adapters])
+        return 0
+
     if not adapters:
         print("No adapters registered. Use: aictl lora add <name> --base <model>")
         return 0

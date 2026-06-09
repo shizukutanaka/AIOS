@@ -125,13 +125,15 @@ class StateStore:
 
     def register_model(self, model_id: str, name: str, digest: str,
                        size_bytes: int = 0, fmt: str = "gguf",
-                       signed: bool = False, signer: str = "") -> None:
-        """Register model."""
+                       signed: bool = False, signer: str = "",
+                       registered_at: float = 0.0,
+                       status: str = "available") -> None:
+        """Register model. registered_at<=0 → now (preserves order on restore)."""
         db = self._db()
         db.execute(
             "INSERT OR REPLACE INTO models VALUES (?,?,?,?,?,?,?,?,?)",
             (model_id, name, digest, size_bytes, fmt, int(signed), signer,
-             time.time(), "available"),
+             registered_at if registered_at > 0 else time.time(), status),
         )
         db.commit()
         db.close()

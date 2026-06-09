@@ -59,7 +59,7 @@ def register(sub: Any) -> None:
     p.add_argument("--n", type=int, default=0, help="Number of default prompts to use (0 = all)")
     p.add_argument("--engine", default="ollama", choices=["ollama", "vllm", "sglang"],
                    help="Inference engine to use")
-    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON")
     p.set_defaults(func=run)
 
 

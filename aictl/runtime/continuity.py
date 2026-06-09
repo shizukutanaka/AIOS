@@ -67,7 +67,12 @@ class ContextContinuityEngine:
             except Exception:
                 pass  # best-effort; failure is non-critical
 
-        self._save_index(snapshots)
+        # Merge with any existing index by engine (latest wins) so saving one
+        # engine's context never wipes another's pending snapshot.
+        by_engine = {s.engine: s for s in self._load_index()}
+        for s in snapshots:
+            by_engine[s.engine] = s
+        self._save_index(list(by_engine.values()))
         return snapshots
 
     def post_upgrade_restore(self, engines: dict[str, str]) -> list[ContextSnapshot]:
@@ -107,8 +112,8 @@ class ContextContinuityEngine:
 
         for snap in snapshots:
             if snap.created_at < cutoff or snap.status in ("expired", "failed"):
-                # Delete data file
-                data_path = self.dir / f"{snap.snapshot_id}.bin"
+                # Delete data file (snapshots are persisted as .json, not .bin)
+                data_path = self.dir / f"{snap.snapshot_id}.json"
                 data_path.unlink(missing_ok=True)
                 removed += 1
             else:

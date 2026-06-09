@@ -221,7 +221,7 @@ def register(sub: Any) -> None:
         "eval",
         help="LLM regression testing — catch prompt quality regressions.",
     )
-    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON")
     sp = p.add_subparsers(dest="eval_cmd", required=False)
 
     c = sp.add_parser("create", help="Create a new eval suite template.")
@@ -232,13 +232,13 @@ def register(sub: Any) -> None:
     r.add_argument("--suite", required=True, help="Eval suite JSON file")
     r.add_argument("--model", default="auto", help="Model to use (override suite)")
     r.add_argument("--save", help="Save results to file for comparison")
-    r.add_argument("--json", action="store_true", help="JSON output")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     r.set_defaults(func=run_eval)
 
     cmp = sp.add_parser("compare", help="Compare two eval results (before/after).")
     cmp.add_argument("--suite", required=True, help="Eval suite JSON")
     cmp.add_argument("--baseline", required=True, help="Baseline results JSON")
-    cmp.add_argument("--json", action="store_true", help="JSON output")
+    cmp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     cmp.set_defaults(func=run_compare)
 
     rpt = sp.add_parser("report", help="Human-readable eval summary.")
@@ -476,7 +476,8 @@ def run_report(args: argparse.Namespace) -> int:
     data = json.loads(suite_path.read_text())
 
     # Accept either a suite definition or saved results
-    if "cases" in data and "passed" in data.get("cases", [{}])[0]:
+    _cases = data.get("cases") or [{}]
+    if "cases" in data and "passed" in _cases[0]:
         # It's a results file
         results = data
     else:

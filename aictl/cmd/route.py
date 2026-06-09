@@ -137,13 +137,13 @@ def register(sub: Any) -> None:
     # show
     sh = sp.add_parser("show", help="Score a prompt and show which model it routes to.")
     sh.add_argument("prompt", help="The prompt to analyze")
-    sh.add_argument("--json", action="store_true")
+    sh.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     sh.set_defaults(func=run_show)
 
     # ask
     a = sp.add_parser("ask", help="Route and answer a prompt with the optimal model.")
     a.add_argument("prompt", help="The prompt to answer")
-    a.add_argument("--json", action="store_true")
+    a.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     a.set_defaults(func=run_ask)
 
     # config
@@ -151,19 +151,19 @@ def register(sub: Any) -> None:
     c.add_argument("--simple",  help="Model for SIMPLE queries (score 0-30)")
     c.add_argument("--medium",  help="Model for MEDIUM queries (score 31-60)")
     c.add_argument("--complex", help="Model for COMPLEX queries (score 61-100)")
-    c.add_argument("--json",    action="store_true")
+    c.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     c.set_defaults(func=run_config)
 
     # test
     t = sp.add_parser("test", help="Run routing accuracy benchmark on built-in test set.")
     t.add_argument("--n",    type=int, default=10, help="Number of test prompts")
-    t.add_argument("--json", action="store_true")
+    t.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     t.set_defaults(func=run_test)
 
     # batch
     b = sp.add_parser("batch", help="Route a batch of prompts from JSON file.")
     b.add_argument("--file", required=True, help="JSON file with prompt list")
-    b.add_argument("--json", action="store_true")
+    b.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     b.set_defaults(func=run_batch)
 
 

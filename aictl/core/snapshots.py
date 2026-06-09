@@ -148,9 +148,12 @@ class SnapshotManager:
                     model_id=m.get("id", ""),
                     name=m.get("name", ""),
                     digest=m.get("digest", ""),
+                    size_bytes=int(m.get("size_bytes", 0) or 0),
                     fmt=m.get("format", "gguf"),
                     signed=bool(m.get("signed", 0)),
                     signer=m.get("signer", ""),
+                    registered_at=float(m.get("registered_at", 0) or 0),
+                    status=m.get("status", "available"),
                 )
 
         return True, f"Restored from snapshot: {snapshot_id}"

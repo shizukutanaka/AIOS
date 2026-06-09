@@ -121,7 +121,8 @@ def generate_helm_values(config: ModelServiceConfig) -> dict[str, Any]:
         "autoscaling": {
             "enabled": True,
             "minReplicas": max(1, config.replicas),
-            "maxReplicas": config.replicas * 4,
+            # Never below minReplicas, even when config.replicas is 0/1.
+            "maxReplicas": max(config.replicas * 4, max(1, config.replicas)),
             "scaleToZero": False,
             "targetMetric": "queue_depth",
             "targetValue": 5,

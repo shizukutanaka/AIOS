@@ -58,20 +58,20 @@ def register(sub: Any) -> None:
 
     # list
     li = sp.add_parser("list", help="List all saved prompts.")
-    li.add_argument("--json", action="store_true")
+    li.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     li.set_defaults(func=run_list)
 
     # get
     g = sp.add_parser("get", help="Get a prompt (latest or specific version).")
     g.add_argument("name", help="Prompt name")
     g.add_argument("--version", type=int, default=0, help="Version number (0 = latest)")
-    g.add_argument("--json", action="store_true")
+    g.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     g.set_defaults(func=run_get)
 
     # history
     h = sp.add_parser("history", help="Show version history of a prompt.")
     h.add_argument("name", help="Prompt name")
-    h.add_argument("--json", action="store_true")
+    h.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     h.set_defaults(func=run_history)
 
     # delete
@@ -91,7 +91,7 @@ def register(sub: Any) -> None:
     r.add_argument("--name", required=True, help="Prompt name")
     r.add_argument("--input", default="", help="Fill {input} variable")
     r.add_argument("--model", default="", help="Override model")
-    r.add_argument("--json", action="store_true")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     r.set_defaults(func=run_run)
 
 

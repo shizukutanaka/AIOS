@@ -70,7 +70,9 @@ def stack_to_gateway_api(
             },
             "spec": {
                 "targetPorts": [{"number": svc.port or 8000}],
-                "selector": {"app": pool_name},
+                # Must match the pod label the workloads actually carry
+                # (kserve/orchestrator emit `aios.service`, not `app`).
+                "selector": {"aios.service": pool_name},
                 "extensionRef": {
                     "name": f"{pool_name}-epp",
                     "port": config.epp_port,

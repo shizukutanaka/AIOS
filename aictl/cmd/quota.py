@@ -107,9 +107,9 @@ def run_report(args: argparse.Namespace) -> int:
             name: {
                 "used_tokens": cfg.get("used_tokens", 0),
                 "limit_tokens": cfg["tokens_per_month"],
-                "utilization_pct": round(
+                "utilization_pct": (round(
                     cfg.get("used_tokens", 0) / cfg["tokens_per_month"] * 100, 1
-                ),
+                ) if cfg["tokens_per_month"] > 0 else 0),
                 "priority": cfg["priority"],
             }
             for name, cfg in db["teams"].items()

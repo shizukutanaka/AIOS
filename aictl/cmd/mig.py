@@ -37,7 +37,10 @@ def run_plan(args: argparse.Namespace) -> int:
     for spec in (getattr(args, "models", None) or ["llama3:16", "embedding:2"]):
         parts = spec.split(":")
         name = parts[0]
-        vram = int(parts[1]) if len(parts) > 1 else 16
+        try:
+            vram = int(parts[1]) if len(parts) > 1 else 16
+        except ValueError:
+            vram = 16  # non-numeric VRAM spec → sensible default
         models.append(ModelRequirement(name=name, vram_gb=vram))
 
     if getattr(args, "json", False):

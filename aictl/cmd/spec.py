@@ -69,26 +69,26 @@ PAIRS = [
 def register(sub: Any) -> None:
     """Register CLI subcommand."""
     p = sub.add_parser("spec", help="Speculative decoding: 2-3x faster inference, zero quality loss.")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     sp = p.add_subparsers(dest="spec_cmd", required=False)
 
     r = sp.add_parser("recommend", help="Best draft model for a target model.")
     r.add_argument("model", nargs="?", default=None)
     r.add_argument("--all", action="store_true", help="Show full table.")
-    r.add_argument("--json", action="store_true")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     r.set_defaults(func=run_recommend)
 
     m = sp.add_parser("methods", help="EAGLE-3 / P-EAGLE / MTP / NGRAM method advisor.")
     m.add_argument("model", nargs="?", default=None)
     m.add_argument("--all", action="store_true", help="Show the full method matrix.")
-    m.add_argument("--json", action="store_true")
+    m.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     m.set_defaults(func=run_methods)
 
     b = sp.add_parser("bench", help="Estimate speedup for a pair.")
     b.add_argument("target")
     b.add_argument("--draft", required=True)
     b.add_argument("--gamma", type=int, default=5)
-    b.add_argument("--json", action="store_true")
+    b.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     b.set_defaults(func=run_bench)
 
     # Legacy compat
