@@ -105,7 +105,7 @@ def export_tool_spans(spans: list[ToolSpan],
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return resp.status in (200, 202)
     except Exception:
         return False
 
@@ -239,7 +239,7 @@ def export_spans(spans: list[GenAISpan],
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return resp.status in (200, 202)
     except Exception:
         return False
 
