@@ -312,9 +312,13 @@ def run_bench(args: argparse.Namespace) -> int:
 
     def _pb(name: Any) -> float:
         """Return the parameter count in billions parsed from a model name."""
-        for s, b in [("1b",1),("3b",3),("7b",7),("8b",8),("9b",9),("14b",14),
-                     ("27b",27),("32b",32),("70b",70),("72b",72)]:
-            if s in name.lower():
+        import re
+        # Match longer suffixes before shorter ones (e.g. "14b" before "1b")
+        # to avoid "1b" matching inside "14b" or "3b" matching inside "13b".
+        for s, b in sorted([("1b",1),("3b",3),("7b",7),("8b",8),("9b",9),("14b",14),
+                             ("27b",27),("32b",32),("70b",70),("72b",72)],
+                            key=lambda x: -len(x[0])):
+            if re.search(r'(?<!\d)' + re.escape(s) + r'(?!\d)', name.lower()):
                 return float(b)
         return 7.0
 

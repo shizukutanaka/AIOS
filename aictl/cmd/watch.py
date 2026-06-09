@@ -31,7 +31,12 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         while True:
-            _render(store, config)
+            try:
+                _render(store, config)
+            except Exception as e:
+                # Transient failure (state file unreadable, engine unreachable, etc.)
+                # Print a one-line warning and continue rather than crashing the monitor.
+                print(f"  [watch] render error: {e}")
             time.sleep(interval)
     except KeyboardInterrupt:
         return 0
