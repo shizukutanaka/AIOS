@@ -61,8 +61,8 @@ class WarmupManager:
         records: list[UsageRecord] = []
         for key, data in usage.items():
             records.append(UsageRecord(
-                model=data["model"],
-                engine=data["engine"],
+                model=data.get("model", ""),
+                engine=data.get("engine", ""),
                 count=data.get("count", 0),
                 last_used=data.get("last_used", 0),
                 avg_load_time_ms=data.get("avg_load_time_ms", 0),
@@ -110,9 +110,12 @@ class WarmupManager:
                 data = json.loads(resp.read())
                 available = [m.get("name", "") for m in data.get("models", [])]
                 if model not in available and not any(model in m for m in available):
-                    # Pull model
-                    subprocess.run(["ollama", "pull", model],
-                                   capture_output=True, timeout=300)
+                    # Pull model; propagate failure so caller gets a clear error
+                    pull = subprocess.run(["ollama", "pull", model],
+                                          capture_output=True, timeout=300)
+                    if pull.returncode != 0:
+                        result["error"] = pull.stderr.decode(errors="replace").strip()[:200]
+                        return result
 
             # Send minimal request to load into memory
             t0 = time.monotonic()

@@ -59,7 +59,7 @@ def check_container_health(container_name: str) -> ServiceHealth:
                 sh.healthy = True
                 sh.status = "starting"
             else:
-                sh.healthy = True
+                sh.healthy = False
                 sh.status = container_status
         else:
             sh.status = container_status

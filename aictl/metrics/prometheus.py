@@ -22,7 +22,6 @@ from aictl.core.state import StateStore
 def generate_metrics_text(store: StateStore) -> str:
     """Generate Prometheus text format metrics."""
     lines: list[str] = []
-    int(time.time() * 1000)
 
     config = load_config(store.dir)
     node = store.load_node()

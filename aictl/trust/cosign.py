@@ -132,6 +132,7 @@ def verify_attestation(
         result.raw_output = r.stdout[:1000]
         if r.returncode == 0:
             result.verified = True
+            _parse_cosign_output(r.stdout, result)
         else:
             result.error = r.stderr.strip()[:200]
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:

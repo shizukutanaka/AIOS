@@ -109,7 +109,7 @@ def generate_placement_policy(report: FabricReport, vram_gb: int = 0) -> Placeme
 
     has_cxl = any(t.name == "cxl" for t in report.tiers)
     has_nvme = any(t.name == "nvme" for t in report.tiers)
-    sum(t.capacity_gb for t in report.tiers if t.name == "dram")
+    dram_gb = sum(t.capacity_gb for t in report.tiers if t.name == "dram")
 
     # Model weights: VRAM if GPU, else DRAM
     if vram_gb > 0:
@@ -172,11 +172,12 @@ def _detect_dram() -> MemoryTier | None:
     """Detect and return the requested state."""
     try:
         with open("/proc/meminfo") as f:
+            gb = 0.0
+            avail_gb = 0.0
             for line in f:
                 if line.startswith("MemTotal:"):
                     kb = int(line.split()[1])
                     gb = kb / (1024 * 1024)
-                    avail_gb = 0
                 elif line.startswith("MemAvailable:"):
                     avail_gb = int(line.split()[1]) / (1024 * 1024)
                     return MemoryTier(

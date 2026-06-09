@@ -416,9 +416,14 @@ def _tool_optimize(args: dict[str, Any]) -> dict[str, Any]:
                          "RTX 4090": 24576}.get(gpu, 24576),
         compute_capability=GPU_CC.get(gpu, 90),
     )
+    model = args.get("model")
+    model_size_b = args.get("model_size_b")
+    if not model or model_size_b is None:
+        return {"isError": True, "content": [{"type": "text",
+                "text": "model and model_size_b are required"}]}
     result = optimize_vllm_flags(
-        model=args["model"],
-        model_size_b=args["model_size_b"],
+        model=model,
+        model_size_b=model_size_b,
         hardware=profile,
         objective=args.get("objective", "balanced"),
     )
