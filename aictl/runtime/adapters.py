@@ -59,7 +59,6 @@ class EngineHealth:
 def _http_get(url: str, timeout: int = 5) -> tuple[int, str]:
     """Simple HTTP GET, returns (status_code, body)."""
     try:
-        time.monotonic()
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()

@@ -16,8 +16,6 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
-
 from dataclasses import dataclass
 from aictl.core.constants import VLLM_IMAGE, DEFAULT_MAX_MODEL_LEN, DEFAULT_GPU_MEMORY_UTIL
 from typing import Any
@@ -161,7 +159,7 @@ def _kv_config(role: str, config: DisaggConfig) -> str:
     return json.dumps(cfg)
 
 
-def _deployment(name: Any, image: Any, args: argparse.Namespace, replicas: Any, gpu: Any, namespace: Any, port: Any, labels: Any) -> dict[str, Any]:
+def _deployment(name: Any, image: Any, args: list[str], replicas: Any, gpu: Any, namespace: Any, port: Any, labels: Any) -> dict[str, Any]:
     """Generate Kubernetes Deployment manifest."""
     return {
         "apiVersion": "apps/v1",
