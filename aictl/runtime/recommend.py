@@ -148,8 +148,9 @@ def recommend(
         headroom = 1.0
         if vram_mb > 0:
             headroom = 1.0 - (m.vram_required_mb / vram_mb)
-        else:
-            headroom = 1.0 - (m.ram_required_mb / max(ram_mb, 1))
+        elif ram_mb > 0:
+            headroom = 1.0 - (m.ram_required_mb / ram_mb)
+        # else: ram_mb unknown → keep headroom=1.0 (neutral; model passed RAM filter)
 
         # Prefer models that use 50-90% of available resources
         utilization = 1.0 - headroom

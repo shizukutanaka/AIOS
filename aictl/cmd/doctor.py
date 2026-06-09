@@ -113,8 +113,10 @@ def run(args: argparse.Namespace) -> int:
         import socket
         import time
         for name, url in endpoints.items():
-            host = url.replace("http://", "").replace("https://", "").split(":")[0]
-            port_str = url.replace("http://", "").replace("https://", "").split(":")[-1].split("/")[0]
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(url)
+            host = _parsed.hostname or url
+            port_str = str(_parsed.port or (443 if url.startswith("https://") else 80))
             try:
                 port = int(port_str)
                 t0 = time.monotonic()

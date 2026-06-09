@@ -176,8 +176,6 @@ def generate_mig_commands(plan: PartitionPlan) -> list[str]:
     for p in plan.partitions:
         profile = p.get("profile", "")
         if profile and profile != "none":
-            # Extract GPU instance profile ID from profile name
-            int(p.get("slices", "1"))
             commands.append(
                 f"sudo nvidia-smi mig -i {gpu} -cgi {profile} -C"
             )

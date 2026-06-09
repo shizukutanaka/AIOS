@@ -187,9 +187,7 @@ def run_self(args: argparse.Namespace) -> int:
         if out:
             print(f"  {out}")
     else:
-        err(error or "Update failed.")
-        if error and rc == 1 and out:
-            print(f"  {out}")
+        err(error or out or "Update failed.")
     print()
     return rc
 

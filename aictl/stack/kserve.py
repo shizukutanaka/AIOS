@@ -107,7 +107,7 @@ def _build_llmisvc(svc: ServiceDef, stack_name: str, namespace: str,
             "namespace": namespace,
             "labels": {
                 "aios.stack": stack_name,
-                "aios.service": svc.name,
+                "aios.service": f"{stack_name}-{svc.name}",  # matches gateway InferencePool selector
                 "aios.runtime": svc.runtime,
             },
         },
