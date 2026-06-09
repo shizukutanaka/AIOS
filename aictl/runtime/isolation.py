@@ -123,11 +123,18 @@ def detect_cpu_isolation_support() -> dict[str, bool]:
     """Check what CPU isolation features are available."""
     from pathlib import Path
 
+    def _has_isolcpus() -> bool:
+        # .exists() doesn't guarantee readability — /proc/cmdline can raise
+        # PermissionError/OSError. Detection must never propagate exceptions.
+        try:
+            return "isolcpus" in Path("/proc/cmdline").read_text()
+        except OSError:
+            return False
+
     return {
         "cgroup_v2": Path("/sys/fs/cgroup/cgroup.controllers").exists(),
         "cpuset": Path("/sys/fs/cgroup/cpuset.cpus.effective").exists(),
         "memory_min": Path("/sys/fs/cgroup/memory.min").exists(),
         "numa": Path("/sys/devices/system/node/node0").exists(),
-        "isolcpus": "isolcpus" in Path("/proc/cmdline").read_text()
-                    if Path("/proc/cmdline").exists() else False,
+        "isolcpus": _has_isolcpus(),
     }

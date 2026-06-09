@@ -480,7 +480,6 @@ class _AI:
         else:
             instruction = f"{instruction}\n\nTask: {prompt}"
 
-        time.perf_counter()
         text, tokens = _complete(
             endpoint=ctx.endpoint,
             model=chosen_model,
