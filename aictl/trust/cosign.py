@@ -123,6 +123,8 @@ def verify_attestation(
             "--certificate-oidc-issuer-regexp", ".*",
         ])
 
+    # Cosign v3 requires --output json for machine-readable output (trust rule).
+    cmd.extend(["--output", "json"])
     cmd.append(image_ref)
 
     try:

@@ -165,9 +165,12 @@ def estimate_cost(
     # Recommendation
     if hours_per_day < 4:
         est.recommendation = "cloud (low utilization)"
-    elif est.break_even_months > 0 and est.break_even_months < 12:
+    elif est.cloud_monthly_usd <= est.onprem_monthly_usd:
+        # Cloud is at or below the amortized on-prem monthly cost.
+        est.recommendation = "cloud (cheaper than on-prem)"
+    elif 0 < est.break_even_months < 12:
         est.recommendation = f"on-prem (break-even in {est.break_even_months:.0f} months)"
-    elif est.break_even_months > 12:
+    elif est.break_even_months >= 12:
         est.recommendation = "cloud (long break-even)"
     else:
         est.recommendation = "on-prem (always cheaper)"

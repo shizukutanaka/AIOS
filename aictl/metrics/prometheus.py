@@ -147,13 +147,18 @@ def _emit_value_prop_metrics(lines: list[str]) -> None:
         pass  # metering store may be empty; skip silently
 
 
+def _escape_label(v: Any) -> str:
+    """Escape a Prometheus label value (\\, ", and newline) per the text format."""
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 def _gauge(lines: list[str], name: str, help_text: str,
            value: Any, labels: dict[str, str] | None = None) -> None:
     """Execute gauge."""
     lines.append(f"# HELP {name} {help_text}")
     lines.append(f"# TYPE {name} gauge")
     if labels:
-        label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
+        label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in labels.items())
         lines.append(f"{name}{{{label_str}}} {value}")
     else:
         lines.append(f"{name} {value}")
@@ -165,7 +170,7 @@ def _counter(lines: list[str], name: str, help_text: str,
     lines.append(f"# HELP {name} {help_text}")
     lines.append(f"# TYPE {name} counter")
     if labels:
-        label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
+        label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in labels.items())
         lines.append(f"{name}{{{label_str}}} {value}")
     else:
         lines.append(f"{name} {value}")

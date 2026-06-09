@@ -141,20 +141,12 @@ class VLLMAdapter:
         # tokens/sec from generation throughput
         m.tokens_per_sec = _prom_gauge(body, "vllm:avg_generation_throughput_toks_per_s")
 
-        # Prefix cache (v1 engine)
+        # Prefix cache (v1 engine, v0.18+): record the hit rate in its own
+        # field — must NOT clobber m.model (the model name used for telemetry).
         cache_queries = _prom_gauge(body, "vllm:prefix_cache_queries")
         cache_hits = _prom_gauge(body, "vllm:prefix_cache_hits")
         if cache_queries > 0:
-            m.model = f"cache_hit_rate={cache_hits/cache_queries:.2f}"
-
-        # Error rate from request counters
-        _prom_gauge(body, "vllm:request_success_total")
-        # Prefix cache metrics (v1 engine, v0.18+)
-        cache_queries = _prom_gauge(body, "vllm:prefix_cache_queries")
-        cache_hits = _prom_gauge(body, "vllm:prefix_cache_hits")
-        if hasattr(m, '_prefix_cache_hit_rate'):
-            pass  # future use
-
+            m.prefix_cache_hit_rate = cache_hits / cache_queries
 
         return m
 

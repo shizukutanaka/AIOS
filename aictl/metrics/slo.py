@@ -35,6 +35,7 @@ class InferenceMetrics:
     vram_used_mb: int = 0
     vram_total_mb: int = 0
     kv_cache_utilization: float = 0.0
+    prefix_cache_hit_rate: float = 0.0   # vLLM v1 prefix cache hit ratio (0-1)
     error_rate: float = 0.0
     goodput_ratio: float = 1.0   # fraction of requests meeting latency SLOs (SOLA)
 

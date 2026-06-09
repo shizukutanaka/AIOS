@@ -191,13 +191,15 @@ def _check_trust_policy(store: StateStore) -> SecurityFinding | None:
         import json
         try:
             config = json.loads(config_path.read_text())
-            policy = config.get("trust", {}).get("policy", "warn")
+            # config.json persists this as a flat key (see core/config.py),
+            # not a nested {"trust": {"policy": ...}} object.
+            policy = config.get("trust_policy", "warn")
             if policy == "disabled":
                 return SecurityFinding(
                     severity="high", category="trust",
                     title="Trust policy disabled",
                     description="Model signature verification is disabled",
-                    remediation='aictl config set trust.policy warn',
+                    remediation='aictl config set trust_policy warn',
                 )
         except (json.JSONDecodeError, OSError):
             pass  # best-effort; failure is non-critical

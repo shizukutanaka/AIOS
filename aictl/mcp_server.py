@@ -745,6 +745,9 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
     elif method == "tools/call":
         name = params.get("name", "")
+        if not name:
+            # Missing tool name is a protocol error, not a tool error.
+            return _error(req_id, -32602, "Invalid params: missing tool name")
         arguments = params.get("arguments", {})
         result = handle_tool(name, arguments)
         return _response(req_id, result)

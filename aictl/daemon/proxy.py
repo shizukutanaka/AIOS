@@ -160,7 +160,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(result)
 
         except urllib.error.HTTPError as e:
-            self._error(e.code, f"Upstream error from {decision.selected_engine}")
+            # Preserve the upstream error body (e.g. vLLM's validation message)
+            # so OpenAI-compatible clients can surface the real cause.
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", "replace")[:500]
+            except Exception:
+                pass
+            msg = f"Upstream error from {decision.selected_engine}"
+            if detail:
+                msg += f": {detail}"
+            self._error(e.code, msg)
         except Exception as e:
             self._error(502, f"Proxy error: {e}")
 

@@ -53,6 +53,7 @@ class KeyManager:
         self._rate_states: dict[str, RateLimitState] = {}
 
     def generate_key(self, name: str, rate_limit_rpm: int = 60,
+                     rate_limit_tpm: int = 100000,
                      expires_days: int = 0) -> tuple[str, APIKey]:
         """Generate a new API key. Returns (raw_key, key_record)."""
         raw_key = f"aios-{secrets.token_urlsafe(32)}"
@@ -67,6 +68,7 @@ class KeyManager:
             expires_at=time.time() + (expires_days * 86400) if expires_days > 0 else 0,
             active=True,
             rate_limit_rpm=rate_limit_rpm,
+            rate_limit_tpm=rate_limit_tpm,
         )
 
         keys = self._load_keys()

@@ -119,10 +119,13 @@ def optimize_vllm_flags(
     if max_context > 0:
         flags.append(f"--max-model-len={max_context}")
     else:
-        # Auto-detect reasonable context for VRAM
-        available_for_kv = (total_vram * gpu_util - model_vram_mb / tp) * (0.5 if kv_dtype == "fp8" else 1.0)
-        # Rough: 1MB per 1K context tokens for 8B model
-        context_budget = max(4096, min(131072, int(available_for_kv / model_size_b * 1000)))
+        # Auto-detect reasonable context for VRAM. total_vram is the aggregate
+        # across all GPUs and, with TP, the model is sharded — so the whole
+        # model footprint (model_vram_mb) is subtracted once, not /tp.
+        available_for_kv = (total_vram * gpu_util - model_vram_mb) * (0.5 if kv_dtype == "fp8" else 1.0)
+        # Rough: 1MB per 1K context tokens for 8B model. Guard div-by-zero.
+        context_budget = max(4096, min(131072,
+                                       int(available_for_kv / max(model_size_b, 1) * 1000)))
         flags.append(f"--max-model-len={context_budget}")
 
     # ── Prefix caching ──

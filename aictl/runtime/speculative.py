@@ -140,7 +140,10 @@ def generate_sglang_args(config: SpeculativeConfig) -> list[str]:
 
     args = []
 
-    if config.method == "eagle3":
+    # SGLang's EAGLE3 algorithm covers both classic EAGLE-3 and the parallel
+    # (p-eagle) variant; map both so an explicit p-eagle config still emits
+    # speculative flags instead of silently returning an empty list.
+    if config.method in ("eagle3", "p-eagle"):
         args.append("--speculative-algorithm=EAGLE3")
         if config.draft_model:
             args.append(f"--speculative-draft-model-path={config.draft_model}")

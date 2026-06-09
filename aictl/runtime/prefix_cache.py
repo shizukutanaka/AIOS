@@ -89,7 +89,7 @@ def scrape_cache_stats(engine: str, endpoint: str) -> CacheStats:
         elif name == "sglang_cache_hit_rate":
             stats.hit_rate = val
         elif name == "sglang_cache_total_tokens":
-            stats.prefix_hit_tokens = int(val * val)  # Approximate
+            stats.prefix_hit_tokens = int(val)
 
     # Estimate savings
     if stats.prefix_hit_tokens > 0:

@@ -33,11 +33,13 @@ class TokenBucket:
     quota_tokens_per_day: int = 0    # 0 = unlimited
     quota_tokens_per_month: int = 0
     quota_tokens_per_minute: int = 0
-    # Daily/monthly tracking
+    # Daily/monthly/minute tracking
     tokens_today: int = 0
     tokens_this_month: int = 0
+    tokens_this_minute: int = 0
     today_date: str = ""
     month_date: str = ""
+    minute_start: float = 0.0        # epoch seconds of the current 60s window
 
 
 @dataclass
@@ -83,13 +85,16 @@ class TokenMeter:
                                  first_request_at=now)
             buckets[entity_id] = bucket
 
-        # Reset daily/monthly counters
+        # Reset daily/monthly/minute counters
         if bucket.today_date != today:
             bucket.tokens_today = 0
             bucket.today_date = today
         if bucket.month_date != month:
             bucket.tokens_this_month = 0
             bucket.month_date = month
+        if bucket.minute_start == 0.0 or now - bucket.minute_start >= 60:
+            bucket.minute_start = now
+            bucket.tokens_this_minute = 0
 
         # Check quotas BEFORE recording
         if bucket.quota_tokens_per_day > 0:
@@ -100,12 +105,17 @@ class TokenMeter:
             if bucket.tokens_this_month + total > bucket.quota_tokens_per_month:
                 return False  # Monthly quota exceeded
 
+        if bucket.quota_tokens_per_minute > 0:
+            if bucket.tokens_this_minute + total > bucket.quota_tokens_per_minute:
+                return False  # Per-minute rate limit exceeded
+
         # Record
         bucket.prompt_tokens += prompt_tokens
         bucket.completion_tokens += completion_tokens
         bucket.total_tokens += total
         bucket.tokens_today += total
         bucket.tokens_this_month += total
+        bucket.tokens_this_minute += total
         bucket.request_count += 1
         bucket.last_request_at = now
 

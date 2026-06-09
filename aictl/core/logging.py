@@ -37,7 +37,9 @@ class LogEntry:
     def __post_init__(self) -> None:
         """Set defaults for log entry."""
         if not self.timestamp:
-            self.timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            now = time.time()
+            self.timestamp = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now))
+                              + f".{int((now % 1) * 1000):03d}Z")
 
     def to_json(self) -> str:
         """To json."""
@@ -148,9 +150,14 @@ class StructuredLogger:
         cutoff = time.time() - (max_days * 86400)
         removed = 0
         for f in self.log_dir.glob("aictl-*.jsonl"):
-            if f.stat().st_mtime < cutoff:
-                f.unlink()
-                removed += 1
+            # A file may be removed by another process between glob and stat;
+            # don't let that abort the whole rotation.
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    removed += 1
+            except OSError:
+                continue
         return removed
 
 
