@@ -104,10 +104,10 @@ def run_cache(args: argparse.Namespace) -> int:
         print(f"\n  {len(report.entries)} cached models/files")
 
     if getattr(args, "clean", False):
-        stale = clean_stale(report, days=args.days, dry_run=True)
+        stale = clean_stale(report, days=args.days, dry_run=False)
         if stale:
-            print(f"\n  Stale (>{args.days} days): {len(stale)} files, "
-                  f"{format_bytes(sum(e.size_bytes for e in stale))}")
+            print(f"\n  Removed {len(stale)} stale files "
+                  f"(>{args.days} days), freed {format_bytes(sum(e.size_bytes for e in stale))}")
             for e in stale[:5]:
                 print(f"    {e.name} ({format_bytes(e.size_bytes)})")
         else:
