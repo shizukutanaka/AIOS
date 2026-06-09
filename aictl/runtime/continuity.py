@@ -224,7 +224,8 @@ class ContextContinuityEngine:
                         data=body,
                         headers={"Content-Type": "application/json"},
                     )
-                    urllib.request.urlopen(req, timeout=120)
+                    with urllib.request.urlopen(req, timeout=120) as _resp:
+                            _resp.read()
                 except Exception:
                     pass  # best-effort; failure is non-critical
 

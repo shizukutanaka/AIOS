@@ -683,7 +683,8 @@ def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
     from contextlib import redirect_stdout
     from aictl.cmd.tco import run_summary, CARBON_INTENSITY_BY_REGION
     # Resolve carbon intensity: explicit value takes precedence over region shortcode.
-    ci = args.get("carbon_intensity") or CARBON_INTENSITY_BY_REGION.get(
+    # Use 'in' check so that an explicit 0 is honoured rather than treated as falsy.
+    ci = args["carbon_intensity"] if "carbon_intensity" in args else CARBON_INTENSITY_BY_REGION.get(
         args.get("region", "global"), 500)
     class _A:
         json = False

@@ -104,8 +104,6 @@ def wire_plugin_events() -> int:
                 bus.subscribe_all(module.on_event)
                 count += 1
             except Exception as e:
-                import logging
-                logging.getLogger("aios.plugins").warning(
-                    "Plugin %s event wiring failed: %s", info["name"], e)
+                logger.warning("Plugin %s event wiring failed: %s", info["name"], e)
 
     return count
