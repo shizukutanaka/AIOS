@@ -132,7 +132,14 @@ The gaps below are where it trails current peers or recent research — not gree
 - **Proposal:** add **FP4 (NVFP4/MXFP4)** rows to the quant table and engine-specific support
   flags; surface the Q4_K_M "sweet spot" call-out in `quant recommend`.
 
-## I. Apple Silicon / unified-memory path
+## I. Apple Silicon / unified-memory path — ✅ implemented (v1.6)
+
+> **Status:** `runtime/broker.py` now has `detect_apple_silicon()` (M-series via
+> sysctl), a `unified_memory` flag on `GPUInfo`, the pure `unified_memory_budget_mb()`
+> helper (75% of RAM), an `apple-metal-<vram>` profile, and an MLX/Metal recommendation.
+> `aictl fit --gpu "M3 Max"` reasons about unified memory via `lookup_apple_silicon_vram()`
+> and the APPLE_SILICON_RAM_GB catalog, fixing the VRAM-only math that wrongly rejected
+> large models on Macs (a 70B now correctly fits an M3 Max's 96GB budget).
 
 - **Current:** profile detection is GPU/NPU/CPU; no MLX/Metal path. Peers (Ollama, LM Studio)
   moved to **MLX** on M-series as the faster default.

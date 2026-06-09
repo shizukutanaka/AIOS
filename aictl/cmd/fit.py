@@ -69,15 +69,22 @@ def run(args: argparse.Namespace) -> int:
         print("  Try: aictl recommend  # see available models")
         return 1
 
+    unified = False
     if args.gpu == "auto":
         hw = full_detect()
         if not hw.gpus:
             return _analyze_cpu(target, hw)
         gpu_name = hw.gpus[0].name
         vram_mb = hw.gpus[0].vram_mb
+        unified = getattr(hw.gpus[0], "unified_memory", False)
     else:
         gpu_name = args.gpu
         vram_mb = _lookup_gpu_vram(gpu_name)
+        if vram_mb == 0:
+            # Apple Silicon chips have unified memory, not a fixed VRAM catalog.
+            from aictl.runtime.broker import lookup_apple_silicon_vram
+            vram_mb = lookup_apple_silicon_vram(gpu_name)
+            unified = vram_mb > 0
         if vram_mb == 0:
             err(f"Unknown GPU: {gpu_name}")
             print("  Known GPUs: " + ", ".join(sorted(GPU_VRAM_MB.keys())[:5]) + "...")
@@ -104,6 +111,11 @@ def run(args: argparse.Namespace) -> int:
         ]
 
     notes = []
+    if unified:
+        notes.append(
+            f"{gpu_name} uses unified memory: ~{vram_mb}MB of system RAM is "
+            f"addressable as VRAM (budgeted at 75%). Use MLX or Ollama (Metal)."
+        )
     if not fits_any:
         notes.append(
             f"{args.model} (FP16) needs {target.vram_required_mb}MB "
