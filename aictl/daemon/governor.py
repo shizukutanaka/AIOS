@@ -151,13 +151,15 @@ class GovernorDaemon:
                 "consecutive": self.state.consecutive_violations,
             }
 
-            # Escalate if consecutive violations exceed threshold
-            if self.state.consecutive_violations >= 5 and action.action == "scale_batch":
-                action.action = "drain"
-                action.reason += " [escalated: 5+ consecutive violations]"
-            elif self.state.consecutive_violations >= 10:
+            # Escalate if consecutive violations exceed threshold.
+            # Check the more severe threshold first so violations>=10 always
+            # reach failover regardless of the current action type.
+            if self.state.consecutive_violations >= 10:
                 action.action = "failover"
                 action.reason += " [escalated: 10+ consecutive violations]"
+            elif self.state.consecutive_violations >= 5 and action.action == "scale_batch":
+                action.action = "drain"
+                action.reason += " [escalated: 5+ consecutive violations]"
 
         return action
 

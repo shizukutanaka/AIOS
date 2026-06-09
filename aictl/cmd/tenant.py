@@ -62,7 +62,10 @@ def run_namespace(args: argparse.Namespace) -> int:
     tenant = Tenant(id=args.tenant_id, name=args.tenant_id,
                     tenant_class=args.tenant_class)
     manifests = generate_k8s_namespace(tenant)
-    print(json.dumps(manifests, indent=2))
+    if getattr(args, "json", False):
+        print_json(manifests)
+    else:
+        print(json.dumps(manifests, indent=2))
     return 0
 
 

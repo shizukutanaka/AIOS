@@ -121,7 +121,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
         # Tool calling support
         if tools and not schema:
             response_text, tool_calls = _generate_tool_call(tools, prompt)
-            tokens = len(response_text.split()) + sum(len(json.dumps(tc)) for tc in tool_calls)
+            tokens = len(response_text.split()) + sum(len(json.dumps(tc).split()) for tc in tool_calls)
         elif schema:
             response_text = _generate_structured(schema)
             tool_calls = []
@@ -213,7 +213,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
                 f'vllm:num_generation_tokens_total {_metrics["tokens_generated"]}',
                 f'vllm:request_success_total {_metrics["requests_total"]}',
             ]
-        self.wfile.write("\n".join(lines).encode())
+        self.wfile.write(("\n".join(lines) + "\n").encode())
 
     def _json(self, data: Any, status: int = 200) -> None:
         """Serialize and send a JSON response."""

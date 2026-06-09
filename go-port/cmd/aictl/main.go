@@ -886,7 +886,7 @@ func cmdHealth() *cobra.Command {
 				ok     bool
 				detail string
 			}{
-				{"State directory", fileExists(store.Dir()), store.Dir()},
+				{"State directory", fileExists(store.Dir), store.Dir},
 				{"Podman", execExists("podman"), ""},
 				{"Ollama", execExists("ollama"), ""},
 				{"nvidia-smi", execExists("nvidia-smi"), ""},
@@ -969,7 +969,7 @@ func cmdMeter() *cobra.Command {
 		Short: "Show token usage per entity",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := getStore()
-			data, err := os.ReadFile(store.Dir() + "/metering.json")
+			data, err := os.ReadFile(store.Dir + "/metering.json")
 			if err != nil {
 				fmt.Println("No usage recorded yet.")
 				return nil
@@ -980,7 +980,10 @@ func cmdMeter() *cobra.Command {
 			}
 			fmt.Printf("%-20s %10s %10s %10s\n", "ENTITY", "PROMPT", "COMPLETION", "TOTAL")
 			for id, v := range buckets {
-				m, _ := v.(map[string]interface{})
+				m, ok := v.(map[string]interface{})
+				if !ok {
+					continue
+				}
 				fmt.Printf("%-20s %10.0f %10.0f %10.0f\n",
 					id,
 					m["prompt_tokens"],
@@ -1005,7 +1008,7 @@ func cmdLora() *cobra.Command {
 		Short: "List registered adapters",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store := getStore()
-			data, err := os.ReadFile(store.Dir() + "/lora_registry.json")
+			data, err := os.ReadFile(store.Dir + "/lora_registry.json")
 			if err != nil {
 				fmt.Println("No adapters registered.")
 				return nil
@@ -1014,10 +1017,17 @@ func cmdLora() *cobra.Command {
 			if err := json.Unmarshal(data, &reg); err != nil {
 				return fmt.Errorf("parse lora: %w", err)
 			}
-			adapters, _ := reg["adapters"].(map[string]interface{})
+			adapters, ok := reg["adapters"].(map[string]interface{})
+			if !ok {
+				fmt.Println("No adapters registered.")
+				return nil
+			}
 			fmt.Printf("%-20s %-30s %5s\n", "NAME", "BASE", "RANK")
 			for name, v := range adapters {
-				m, _ := v.(map[string]interface{})
+				m, ok := v.(map[string]interface{})
+				if !ok {
+					continue
+				}
 				fmt.Printf("%-20s %-30s %5.0f\n", name, m["base_model"], m["rank"])
 			}
 			return nil

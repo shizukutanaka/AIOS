@@ -277,6 +277,31 @@ func detectContainerRT() string {
 	return "none"
 }
 
+// DetectGPUs returns all detected GPUs (NVIDIA + AMD).
+func DetectGPUs() []GPUInfo {
+	return append(detectNVIDIA(), detectAMD()...)
+}
+
+// DetectProfile returns the hardware profile string for the current system.
+func DetectProfile() string {
+	return selectProfile(DetectGPUs(), detectNPUs())
+}
+
+// DetectContainerRuntime returns the container runtime in use ("podman", "docker", or "none").
+func DetectContainerRuntime() string {
+	return detectContainerRT()
+}
+
+// DetectOllama returns true if the ollama binary is present.
+func DetectOllama() bool {
+	return commandExists("ollama")
+}
+
+// DetectSystem returns system information for the current host.
+func DetectSystem() SystemInfo {
+	return detectSystem()
+}
+
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil

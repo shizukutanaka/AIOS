@@ -84,6 +84,11 @@ def run_list(args: argparse.Namespace) -> int:
         print("No saved contexts. Use: aictl context save")
         return 0
 
+    if getattr(args, "json", False):
+        from dataclasses import asdict
+        print_json([asdict(s) for s in snapshots])
+        return 0
+
     rows = [{"id": s.snapshot_id[:16], "engine": s.engine,
              "entries": s.num_entries, "status": s.status,
              "age": _format_age(time.time() - s.created_at)} for s in snapshots]

@@ -44,6 +44,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
     store: StateStore
     _report_cache: RuntimeReport | None = None
     _report_ts: float = 0.0
+    _report_lock: threading.Lock = threading.Lock()
 
     def log_message(self, format: Any, *args: Any) -> None:
         """Log message."""
@@ -71,10 +72,11 @@ class AIOSHandler(BaseHTTPRequestHandler):
     def _get_report(self) -> RuntimeReport:
         """Retrieve and return the requested value."""
         now = time.time()
-        if self._report_cache is None or now - self._report_ts > 30:
-            AIOSHandler._report_cache = full_detect()
-            AIOSHandler._report_ts = now
-        return self._report_cache  # type: ignore
+        with AIOSHandler._report_lock:
+            if self._report_cache is None or now - self._report_ts > 30:
+                AIOSHandler._report_cache = full_detect()
+                AIOSHandler._report_ts = now
+            return self._report_cache  # type: ignore
 
     # ── Routing ─────────────────────────────────────────
 
