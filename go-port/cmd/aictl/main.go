@@ -505,6 +505,13 @@ func cmdModel() *cobra.Command {
 					}
 				}
 			}
+			if jsonFlag {
+				names := []string{}
+				for m := range models {
+					names = append(names, m)
+				}
+				return printJSON(names)
+			}
 			if len(models) == 0 {
 				fmt.Println("No models registered. Apply a stack first.")
 				return nil
@@ -610,6 +617,9 @@ func cmdFabric() *cobra.Command {
 			// Read meminfo
 			data, err := os.ReadFile("/proc/meminfo")
 			if err != nil {
+				if jsonFlag {
+					return printJSON(map[string]interface{}{"error": "cannot read /proc/meminfo"})
+				}
 				fmt.Println("Cannot read /proc/meminfo")
 				return nil
 			}
@@ -623,19 +633,25 @@ func cmdFabric() *cobra.Command {
 			}
 			totalGB := float64(totalKB) / (1024 * 1024)
 			availGB := float64(availKB) / (1024 * 1024)
+			cxl := fileExists("/sys/bus/cxl")
+			damon := fileExists("/sys/kernel/mm/damon")
 
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"dram_total_gb":     totalGB,
+					"dram_available_gb": availGB,
+					"cxl_detected":      cxl,
+					"damon_available":   damon,
+				})
+			}
 			fmt.Printf("✓ Memory Fabric\n\n")
 			fmt.Printf("  DRAM: %.1f GB total, %.1f GB available\n", totalGB, availGB)
-
-			// Check CXL
-			if _, err := os.Stat("/sys/bus/cxl"); err == nil {
+			if cxl {
 				fmt.Println("  CXL:  detected")
 			} else {
 				fmt.Println("  CXL:  not detected")
 			}
-
-			// Check DAMON
-			if _, err := os.Stat("/sys/kernel/mm/damon"); err == nil {
+			if damon {
 				fmt.Println("  DAMON: available")
 			} else {
 				fmt.Println("  DAMON: not available")
@@ -703,8 +719,14 @@ func cmdDeploy() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			model := args[0]
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"model":    model,
+					"delegate": "python3 -m aictl deploy plan " + model,
+					"note":     "Full resource estimation requires the Python runtime",
+				})
+			}
 			fmt.Printf("✓ Deployment Plan: %s\n\n", model)
-			// Estimate params from model name
 			fmt.Println("  (Go port — resource estimation stub)")
 			fmt.Println("  Use Python CLI for full estimation: python3 -m aictl deploy plan " + model)
 			return nil
@@ -714,15 +736,22 @@ func cmdDeploy() *cobra.Command {
 		Use:   "dynamo",
 		Short: "Check NVIDIA Dynamo availability",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dynFound := func() bool { _, err := exec.LookPath("dynamo"); return err == nil }()
+			nixlFound := fileExists("/usr/lib/libnixl.so")
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"dynamo_binary": dynFound,
+					"nixl_library":  nixlFound,
+					"available":     dynFound && nixlFound,
+				})
+			}
 			fmt.Println("NVIDIA Dynamo Status")
-			// Check binary
-			if _, err := exec.LookPath("dynamo"); err == nil {
+			if dynFound {
 				fmt.Println("  ✓ dynamo binary found")
 			} else {
 				fmt.Println("  ✗ dynamo binary not found")
 			}
-			// Check NIXL
-			if _, err := os.Stat("/usr/lib/libnixl.so"); err == nil {
+			if nixlFound {
 				fmt.Println("  ✓ NIXL library found")
 			} else {
 				fmt.Println("  ✗ NIXL library not found")
@@ -840,11 +869,27 @@ func cmdTenant() *cobra.Command {
 		Use:   "classes",
 		Short: "List tenant classes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			type tenantClass struct {
+				Class  string `json:"class"`
+				GPUs   int    `json:"gpus"`
+				RAM    string `json:"ram"`
+				VRAM   string `json:"vram"`
+				RPM    int    `json:"rpm"`
+				Audit  string `json:"audit"`
+			}
+			classes := []tenantClass{
+				{"regulated", 2, "64GB", "80GB", 1000, "detailed"},
+				{"standard", 1, "32GB", "24GB", 120, "standard"},
+				{"dev", 1, "16GB", "8GB", 30, "minimal"},
+			}
+			if jsonFlag {
+				return printJSON(classes)
+			}
 			fmt.Printf("%-12s %-5s %-8s %-8s %-6s %-8s\n", "CLASS", "GPU", "RAM", "VRAM", "RPM", "AUDIT")
 			fmt.Println(strings.Repeat("-", 52))
-			fmt.Printf("%-12s %-5s %-8s %-8s %-6s %-8s\n", "regulated", "2", "64GB", "80GB", "1000", "detailed")
-			fmt.Printf("%-12s %-5s %-8s %-8s %-6s %-8s\n", "standard", "1", "32GB", "24GB", "120", "standard")
-			fmt.Printf("%-12s %-5s %-8s %-8s %-6s %-8s\n", "dev", "1", "16GB", "8GB", "30", "minimal")
+			for _, c := range classes {
+				fmt.Printf("%-12s %-5d %-8s %-8s %-6d %-8s\n", c.Class, c.GPUs, c.RAM, c.VRAM, c.RPM, c.Audit)
+			}
 			return nil
 		},
 	})
@@ -862,6 +907,9 @@ func cmdContext() *cobra.Command {
 		Use:   "list",
 		Short: "List saved context snapshots",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				return printJSON([]interface{}{})
+			}
 			fmt.Println("No saved contexts. Use: aictl context save")
 			return nil
 		},
@@ -1044,6 +1092,12 @@ func cmdReport() *cobra.Command {
 		Use:   "report",
 		Short: "Generate system assessment (delegates to Python)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"delegate": "python3 -m aictl report --json",
+					"note":     "Full report generation requires the Python runtime",
+				})
+			}
 			fmt.Println("Report generation requires the Python runtime.")
 			fmt.Println("Run: python3 -m aictl report")
 			return nil
@@ -1110,6 +1164,9 @@ func cmdLora() *cobra.Command {
 			store := getStore()
 			data, err := os.ReadFile(store.Dir + "/lora_registry.json")
 			if err != nil {
+				if jsonFlag {
+					return printJSON([]interface{}{})
+				}
 				fmt.Println("No adapters registered.")
 				return nil
 			}
@@ -1119,8 +1176,14 @@ func cmdLora() *cobra.Command {
 			}
 			adapters, ok := reg["adapters"].(map[string]interface{})
 			if !ok {
+				if jsonFlag {
+					return printJSON([]interface{}{})
+				}
 				fmt.Println("No adapters registered.")
 				return nil
+			}
+			if jsonFlag {
+				return printJSON(adapters)
 			}
 			fmt.Printf("%-20s %-30s %5s\n", "NAME", "BASE", "RANK")
 			for name, v := range adapters {
@@ -1143,6 +1206,12 @@ func cmdGate() *cobra.Command {
 		Use:   "gate",
 		Short: "Quality gate (compile + test + demo)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"delegate": "python3 -m aictl gate",
+					"note":     "Quality gate requires the Python runtime",
+				})
+			}
 			fmt.Println("Quality gate requires the Python runtime.")
 			fmt.Println("Run: python3 -m aictl gate")
 			return nil
@@ -1157,6 +1226,12 @@ func cmdBench() *cobra.Command {
 		Use:   "bench",
 		Short: "Benchmark inference performance (delegates to Python)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"delegate": "python3 -m aictl bench --mock",
+					"note":     "Benchmark requires the Python runtime",
+				})
+			}
 			fmt.Println("Benchmark requires the Python runtime.")
 			fmt.Println("Run: python3 -m aictl bench --mock -n 10")
 			return nil
