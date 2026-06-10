@@ -65,8 +65,11 @@ class StateStore:
         """Load node."""
         if not self._state_path.exists():
             return NodeState()
-        d = json.loads(self._state_path.read_text())
-        return NodeState(**{k: v for k, v in d.items() if k in NodeState.__dataclass_fields__})
+        try:
+            d = json.loads(self._state_path.read_text())
+            return NodeState(**{k: v for k, v in d.items() if k in NodeState.__dataclass_fields__})
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return NodeState()  # graceful fallback on corrupted state file
 
     # ── stacks ──────────────────────────────────────────
     def save_stacks(self, entries: list[StackEntry]) -> None:
@@ -79,8 +82,11 @@ class StateStore:
         """Load stacks."""
         if not self._stacks_path.exists():
             return []
-        data = json.loads(self._stacks_path.read_text())
-        return [StackEntry(**d) for d in data]
+        try:
+            data = json.loads(self._stacks_path.read_text())
+            return [StackEntry(**d) for d in data]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return []  # graceful fallback on corrupted stacks file
 
     def upsert_stack(self, entry: StackEntry) -> None:
         """Upsert stack."""
