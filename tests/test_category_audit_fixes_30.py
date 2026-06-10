@@ -1,4 +1,4 @@
-"""Pass 30 regression tests: Go port test count stale (1742+→1755+→1765+)."""
+"""Pass 30 regression tests: Go port test count stale (1742+→1755+→1765+→1840+)."""
 
 import pathlib
 import unittest
@@ -20,35 +20,44 @@ class TestGoPortTestCount(unittest.TestCase):
         self.assertNotIn(
             '"1742+"',
             src,
-            'Go port still reports "1742+" tests — update to "1755+".',
+            'Go port still reports "1742+" tests — update to "1840+".',
         )
         self.assertNotIn(
             "1742+",
             src,
-            "Go port still reports 1742+ tests — update to 1755+.",
+            "Go port still reports 1742+ tests — update to 1840+.",
         )
 
     def test_test_count_not_1755(self):
-        """cmdInfo must not advertise the stale 1755+ count (now updated to 1765+)."""
+        """cmdInfo must not advertise the stale 1755+ count."""
         src = self._go_src()
         self.assertNotIn(
             '"1755+"',
             src,
-            'Go port still reports "1755+" tests — update to "1765+".',
+            'Go port still reports "1755+" tests — update to "1840+".',
         )
 
-    def test_test_count_is_1765(self):
-        """cmdInfo JSON and text output must advertise 1765+."""
+    def test_test_count_not_1765(self):
+        """cmdInfo must not advertise the stale 1765+ count (now 1840+)."""
         src = self._go_src()
-        self.assertIn(
+        self.assertNotIn(
             '"1765+"',
             src,
-            'Go port cmdInfo JSON must contain "tests": "1765+".',
+            'Go port still reports "1765+" tests — update to "1840+".',
+        )
+
+    def test_test_count_is_1840(self):
+        """cmdInfo JSON and text output must advertise 1840+."""
+        src = self._go_src()
+        self.assertIn(
+            '"1840+"',
+            src,
+            'Go port cmdInfo JSON must contain "tests": "1840+".',
         )
         self.assertIn(
-            "1765+",
+            "1840+",
             src,
-            "Go port cmdInfo text must advertise 1765+.",
+            "Go port cmdInfo text must advertise 1840+.",
         )
 
 

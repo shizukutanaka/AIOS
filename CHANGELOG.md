@@ -22,7 +22,7 @@
 
 ### Changed
 - Project source is now tracked in the repository (was shipped only as a zip).
-- Documentation counts reconciled with reality: 1776 tests, 66 CLI commands,
+- Documentation counts reconciled with reality: 1840 tests, 66 CLI commands,
   19 MCP tools, 150 modules.
 - Added `tests/test_improvements_v16.py` (7 regression tests).
 
