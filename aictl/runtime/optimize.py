@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from aictl.core.constants import DEFAULT_GPU_MEMORY_UTIL, VLLM_DEFAULT_PORT
+
 
 @dataclass
 class HardwareProfile:
@@ -112,7 +114,7 @@ def optimize_vllm_flags(
         notes.append("FP8 E5M2 KV cache: lower precision but fits on A100")
 
     # ── GPU memory utilization ──
-    gpu_util = 0.90
+    gpu_util = DEFAULT_GPU_MEMORY_UTIL
     if tp > 1:
         gpu_util = 0.85  # Leave headroom for TP communication
     flags.append(f"--gpu-memory-utilization={gpu_util}")
@@ -182,7 +184,7 @@ def optimize_vllm_flags(
     )
 
 
-def flags_to_command(result: OptimizeResult, port: int = 8000) -> str:
+def flags_to_command(result: OptimizeResult, port: int = VLLM_DEFAULT_PORT) -> str:
     """Convert optimization result to a runnable vllm serve command."""
     args = " \\\n    ".join(result.flags + [f"--port={port}"])
     return f"vllm serve \\\n    {args}"
