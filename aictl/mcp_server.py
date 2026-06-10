@@ -412,8 +412,14 @@ def _tool_optimize(args: dict[str, Any]) -> dict[str, Any]:
     profile = HardwareProfile(
         gpu_name=gpu,
         gpu_count=args.get("gpu_count", 1),
-        vram_per_gpu_mb={"H100": 81920, "B200": 196608, "A100": 81920,
-                         "RTX 4090": 24576}.get(gpu, 24576),
+        vram_per_gpu_mb={
+            "A100": 81920, "A100 80GB": 81920,
+            "H100": 81920, "H100 SXM": 81920,
+            "H200": 144384, "H200 SXM": 144384,
+            "B200": 196608, "GB200": 196608,
+            "RTX 3090": 24576, "RTX 4090": 24576, "RTX 5090": 32768,
+            "L40S": 49152, "L4": 24576,
+        }.get(gpu, 24576),
         compute_capability=GPU_CC.get(gpu, 90),
     )
     model = args.get("model")
