@@ -39,36 +39,36 @@ def run(args: argparse.Namespace) -> int:
         ok("Mock engine started for benchmarking")
 
     ok(f"Benchmarking {endpoint} ({args.requests} requests)...")
-    result = run_benchmark(
-        endpoint=endpoint,
-        model=args.model or "mock-llama3-8b",
-        num_requests=args.requests,
-        max_tokens=args.max_tokens,
-    )
+    try:
+        result = run_benchmark(
+            endpoint=endpoint,
+            model=args.model or "mock-llama3-8b",
+            num_requests=args.requests,
+            max_tokens=args.max_tokens,
+        )
 
-    if getattr(args, "json", False):
-        print_json(result.__dict__)
+        if getattr(args, "json", False):
+            print_json(result.__dict__)
+            return 0
+
+        if result.errors == result.requests:
+            err(f"All {result.requests} requests failed — check endpoint")
+            return 1
+
+        ok(f"Benchmark complete ({result.requests - result.errors}/{result.requests} succeeded)")
+        print()
+        print_kv([
+            ("Endpoint", result.endpoint),
+            ("Model", result.model or "(default)"),
+            ("TTFT avg", f"{result.ttft_ms_avg:.0f} ms"),
+            ("TTFT p95", f"{result.ttft_ms_p95:.0f} ms"),
+            ("Total avg", f"{result.total_ms_avg:.0f} ms"),
+            ("Tokens", str(result.tokens_generated)),
+            ("Throughput", f"{result.tokens_per_sec:.1f} tokens/sec"),
+            ("Duration", f"{result.duration_sec:.1f}s"),
+            ("Errors", str(result.errors)),
+        ])
         return 0
-
-    if result.errors == result.requests:
-        err(f"All {result.requests} requests failed — check endpoint")
-        return 1
-
-    ok(f"Benchmark complete ({result.requests - result.errors}/{result.requests} succeeded)")
-    print()
-    print_kv([
-        ("Endpoint", result.endpoint),
-        ("Model", result.model or "(default)"),
-        ("TTFT avg", f"{result.ttft_ms_avg:.0f} ms"),
-        ("TTFT p95", f"{result.ttft_ms_p95:.0f} ms"),
-        ("Total avg", f"{result.total_ms_avg:.0f} ms"),
-        ("Tokens", str(result.tokens_generated)),
-        ("Throughput", f"{result.tokens_per_sec:.1f} tokens/sec"),
-        ("Duration", f"{result.duration_sec:.1f}s"),
-        ("Errors", str(result.errors)),
-    ])
-
-    if mock_server:
-        mock_server.shutdown()
-
-    return 0
+    finally:
+        if mock_server:
+            mock_server.shutdown()

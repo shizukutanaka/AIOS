@@ -32,8 +32,13 @@ def run_config(args: argparse.Namespace) -> int:
 
     out = getattr(args, "output", "")
     if out:
-        Path(out).write_text(yaml_str)
-        ok(f"OTel Collector config written to {out}")
+        try:
+            Path(out).write_text(yaml_str)
+            ok(f"OTel Collector config written to {out}")
+        except OSError as e:
+            from aictl.core.output import err as print_err
+            print_err(f"Cannot write to {out}: {e}")
+            return 1
     else:
         print(yaml_str)
     return 0

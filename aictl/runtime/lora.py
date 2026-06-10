@@ -140,4 +140,5 @@ class LoRAManager:
 
     def _save(self, data: dict[str, Any]) -> None:
         """Persist data to storage."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(data, indent=2))

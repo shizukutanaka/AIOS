@@ -68,9 +68,17 @@ def scan(state_dir: Path | None = None) -> SecurityReport:
                 report.score -= deductions.get(finding.severity, 5)
             else:
                 report.checks_passed += 1
-        except Exception:
+        except Exception as exc:
             report.checks_total += 1
             report.checks_failed += 1
+            report.findings.append(SecurityFinding(
+                severity="medium",
+                category="runtime",
+                title=f"Security check error: {check.__name__}",
+                description=f"Check raised an unexpected exception: {exc}",
+                remediation="Investigate why the check failed; run with verbose logging.",
+            ))
+            report.score -= 10
 
     report.score = max(0, report.score)
     return report
