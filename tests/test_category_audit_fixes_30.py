@@ -1,4 +1,4 @@
-"""Pass 30 regression tests: Go port test count stale (1742+→1755+)."""
+"""Pass 30 regression tests: Go port test count stale (1742+→1755+→1765+)."""
 
 import pathlib
 import unittest
@@ -28,18 +28,27 @@ class TestGoPortTestCount(unittest.TestCase):
             "Go port still reports 1742+ tests — update to 1755+.",
         )
 
-    def test_test_count_is_1755(self):
-        """cmdInfo JSON and text output must advertise 1755+."""
+    def test_test_count_not_1755(self):
+        """cmdInfo must not advertise the stale 1755+ count (now updated to 1765+)."""
         src = self._go_src()
-        self.assertIn(
+        self.assertNotIn(
             '"1755+"',
             src,
-            'Go port cmdInfo JSON must contain "tests": "1755+".',
+            'Go port still reports "1755+" tests — update to "1765+".',
+        )
+
+    def test_test_count_is_1765(self):
+        """cmdInfo JSON and text output must advertise 1765+."""
+        src = self._go_src()
+        self.assertIn(
+            '"1765+"',
+            src,
+            'Go port cmdInfo JSON must contain "tests": "1765+".',
         )
         self.assertIn(
-            "1755+",
+            "1765+",
             src,
-            "Go port cmdInfo text must advertise 1755+.",
+            "Go port cmdInfo text must advertise 1765+.",
         )
 
 
