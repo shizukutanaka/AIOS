@@ -179,6 +179,11 @@ def register(sub: Any) -> None:
     cas.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     cas.set_defaults(func=run_cascade)
 
+    # stats
+    st = sp.add_parser("stats", help="Show cascade routing statistics.")
+    st.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    st.set_defaults(func=run_stats)
+
 
 def run_show(args: argparse.Namespace) -> int:
     """Show routing decision for a prompt."""
@@ -394,7 +399,7 @@ def run_cascade(args: argparse.Namespace) -> int:
       5. Report which path was taken and both costs.
     """
     prompt = args.prompt
-    min_length = getattr(args, "min_length", 20)
+    min_length = max(1, getattr(args, "min_length", 20))
     use_json = getattr(args, "json", False)
 
     score = score_complexity(prompt)
@@ -489,6 +494,46 @@ def run_cascade(args: argparse.Namespace) -> int:
         print(f"  Cost: {total_cost}  Latency: {elapsed_ms}ms  Path: {label}")
         print()
     _record_cascade_stat(escalated)
+    return 0
+
+
+def run_stats(args: argparse.Namespace) -> int:
+    """Show cascade routing statistics from persistent counter file."""
+    stats: dict[str, int] = {"total_runs": 0, "escalations": 0}
+    try:
+        stats = json.loads(_cascade_stats_path().read_text())
+    except Exception:
+        pass  # file absent → all zeros
+
+    total = int(stats.get("total_runs", 0))
+    escalations = int(stats.get("escalations", 0))
+    direct = total - escalations
+    rate = escalations / total if total > 0 else 0.0
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print_json({
+            "total_runs": total,
+            "direct": direct,
+            "escalations": escalations,
+            "escalation_rate": round(rate, 4),
+        })
+        return 0
+
+    print()
+    if total == 0:
+        warn("No cascade runs recorded yet.")
+        print("  Try: aictl route cascade 'What is 2+2?'")
+        print()
+        return 0
+    print("  ── Cascade Routing Statistics ─────────────────────────")
+    print()
+    print(f"  Total runs:       {total:>6}")
+    print(f"  Direct (no esc):  {direct:>6}  ({1.0 - rate:.1%})")
+    print(f"  Escalated:        {escalations:>6}  ({rate:.1%})")
+    print()
+    ok("Stats from ~/.aios/cascade_stats.json")
+    print()
     return 0
 
 
