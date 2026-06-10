@@ -202,7 +202,7 @@ def compute_goodput(
         if ttft_ok and tpot_ok:
             result.slo_met_requests += 1
 
-    result.goodput_ratio = result.slo_met_requests / result.total_requests
+    result.goodput_ratio = result.slo_met_requests / result.total_requests if result.total_requests > 0 else 0.0
     if window_seconds > 0:
         result.goodput_rps = result.slo_met_requests / window_seconds
     return result

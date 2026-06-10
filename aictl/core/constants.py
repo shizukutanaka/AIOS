@@ -38,6 +38,7 @@ SLO_CHECK_INTERVAL = 15     # Governor check interval (seconds)
 API_KEY_PREFIX = "aios-"
 API_KEY_LENGTH = 32          # Characters after prefix
 STATE_DIR_PERMISSIONS = 0o700
+MAX_REQUEST_BODY = 1 * 1024 * 1024   # 1 MiB — daemon POST body cap
 
 # ── Container / K8s ──────────────────────────────────
 VLLM_IMAGE = "vllm/vllm-openai:v0.19.0"

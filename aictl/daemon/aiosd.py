@@ -32,7 +32,7 @@ from aictl.stack.orchestrator import apply_stack, stop_stack, list_running
 from aictl.metrics.slo import read_psi, InferenceMetrics, SLOTarget, check_slo
 
 
-from aictl.core.constants import DAEMON_HOST, DAEMON_PORT
+from aictl.core.constants import DAEMON_HOST, DAEMON_PORT, MAX_REQUEST_BODY
 
 DEFAULT_HOST = DAEMON_HOST
 DEFAULT_PORT = DAEMON_PORT
@@ -69,6 +69,9 @@ class AIOSHandler(BaseHTTPRequestHandler):
             length = 0
         if length <= 0:
             return {}
+        if length > MAX_REQUEST_BODY:
+            self._json_response({"error": "request body too large"}, 413)
+            raise ValueError(f"request body {length} exceeds {MAX_REQUEST_BODY}")
         raw = self.rfile.read(length)
         return json.loads(raw)
 
@@ -388,7 +391,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
                     "degraded_mode": h.status == "DEGRADED",
                 })
                 return
-        self._json_response({"fallback_target": "", "endpoint": "", "degraded_mode": True})
+        self._json_response({"error": "no healthy engines available"}, 503)
 
     def _broker_drain(self) -> None:
         """Drain traffic from an engine before shutdown."""
