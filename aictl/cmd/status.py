@@ -24,6 +24,10 @@ def register(sub: Any) -> None:
         action="store_true",
         help="One-line health summary only (good for shells, prompts, watchdogs).",
     )
+    p.add_argument("--watch", action="store_true",
+                   help="Continuously refresh status (like watch(1))")
+    p.add_argument("--interval", type=int, default=5,
+                   help="Refresh interval in seconds when --watch is active (default: 5)")
     p.set_defaults(func=run)
 
 
@@ -62,6 +66,29 @@ def _build_one_liner(store: Any, report: Any, services: Any, psi: Any, engines_o
 
 def run(args: argparse.Namespace) -> int:
     """Execute the status command."""
+    if getattr(args, "watch", False):
+        return _run_watch(args)
+    return _run_once(args)
+
+
+def _run_watch(args: argparse.Namespace) -> int:
+    """Continuously refresh status until Ctrl-C."""
+    import time
+    import os
+    interval = max(1, getattr(args, "interval", 5))
+    try:
+        while True:
+            os.system("clear" if os.name != "nt" else "cls")
+            _run_once(args)
+            print(f"\n  Refreshing every {interval}s — Ctrl-C to stop")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+def _run_once(args: argparse.Namespace) -> int:
+    """Single-shot status render (extracted from original run)."""
     store = StateStore(getattr(args, "state_dir", None))
     config = load_config(store.dir)
     node = store.load_node()
