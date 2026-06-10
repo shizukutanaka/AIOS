@@ -138,19 +138,19 @@ class TokenMeter:
         return buckets.get(entity_id)
 
     def set_quota(self, entity_id: str, *,
-                  per_day: int = 0, per_month: int = 0,
-                  per_minute: int = 0) -> None:
-        """Set token quotas for an entity."""
+                  per_day: int | None = None, per_month: int | None = None,
+                  per_minute: int | None = None) -> None:
+        """Set token quotas for an entity. Pass 0 to reset a quota to unlimited."""
         buckets = self._load_buckets()
         bucket = buckets.get(entity_id)
         if bucket is None:
             bucket = TokenBucket(entity_id=entity_id)
             buckets[entity_id] = bucket
-        if per_day:
+        if per_day is not None:
             bucket.quota_tokens_per_day = per_day
-        if per_month:
+        if per_month is not None:
             bucket.quota_tokens_per_month = per_month
-        if per_minute:
+        if per_minute is not None:
             bucket.quota_tokens_per_minute = per_minute
         self._save_buckets(buckets)
 

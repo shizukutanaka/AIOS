@@ -92,7 +92,7 @@ class WarmupManager:
                 result = self._warmup_ollama(rec.model)
             elif rec.engine in ("vllm", "sglang"):
                 result = {"model": rec.model, "engine": rec.engine,
-                          "status": "skip", "reason": "vLLM/SGLang models load on container start"}
+                          "status": "skipped", "reason": "vLLM/SGLang models load on container start"}
 
             results.append(result)
         return results

@@ -21,8 +21,8 @@ def register(sub: Any) -> None:
 
     quota = msub.add_parser("quota", help="Set token quota")
     quota.add_argument("entity", help="Entity ID (apikey or tenant)")
-    quota.add_argument("--per-day", type=int, default=0)
-    quota.add_argument("--per-month", type=int, default=0)
+    quota.add_argument("--per-day", type=int, default=None)
+    quota.add_argument("--per-month", type=int, default=None)
     quota.set_defaults(func=run_quota)
 
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
@@ -59,7 +59,7 @@ def run_quota(args: argparse.Namespace) -> int:
     """Execute the quota subcommand."""
     meter = TokenMeter()
     meter.set_quota(args.entity,
-                    per_day=getattr(args, "per_day", 0),
-                    per_month=getattr(args, "per_month", 0))
+                    per_day=getattr(args, "per_day", None),
+                    per_month=getattr(args, "per_month", None))
     ok(f"Quota set for {args.entity}")
     return 0
