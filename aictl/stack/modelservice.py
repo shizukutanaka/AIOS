@@ -76,7 +76,7 @@ PRESETS: dict[str, dict[str, Any]] = {
 def generate_helm_values(config: ModelServiceConfig) -> dict[str, Any]:
     """Generate Helm values.yaml for llm-d ModelService."""
     preset = PRESETS.get(config.preset, PRESETS["balanced"])
-    model_slug = config.model.split("/")[-1].lower().replace(".", "-")
+    model_slug = (config.model.rstrip("/").split("/")[-1] or "model").lower().replace(".", "-")
 
     values: dict[str, Any] = {
         "modelService": {

@@ -49,7 +49,7 @@ def generate_disagg_manifests(config: DisaggConfig) -> list[dict[str, Any]]:
       3. Gateway API InferencePool + InferenceModel
       4. llm-d ModelService CRD (if available)
     """
-    model_slug = config.model.split("/")[-1].lower().replace(".", "-")
+    model_slug = (config.model.rstrip("/").split("/")[-1] or "model").lower().replace(".", "-")
     resources: list[dict[str, Any]] = []
 
     # ── Prefill Deployment ──

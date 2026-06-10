@@ -204,10 +204,8 @@ class NodeManager:
 def _get_local_ip() -> str:
     """Get the local IP address (non-loopback)."""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return str(ip)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return str(s.getsockname()[0])
     except Exception:
         return "127.0.0.1"

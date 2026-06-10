@@ -89,6 +89,10 @@ def _apply_ollama_service(svc: ServiceDef, stack_name: str, dry_run: bool) -> Ru
             rs.status = "error"
             rs.error = "ollama binary not found"
             return rs
+        except OSError as e:
+            rs.status = "error"
+            rs.error = f"Failed to start ollama: {e}"
+            return rs
 
     # Pull model if specified
     if svc.model:

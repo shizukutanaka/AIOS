@@ -348,7 +348,9 @@ def run_eval(args: argparse.Namespace) -> int:
 
     save_path = getattr(args, "save", None)
     if save_path:
-        Path(save_path).write_text(json.dumps(output, indent=2))
+        save = Path(save_path)
+        save.parent.mkdir(parents=True, exist_ok=True)
+        save.write_text(json.dumps(output, indent=2))
         if not use_json:
             print()
             print(f"  Results saved: {save_path}")
