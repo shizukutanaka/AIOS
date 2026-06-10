@@ -1080,7 +1080,7 @@ func cmdInfo() *cobra.Command {
 					"python_commands": 65,
 					"rest_endpoints":  22,
 					"recipes":         10,
-					"tests":           "1742+",
+					"tests":           "1755+",
 					"stack":           stack,
 				})
 			}
@@ -1089,7 +1089,7 @@ func cmdInfo() *cobra.Command {
 			fmt.Println("  Commands  29 Go + 65 Python")
 			fmt.Println("  REST API  22 endpoints")
 			fmt.Println("  Recipes   10")
-			fmt.Println("  Tests     1742+")
+			fmt.Println("  Tests     1755+")
 			fmt.Println()
 			fmt.Println("  Stack:")
 			for _, s := range stack {
