@@ -393,18 +393,6 @@ def run_compare(args: argparse.Namespace) -> int:
         err(f"Baseline not found: {baseline_path}")
         return 1
 
-    # Run current eval first
-    run_args = argparse.Namespace(
-        suite=str(suite_path), model="auto", save=None, json=False)
-
-    import io
-    from contextlib import redirect_stdout
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        run_eval(run_args)
-    buf.getvalue()
-
-    # Re-run properly to get data
     suite = json.loads(suite_path.read_text())
     current = {
         "suite": suite.get("name", "current"),
@@ -414,8 +402,8 @@ def run_compare(args: argparse.Namespace) -> int:
     baseline = json.loads(baseline_path.read_text())
 
     # Build comparison
-    base_by_id = {c["id"]: c for c in baseline.get("cases", [])}
-    curr_by_id = {c["id"]: c for c in current.get("cases", [])}
+    base_by_id = {c["id"]: c for c in baseline.get("cases", []) if "id" in c}
+    curr_by_id = {c["id"]: c for c in current.get("cases", []) if "id" in c}
 
     use_json = getattr(args, "json", False)
 

@@ -39,12 +39,14 @@ import time
 from collections import deque
 from typing import Any
 
+from aictl.core.constants import AICTL_VERSION
+
 
 # ── MCP Protocol Constants ──
 JSONRPC_VERSION = "2.0"
 MCP_PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "aictl"
-SERVER_VERSION = "1.6.0"
+SERVER_VERSION = AICTL_VERSION
 
 
 # ── Tool Definitions ──
