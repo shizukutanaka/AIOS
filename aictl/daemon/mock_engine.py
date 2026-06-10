@@ -227,10 +227,11 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
 def _generate_response(prompt: str, max_tokens: int) -> str:
     """Generate a deterministic response based on prompt."""
-    if not prompt:
+    words = prompt.strip().split()
+    if not words:
         return RESPONSES["default"]
 
-    first_word = prompt.strip().split()[0].lower().rstrip(".,!?")
+    first_word = words[0].lower().rstrip(".,!?")
     text = RESPONSES.get(first_word, RESPONSES["default"])
 
     # Truncate to approximate max_tokens
