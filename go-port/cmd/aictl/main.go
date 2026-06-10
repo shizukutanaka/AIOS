@@ -553,25 +553,34 @@ func cmdNet() *cobra.Command {
 		Use:   "net",
 		Short: "Network diagnostics",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Network diagnostics")
-			fmt.Println()
-
 			endpoints := map[string]string{
 				"vllm":   "localhost:8000",
 				"ollama": "localhost:11434",
 				"sglang": "localhost:30000",
 				"aiosd":  "127.0.0.1:7700",
 			}
-
+			type epResult struct {
+				Name      string `json:"name"`
+				Address   string `json:"address"`
+				Reachable bool   `json:"reachable"`
+			}
+			var results []epResult
 			for name, addr := range endpoints {
-				ok := checkTCP(addr)
+				results = append(results, epResult{name, addr, checkTCP(addr)})
+			}
+			if jsonFlag {
+				return printJSON(results)
+			}
+			fmt.Println("Network diagnostics")
+			fmt.Println()
+			for _, r := range results {
 				icon := "✗"
 				status := "unreachable"
-				if ok {
+				if r.Reachable {
 					icon = "✓"
 					status = "reachable"
 				}
-				fmt.Printf("  %s %-10s %s  %s\n", icon, name, addr, status)
+				fmt.Printf("  %s %-10s %s  %s\n", icon, r.Name, r.Address, status)
 			}
 			return nil
 		},
@@ -651,18 +660,27 @@ func cmdUpgrade() *cobra.Command {
 			store := getStore()
 			node, _ := store.LoadNode()
 			stacks, _ := store.LoadStacks()
+			steps := []string{
+				"Save context snapshots (aictl context save)",
+				"Drain workloads (aictl down <stack>)",
+				"Stage OS update (bootc upgrade)",
+				"Reboot",
+				"Restore contexts (aictl context restore)",
+				"Re-apply stacks (aictl apply -f <stack>)",
+			}
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"current_version": node.Version,
+					"target_version":  "next",
+					"active_stacks":   len(stacks),
+					"steps":           steps,
+					"rollback":        "bootc rollback",
+				})
+			}
 			fmt.Printf("Upgrade Plan (current: %s)\n\n", node.Version)
 			fmt.Println("  Steps:")
-			steps := []string{
-				"1. Save context snapshots (aictl context save)",
-				"2. Drain workloads (aictl down <stack>)",
-				"3. Stage OS update (bootc upgrade)",
-				"4. Reboot",
-				"5. Restore contexts (aictl context restore)",
-				"6. Re-apply stacks (aictl apply -f <stack>)",
-			}
-			for _, s := range steps {
-				fmt.Printf("    %s\n", s)
+			for i, s := range steps {
+				fmt.Printf("    %d. %s\n", i+1, s)
 			}
 			fmt.Printf("\n  Active stacks: %d\n", len(stacks))
 			fmt.Println("  Rollback: bootc rollback")
@@ -726,17 +744,25 @@ func cmdCost() *cobra.Command {
 		Use:   "compare",
 		Short: "Compare GPU types (April 2026 pricing)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			type gpuPrice struct{ name, cloud, onprem, breakeven string }
+			type gpuPrice struct {
+				Name      string `json:"name"`
+				Cloud     string `json:"cloud_per_month"`
+				OnPrem    string `json:"onprem_per_month"`
+				Breakeven string `json:"breakeven"`
+			}
 			gpus := []gpuPrice{
 				{"RTX 4090", "$252/mo", "$83/mo", "9 months"},
 				{"A100 80GB", "$1,181/mo", "$451/mo", "21 months"},
 				{"H100 SXM", "$1,512/mo", "$894/mo", "49 months"},
 				{"H200 SXM", "$1,800/mo", "$1,033/mo", "46 months"},
 			}
+			if jsonFlag {
+				return printJSON(gpus)
+			}
 			fmt.Printf("%-12s %-12s %-12s %-12s\n", "GPU", "Cloud/mo", "On-prem/mo", "Break-even")
 			fmt.Println(strings.Repeat("-", 48))
 			for _, g := range gpus {
-				fmt.Printf("%-12s %-12s %-12s %-12s\n", g.name, g.cloud, g.onprem, g.breakeven)
+				fmt.Printf("%-12s %-12s %-12s %-12s\n", g.Name, g.Cloud, g.OnPrem, g.Breakeven)
 			}
 			return nil
 		},
