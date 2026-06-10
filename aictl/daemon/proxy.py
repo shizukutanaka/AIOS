@@ -316,7 +316,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> dict[str, Any]:
         """Read and return data from the source."""
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            length = 0
         if length == 0:
             return {}
         return json.loads(self.rfile.read(length))
