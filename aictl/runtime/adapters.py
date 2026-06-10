@@ -237,6 +237,7 @@ class SGLangAdapter:
         elif code > 0:
             h.reachable = True
             h.status = "DEGRADED"
+            h.error = f"HTTP {code}"
         else:
             h.error = body[:200]
             return h

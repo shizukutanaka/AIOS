@@ -162,7 +162,7 @@ def _build_llmisvc(svc: ServiceDef, stack_name: str, namespace: str,
         llmisvc["spec"]["disaggregation"] = {
             "enabled": True,
             "prefillReplicas": max(1, config.replicas // 3),
-            "decodeReplicas": config.replicas - max(1, config.replicas // 3),
+            "decodeReplicas": max(1, config.replicas - max(1, config.replicas // 3)),
             "kvOffloading": "hierarchical",  # llm-d v0.5
         }
 

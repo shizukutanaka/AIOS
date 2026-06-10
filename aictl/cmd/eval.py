@@ -383,6 +383,11 @@ def run_compare(args: argparse.Namespace) -> int:
     suite_path = Path(args.suite)
     baseline_path = Path(args.baseline)
 
+    if not suite_path.exists():
+        from aictl.core.output import err
+        err(f"Suite not found: {suite_path}")
+        return 1
+
     if not baseline_path.exists():
         from aictl.core.output import err
         err(f"Baseline not found: {baseline_path}")
@@ -486,8 +491,7 @@ def run_report(args: argparse.Namespace) -> int:
         # It's a suite definition — run it
         run_args = argparse.Namespace(
             suite=str(suite_path), model="auto", save=None, json=False)
-        run_eval(run_args)
-        return 0
+        return run_eval(run_args)
 
     print()
     print(f"  Eval Report: {results.get('suite', suite_path.stem)}")
