@@ -39,6 +39,18 @@ class DisaggConfig:
     namespace: str = "default"
     port: int = VLLM_DEFAULT_PORT
 
+    def __post_init__(self) -> None:
+        if self.prefill_replicas < 1:
+            raise ValueError(f"prefill_replicas must be >= 1, got {self.prefill_replicas}")
+        if self.decode_replicas < 1:
+            raise ValueError(f"decode_replicas must be >= 1, got {self.decode_replicas}")
+        if self.prefill_replicas + self.decode_replicas < 2:
+            raise ValueError("total replicas (prefill + decode) must be >= 2")
+        if not (0 < self.gpu_memory_utilization <= 1.0):
+            raise ValueError(
+                f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}"
+            )
+
 
 def generate_disagg_manifests(config: DisaggConfig) -> list[dict[str, Any]]:
     """Generate K8s manifests for P/D disaggregated inference.
