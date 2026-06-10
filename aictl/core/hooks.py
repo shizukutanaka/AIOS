@@ -11,7 +11,8 @@ from typing import Any
 
 
 from aictl.core.events import emit, STACK_APPLIED, STACK_STOPPED, \
-    MODEL_REGISTERED, SNAPSHOT_CREATED, SLO_VIOLATION, ENGINE_READY, ENGINE_OFFLINE
+    MODEL_REGISTERED, SNAPSHOT_CREATED, SLO_VIOLATION, ENGINE_READY, ENGINE_OFFLINE, \
+    NODE_JOINED
 from aictl.core.audit import audit
 
 
@@ -89,7 +90,6 @@ def on_proxy_request(key_name: str = "", model: str = "",
 def on_node_joined(node_id: str, hostname: str = "",
                    address: str = "", state_dir: Any=None) -> None:
     """Called when a new node joins the cluster."""
-    from aictl.core.events import emit, NODE_JOINED
     emit(NODE_JOINED, source="node", node_id=node_id,
          hostname=hostname, address=address)
     audit("node.joined", resource=node_id, action="join",

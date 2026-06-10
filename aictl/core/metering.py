@@ -72,6 +72,8 @@ class TokenMeter:
                latency_ms: float = 0.0,
                entity_type: str = "apikey") -> bool:
         """Record token usage. Returns False if quota exceeded."""
+        prompt_tokens = max(0, prompt_tokens)
+        completion_tokens = max(0, completion_tokens)
         total = prompt_tokens + completion_tokens
         now = time.time()
         today = time.strftime("%Y-%m-%d")

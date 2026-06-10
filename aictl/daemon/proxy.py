@@ -22,6 +22,8 @@ from aictl.core.config import load_config
 from aictl.core.state import StateStore
 from aictl.core.constants import PROXY_PORT, DAEMON_HOST
 
+_MAX_BODY_BYTES = 100 * 1024 * 1024  # 100 MB cap to prevent memory exhaustion
+
 
 class ProxyHandler(BaseHTTPRequestHandler):
     store: StateStore
@@ -212,7 +214,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._error(502, f"Proxy error: {e}")
 
-    def _list_models(self) -> list[Any]:
+    def _list_models(self) -> None:
         """Aggregate models from all engines."""
         from aictl.runtime.adapters import discover_engines
         config = load_config(self.store.dir)
@@ -322,6 +324,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             length = 0
         if length == 0:
             return {}
+        length = min(length, _MAX_BODY_BYTES)
         return json.loads(self.rfile.read(length))
 
     def _json(self, status: int, data: Any) -> None:
