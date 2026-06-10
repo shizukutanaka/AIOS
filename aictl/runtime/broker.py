@@ -81,7 +81,7 @@ class RuntimeReport:
 
 
 def _run(cmd: list[str], timeout: int = 10) -> str | None:
-    """Execute the command and return an exit code."""
+    """Execute the command and return its stdout, or None on failure."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() if r.returncode == 0 else None

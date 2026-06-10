@@ -366,7 +366,7 @@ def run_eval(args: argparse.Namespace) -> int:
         ok(f"All {total} cases passed  (pass rate 100%)")
     else:
         from aictl.core.output import warn, err
-        err(f"{failed}/{total} cases FAILED  (pass rate {passed*100//total}%)")
+        err(f"{failed}/{total} cases FAILED  (pass rate {round(passed * 100 / total)}%)")
 
     if getattr(args, "save", None):
         pass  # already printed

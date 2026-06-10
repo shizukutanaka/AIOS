@@ -56,7 +56,7 @@ CLOUD_PRICES: dict[str, ModelPrice] = {
 # ¥27/kWh Tokyo → ~$0.18/kWh
 _LOCAL_WATTS = float(os.environ.get("AICTL_GPU_WATTS", "450"))
 _KWH_RATE_USD = float(os.environ.get("AICTL_KWH_RATE_USD", "0.18"))
-_LOCAL_TOKENS_PER_HOUR = float(os.environ.get("AICTL_TOKENS_PER_HOUR", "28800"))
+_LOCAL_TOKENS_PER_HOUR = max(1.0, float(os.environ.get("AICTL_TOKENS_PER_HOUR", "28800")))
 
 # USD per local token
 _LOCAL_COST_PER_TOKEN = (
