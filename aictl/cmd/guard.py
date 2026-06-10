@@ -48,6 +48,10 @@ def register(sub: Any) -> None:
                    help="JSON file with MCP tools list (default: aictl's own).")
     m.set_defaults(func=run_mcp_scan)
 
+    st = sp.add_parser("stats", help="Show lifetime guard scan statistics.")
+    st.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    st.set_defaults(func=run_stats)
+
 
 def run_scan(args: argparse.Namespace) -> int:
     """Scan text for issues."""
@@ -223,3 +227,52 @@ def run_mcp_scan(args: argparse.Namespace) -> int:
     print()
     warn("Review flagged descriptions before trusting these tools (TPA risk).")
     return 2
+
+
+def run_stats(args: argparse.Namespace) -> int:
+    """Show lifetime guard scan statistics from perf records."""
+    try:
+        from aictl.core.perf import summary
+        g = summary().get("guard", {})
+    except Exception as e:
+        warn(f"Could not read perf data: {e}")
+        g = {}
+
+    total_scans = int(g.get("count", 0))
+    blocks = int(g.get("failures", 0))
+    clean = total_scans - blocks
+    block_rate = blocks / total_scans if total_scans > 0 else 0.0
+    p50 = g.get("p50_ms", 0)
+    p95 = g.get("p95_ms", 0)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print_json({
+            "total_scans": total_scans,
+            "clean": clean,
+            "blocks_or_pii": blocks,
+            "block_rate": round(block_rate, 4),
+            "latency_p50_ms": p50,
+            "latency_p95_ms": p95,
+        })
+        return 0
+
+    print()
+    if total_scans == 0:
+        warn("No guard scans recorded yet.")
+        print("  Try: aictl guard scan 'My email is alice@example.com'")
+        print()
+        return 0
+
+    print(f"  ── Guard Statistics ───────────────────────────────────")
+    print()
+    print(f"  Total scans:      {total_scans:>6}")
+    print(f"  Clean:            {clean:>6}")
+    print(f"  PII / blocked:    {blocks:>6}  ({block_rate:.1%})")
+    print()
+    print(f"  Latency p50:      {p50:.1f} ms")
+    print(f"  Latency p95:      {p95:.1f} ms")
+    print()
+    ok("Stats from perf history (last 1000 runs)")
+    print()
+    return 0
