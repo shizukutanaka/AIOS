@@ -26,6 +26,16 @@ def register(sub: Any) -> None:
     cmp.add_argument("--hours", type=float, default=24, help="Hours/day usage")
     cmp.set_defaults(func=run_compare)
 
+    bgt = csub.add_parser("budget", help="Check projected cost against a monthly budget")
+    bgt.add_argument("--monthly-max", type=float, required=True, dest="monthly_max",
+                     help="Monthly budget cap in JPY (or --currency USD)")
+    bgt.add_argument("--currency", default="JPY", choices=["JPY", "USD"],
+                     help="Currency for the threshold (default: JPY)")
+    bgt.add_argument("--days", type=int, default=14,
+                     help="Historical window for cost projection (default: 14)")
+    bgt.add_argument("--json", action="store_true", help="JSON output")
+    bgt.set_defaults(func=run_budget)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -84,6 +94,78 @@ def run_compare(args: argparse.Namespace) -> int:
              } for r in results]
     print_table(rows, ["gpu", "cloud/mo", "onprem/mo", "breakeven", "$/M tok", "recommend"])
     return 0
+
+
+def run_budget(args: argparse.Namespace) -> int:
+    """Check projected monthly cost against a budget threshold."""
+    import time
+    from collections import defaultdict
+    from aictl.core.output import warn
+
+    monthly_max = args.monthly_max
+    currency = getattr(args, "currency", "JPY")
+    window = max(1, getattr(args, "days", 14))
+
+    # Convert USD threshold to JPY for internal calculations (1 USD ≈ 150 JPY)
+    USD_JPY_RATE = 150.0
+    threshold_jpy = monthly_max if currency == "JPY" else monthly_max * USD_JPY_RATE
+
+    # Read perf records for cost projection (same approach as tco forecast)
+    from aictl.core.perf import read_recent
+    records = read_recent(limit=10000)
+
+    # TCO config defaults (same as tco forecast)
+    cfg = {
+        "gpu_watts": 350,
+        "kwh_rate_jpy": 25,
+        "hardware_cost_jpy": 500_000,
+        "hardware_life_years": 3,
+    }
+    daily_fixed = cfg["hardware_cost_jpy"] / (cfg["hardware_life_years"] * 365)
+
+    by_date: dict[str, int] = defaultdict(int)
+    for r in records:
+        date_str = time.strftime("%Y-%m-%d", time.localtime(r.timestamp))
+        by_date[date_str] += 1
+
+    sorted_dates = sorted(by_date.keys())[-window:]
+    if not sorted_dates:
+        projected_jpy = 0.0
+        avg_daily_jpy = 0.0
+    else:
+        daily_costs = []
+        for date_str in sorted_dates:
+            cmds = by_date[date_str]
+            gpu_hours = cmds / 100 * 2
+            elec = (cfg["gpu_watts"] / 1000) * gpu_hours * cfg["kwh_rate_jpy"]
+            daily_costs.append(elec + daily_fixed)
+        avg_daily_jpy = sum(daily_costs) / len(daily_costs)
+        projected_jpy = avg_daily_jpy * 30
+
+    projected_display = projected_jpy if currency == "JPY" else projected_jpy / USD_JPY_RATE
+    symbol = "¥" if currency == "JPY" else "$"
+    under_budget = projected_display <= monthly_max
+    status = "ok" if under_budget else "exceeded"
+
+    if getattr(args, "json", False):
+        print_json({
+            "status": status,
+            "projected_monthly": round(projected_display, 2),
+            "monthly_max": monthly_max,
+            "currency": currency,
+            "window_days": len(sorted_dates),
+            "under_budget": under_budget,
+        })
+        return 0 if under_budget else 1
+
+    icon = "✓" if under_budget else "✗"
+    label = "under budget" if under_budget else "OVER BUDGET"
+    print(f"\n  {icon} Budget check: {symbol}{projected_display:,.0f}/mo projected "
+          f"vs {symbol}{monthly_max:,.0f}/mo limit — {label}\n")
+    if not under_budget:
+        warn(f"Projected monthly cost exceeds budget by "
+             f"{symbol}{projected_display - monthly_max:,.0f}")
+    return 0 if under_budget else 1
 
 
 def _map_gpu_name(name: str) -> str:

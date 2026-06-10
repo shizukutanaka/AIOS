@@ -40,6 +40,10 @@ def register(sub: Any) -> None:
     verify.add_argument("--key", default="", help="Public key file for verification")
     verify.set_defaults(func=run_verify)
 
+    ps = msub.add_parser("ps", help="Show models currently loaded in GPU memory")
+    ps.add_argument("--json", action="store_true", help="JSON output")
+    ps.set_defaults(func=run_ps)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -164,3 +168,65 @@ def run_verify(args: argparse.Namespace) -> int:
     else:
         err(f"Verification failed: {result.error}")
     return 0 if result.verified else 1
+
+
+def run_ps(args: argparse.Namespace) -> int:
+    """Show models currently loaded in GPU memory across all configured engines."""
+    import json
+    import urllib.request
+    from aictl.core.state import StateStore
+    from aictl.core.config import load_config
+
+    store = StateStore(getattr(args, "state_dir", None))
+    config = load_config(store.dir)
+    engines = config.engines.to_dict()
+
+    loaded: list[dict] = []
+
+    for engine_name, base_url in engines.items():
+        base_url = base_url.rstrip("/")
+
+        # Ollama: /api/ps returns running models with VRAM usage
+        if "11434" in base_url or engine_name == "ollama":
+            try:
+                with urllib.request.urlopen(f"{base_url}/api/ps", timeout=3) as r:
+                    data = json.loads(r.read())
+                for m in data.get("models", []):
+                    loaded.append({
+                        "engine": engine_name,
+                        "model": m.get("name", ""),
+                        "vram_mb": m.get("size_vram", 0) // (1024 * 1024),
+                        "expires_at": m.get("expires_at", ""),
+                    })
+            except Exception:
+                pass
+            continue
+
+        # vLLM / SGLang: /v1/models (OpenAI-compatible)
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/v1/models",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read())
+            for m in data.get("data", []):
+                loaded.append({
+                    "engine": engine_name,
+                    "model": m.get("id", ""),
+                    "vram_mb": 0,  # vLLM/SGLang don't expose per-model VRAM via API
+                    "expires_at": "",
+                })
+        except Exception:
+            pass
+
+    if getattr(args, "json", False):
+        print_json(loaded)
+        return 0
+
+    if not loaded:
+        print("No models currently loaded (no engines reachable or no models active)")
+        return 0
+
+    print_table(loaded, ["engine", "model", "vram_mb", "expires_at"])
+    return 0

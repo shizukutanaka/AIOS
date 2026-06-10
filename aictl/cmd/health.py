@@ -20,11 +20,66 @@ from aictl.runtime.broker import full_detect
 def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("health", help="Comprehensive system health check")
+    p.add_argument("--wait", action="store_true",
+                   help="Poll until at least one engine is healthy (for CI/CD)")
+    p.add_argument("--timeout", type=int, default=120,
+                   help="Maximum wait seconds (default: 120, --wait only)")
+    p.add_argument("--interval", type=int, default=5,
+                   help="Poll interval in seconds (default: 5, --wait only)")
+    p.add_argument("--json", action="store_true", help="JSON output")
     p.set_defaults(func=run)
+
+
+def run_wait(args: argparse.Namespace) -> int:
+    """Poll engine endpoints until healthy or timeout."""
+    import time as _time
+    import json as _json
+    timeout = getattr(args, "timeout", 120)
+    interval = max(1, getattr(args, "interval", 5))
+    store = StateStore(getattr(args, "state_dir", None))
+    from aictl.core.config import load_config
+    deadline = _time.monotonic() + timeout
+    elapsed = 0
+
+    while _time.monotonic() < deadline:
+        config = load_config(store.dir)
+        engines = config.engines.to_dict()
+        healthy = []
+        for name, url in engines.items():
+            host = url.replace("http://", "").replace("https://", "").split(":")[0]
+            port_s = url.replace("http://", "").replace("https://", "").split(":")[-1].split("/")[0]
+            try:
+                port = int(port_s)
+                with socket.create_connection((host, port), timeout=2):
+                    pass
+                healthy.append(name)
+            except Exception:
+                pass
+
+        if healthy:
+            if getattr(args, "json", False):
+                print_json({"healthy": True, "engines": healthy, "elapsed_s": round(elapsed, 1)})
+            else:
+                print(f"  ✓ Healthy ({', '.join(healthy)}) after {elapsed:.0f}s")
+            return 0
+
+        elapsed = _time.monotonic() - (deadline - timeout)
+        if not getattr(args, "json", False):
+            print(f"  Waiting for engines... {elapsed:.0f}s / {timeout}s")
+        _time.sleep(interval)
+
+    if getattr(args, "json", False):
+        print_json({"healthy": False, "engines": [], "elapsed_s": timeout,
+                    "error": f"No engine became healthy within {timeout}s"})
+    else:
+        print(f"  ✗ Timeout: no engine healthy after {timeout}s")
+    return 1
 
 
 def run(args: argparse.Namespace) -> int:
     """Execute the health command."""
+    if getattr(args, "wait", False):
+        return run_wait(args)
     store = StateStore(getattr(args, "state_dir", None))
     results: list[dict[str, Any]] = []
     score = 0
