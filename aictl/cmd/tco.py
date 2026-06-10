@@ -118,8 +118,8 @@ def run_summary(args: argparse.Namespace) -> int:
     period_days = getattr(args, "period_days", 30)
     ci = getattr(args, "carbon_intensity", None) or _DEFAULT_CARBON_INTENSITY
 
-    # Hardware cost
-    monthly_depreciation = cfg["gpu_price_jpy"] / cfg["depreciation_months"]
+    # Hardware cost — guard against depreciation_months=0 (user-settable via setup)
+    monthly_depreciation = cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)
     usage_fraction = min(1.0, period_days / 30)
     depreciation_jpy = monthly_depreciation * usage_fraction
 
@@ -346,7 +346,7 @@ def run_history(args: argparse.Namespace) -> int:
         by_date[date_str] += 1
 
     cfg = _load_config()
-    daily_fixed = (cfg["gpu_price_jpy"] / cfg["depreciation_months"]) / 30
+    daily_fixed = (cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)) / 30
 
     print()
     print("  Daily activity and cost estimate")
