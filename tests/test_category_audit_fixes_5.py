@@ -89,6 +89,7 @@ class TestSpeculativeEagle3DraftTokens(unittest.TestCase):
 
         cfg = SpeculativeConfig(
             method="eagle3",
+            draft_model="yuhuili/EAGLE3-LLaMA3.1-Instruct-8B",
             num_speculative_tokens=5,
             eagle_topk=4,
             num_steps=3,

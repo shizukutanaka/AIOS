@@ -27,6 +27,8 @@ import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
+from aictl.core.constants import MAX_LORA_ADAPTERS
+
 
 @dataclass
 class BaseModel:
@@ -66,6 +68,8 @@ class LoRAManager:
 
     def register_adapter(self, adapter: LoRAAdapter) -> None:
         """Register adapter."""
+        if adapter.rank <= 0:
+            raise ValueError(f"LoRA rank must be > 0, got {adapter.rank}")
         data = self._load()
         data["adapters"][adapter.name] = asdict(adapter)
         self._save(data)
@@ -110,7 +114,8 @@ class LoRAManager:
         if not active:
             return []
 
-        args = ["--enable-lora", f"--max-loras={len(active)}"]
+        n_active = min(len(active), MAX_LORA_ADAPTERS)
+        args = ["--enable-lora", f"--max-loras={n_active}"]
         lora_modules = []
         for a in active:
             if a.path:

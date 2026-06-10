@@ -171,7 +171,10 @@ class TestSpeculativePEagleSglang(unittest.TestCase):
 
     def test_p_eagle_sglang_non_empty(self):
         from aictl.runtime.speculative import generate_sglang_args, SpeculativeConfig
-        args = generate_sglang_args(SpeculativeConfig(method="p-eagle"))
+        args = generate_sglang_args(SpeculativeConfig(
+            method="p-eagle",
+            draft_model="amazon/GPT-OSS-20B-P-EAGLE",
+        ))
         self.assertTrue(args)
         self.assertTrue(any("EAGLE3" in a for a in args))
 

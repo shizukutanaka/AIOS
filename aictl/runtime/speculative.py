@@ -107,7 +107,12 @@ def generate_vllm_args(config: SpeculativeConfig) -> list[str]:
     if config.method == "none":
         return []
 
+    if config.num_speculative_tokens <= 0:
+        raise ValueError(f"num_speculative_tokens must be > 0, got {config.num_speculative_tokens}")
+
     if config.method in ("eagle3", "p-eagle"):
+        if not config.draft_model:
+            raise ValueError(f"draft_model is required for method={config.method}")
         spec_config: dict[str, Any] = {
             "method": "eagle3",
             "num_speculative_tokens": config.num_speculative_tokens,
@@ -138,12 +143,17 @@ def generate_sglang_args(config: SpeculativeConfig) -> list[str]:
     if config.method == "none":
         return []
 
+    if config.num_speculative_tokens <= 0:
+        raise ValueError(f"num_speculative_tokens must be > 0, got {config.num_speculative_tokens}")
+
     args = []
 
     # SGLang's EAGLE3 algorithm covers both classic EAGLE-3 and the parallel
     # (p-eagle) variant; map both so an explicit p-eagle config still emits
     # speculative flags instead of silently returning an empty list.
     if config.method in ("eagle3", "p-eagle"):
+        if not config.draft_model:
+            raise ValueError(f"draft_model is required for method={config.method}")
         args.append("--speculative-algorithm=EAGLE3")
         if config.draft_model:
             args.append(f"--speculative-draft-model-path={config.draft_model}")

@@ -217,6 +217,8 @@ def estimate_dgdr_resources(spec: DGDRSpec) -> dict[str, Any]:
     # GPU count
     vram_per_gpu = {"H100": 80, "H200": 141, "A100": 80, "RTX4090": 24, "auto": 80}
     gpu_vram = vram_per_gpu.get(spec.hardware, 80)
+    if spec.max_gpus <= 0:
+        raise ValueError(f"max_gpus must be > 0, got {spec.max_gpus}")
     # total_vram_gb is a float, so the integer-ceil idiom (a+b-1)//b is invalid
     # (// floors and under-counts fractional remainders) — use math.ceil.
     gpus_needed = max(1, math.ceil(total_vram_gb / gpu_vram))
