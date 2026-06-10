@@ -195,9 +195,11 @@ class ContextContinuityEngine:
                 snap.status = "failed"
                 snap.metadata["error"] = str(e)[:200]
 
-        # Save metadata
+        # Save metadata atomically
         meta_path = self.dir / f"{snap_id}.json"
-        meta_path.write_text(json.dumps(asdict(snap), indent=2))
+        meta_tmp = meta_path.with_suffix(".tmp")
+        meta_tmp.write_text(json.dumps(asdict(snap), indent=2))
+        meta_tmp.replace(meta_path)
 
         return snap
 
@@ -243,6 +245,8 @@ class ContextContinuityEngine:
             return []
 
     def _save_index(self, snapshots: list[ContextSnapshot]) -> None:
-        """Persist data to storage."""
+        """Persist data to storage (atomic write via temp-file rename)."""
         data = [asdict(s) for s in snapshots]
-        self._index_path.write_text(json.dumps(data, indent=2))
+        tmp = self._index_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(self._index_path)

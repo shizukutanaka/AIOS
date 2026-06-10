@@ -354,7 +354,9 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True}
+        # Truncate to avoid leaking file paths or secrets from tracebacks
+        msg = str(e)[:200]
+        return {"content": [{"type": "text", "text": f"Error: {msg}"}], "isError": True}
 
 
 def _tool_health() -> dict[str, Any]:
@@ -743,6 +745,8 @@ def _tool_guided(args: dict[str, Any]) -> dict[str, Any]:
 def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
     """Handle a single JSON-RPC 2.0 request."""
     method = request.get("method", "")
+    if not isinstance(method, str):
+        method = ""
     req_id = request.get("id")
     params = request.get("params", {})
 
