@@ -90,7 +90,9 @@ def optimize_vllm_flags(
 
     # ── Tensor parallelism ──
     tp = 1
-    if model_vram_mb > hardware.vram_per_gpu_mb * 0.85 and hardware.gpu_count > 1:
+    if (hardware.vram_per_gpu_mb > 0
+            and model_vram_mb > hardware.vram_per_gpu_mb * 0.85
+            and hardware.gpu_count > 1):
         tp = min(hardware.gpu_count, _smallest_power_of_2_gte(
             model_vram_mb / (hardware.vram_per_gpu_mb * 0.7)
         ))
