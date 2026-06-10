@@ -160,7 +160,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "uptime_seconds": time.time() - getattr(self.server, '_start_time', time.time()),
         })
 
-    def _node_status(self) -> dict[str, Any]:
+    def _node_status(self) -> None:
         """Return current node status as a dict."""
         node = self.store.load_node()
         report = self._get_report()
@@ -172,7 +172,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "issues": report.issues,
         })
 
-    def _runtime_info(self) -> dict[str, Any]:
+    def _runtime_info(self) -> None:
         """Return runtime engine information dict."""
         report = self._get_report()
         self._json_response({
@@ -184,17 +184,17 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "recommendations": report.recommendations,
         })
 
-    def _list_stacks(self) -> list[Any]:
+    def _list_stacks(self) -> None:
         """Return list of running stack names."""
         stacks = self.store.load_stacks()
         self._json_response({"stacks": [asdict(s) for s in stacks]})
 
-    def _list_services(self) -> list[Any]:
+    def _list_services(self) -> None:
         """Return list of running service names."""
         services = list_running()
         self._json_response({"services": services})
 
-    def _list_models(self) -> list[Any]:
+    def _list_models(self) -> None:
         """Return list of loaded model names."""
         models = self.store.list_models()
         self._json_response({"models": models})

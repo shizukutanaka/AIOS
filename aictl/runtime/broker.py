@@ -174,8 +174,15 @@ def detect_amd() -> list[GPUInfo]:
     if not out:
         return []
 
+    # Parse VRAM from rocm-smi output: "GPU[N]: VRAM Total Memory (B): <bytes>"
+    vram_by_index: dict[int, int] = {}
+    for line in out.splitlines():
+        m = re.search(r"GPU\[(\d+)\].*VRAM Total Memory.*?[,:\s]+(\d+)", line, re.IGNORECASE)
+        if m:
+            vram_by_index[int(m.group(1))] = int(m.group(2)) // (1024 * 1024)
+
+    # Parse device names from lspci (reliable for product names)
     gpus: list[GPUInfo] = []
-    # Fallback: parse lspci for AMD GPUs
     lspci = _run(["lspci", "-nn"])
     if lspci:
         idx = 0
@@ -186,11 +193,24 @@ def detect_amd() -> list[GPUInfo]:
                     index=idx,
                     name=name_match.group(1) if name_match else "AMD GPU",
                     vendor="amd",
-                    vram_mb=0,
+                    vram_mb=vram_by_index.get(idx, 0),
                     driver_version="",
                     compute_cap="",
                 ))
                 idx += 1
+
+    # If lspci found no GPUs but rocm-smi reported VRAM entries, synthesize basic entries
+    if not gpus and vram_by_index:
+        for idx, vram_mb in sorted(vram_by_index.items()):
+            gpus.append(GPUInfo(
+                index=idx,
+                name="AMD GPU",
+                vendor="amd",
+                vram_mb=vram_mb,
+                driver_version="",
+                compute_cap="",
+            ))
+
     return gpus
 
 

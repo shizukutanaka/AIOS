@@ -237,7 +237,7 @@ def goodput_from_spans(
         return GoodputResult()
 
     samples: list[tuple[float, float]] = []
-    earliest_ns = 0
+    earliest_ns = -1  # -1 = unset; 0 is a valid timestamp
     latest_ns = 0
     try:
         with open(spans_path) as f:
@@ -263,10 +263,10 @@ def goodput_from_spans(
         decode_ms = max(duration_ms - ttft_ms, 0.0)
         tpot_ms = decode_ms / max(out_tokens - 1, 1)
         samples.append((ttft_ms, tpot_ms))
-        if earliest_ns == 0 or start_ns < earliest_ns:
+        if earliest_ns < 0 or start_ns < earliest_ns:
             earliest_ns = start_ns
         if end_ns > latest_ns:
             latest_ns = end_ns
 
-    window_s = (latest_ns - earliest_ns) / 1_000_000_000 if latest_ns > earliest_ns else 0.0
+    window_s = (latest_ns - earliest_ns) / 1_000_000_000 if earliest_ns >= 0 and latest_ns > earliest_ns else 0.0
     return compute_goodput(samples, target, window_seconds=window_s)
