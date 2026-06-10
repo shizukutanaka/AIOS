@@ -17,7 +17,7 @@ print(answer.cost)  # '$0.000047' — per-call cost, always visible
 設定不要。モデル選定不要。aictl が自動で適切なモデルを選び、起動し、結果を返します。
 
 ```
-1380 tests | 147 modules | 25,000+ lines | zero external Python deps
+1776 tests | 150 modules | 25,000+ lines | zero external Python deps
 ```
 
 ## What aictl does that competitors don't
@@ -166,7 +166,7 @@ aictl scale keda <stack>               # KEDA ScaledObject
 ```
 CLI (66 Python + 29 Go)
 ├── Runtime   Broker → Router → AutoScaler → Fabric → Isolation
-├── Daemon    22 REST API + Proxy + SLO Governor + Mock Engine
+├── Daemon    30 REST API + Proxy + SLO Governor + Mock Engine
 ├── Stack     10 Recipes + Quadlet + KServe + Gateway API + llm-d
 ├── Core      Metering + Security + Cost + API Keys + Audit
 ├── Trust     Cosign v3 + ORAS
@@ -212,7 +212,7 @@ curl http://localhost:9999/v1/models   # Mock engine
 ## Testing
 
 ```bash
-make test       # 1380 Python tests
+make test       # 1776 Python tests
 make go-test    # 17 Go tests
 make gate       # Full quality gate
 make demo       # E2E demo

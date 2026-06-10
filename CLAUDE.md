@@ -2,7 +2,7 @@
 
 ## What
 `aictl` — CLI for local AI inference infrastructure on immutable Linux.
-66 Python + 29 Go commands, 1776+ tests, zero external Python deps. v1.6.0.
+66 Python + 29 Go commands, 1787+ tests, zero external Python deps. v1.6.0.
 
 ## Map
 ```
@@ -14,12 +14,12 @@ aictl/runtime/    broker adapters router autoscaler recommend mig fabric
                   speculative fallback optimize health nodes
 aictl/stack/      manifest(10 recipes) orchestrator quadlet kserve gateway
                   disagg modelservice systemctl
-aictl/daemon/     aiosd(22 REST) governor proxy mock_engine
+aictl/daemon/     aiosd(30 REST) governor proxy mock_engine
 aictl/trust/      verify cosign oras
 aictl/metrics/    slo otel prometheus collector_config genai_spans
 aictl/mcp_server  MCP server (19 tools, JSON-RPC 2.0 stdio)
 go-port/          29 Go commands (Cobra)
-tests/            103 test files, 1776+ tests
+tests/            104 test files, 1787+ tests
 docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 .claude/          3 agents, 5 commands, 8 skills
 ```
@@ -48,7 +48,7 @@ docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 ## Workflows
 ```bash
 # Verify everything works
-aictl gate                         # Compile + import + version + 1776 tests + demo
+aictl gate                         # Compile + import + version + 1787 tests + demo
 
 # Add a new command
 1. Create aictl/cmd/<name>.py      # register(sub) + run(args)
