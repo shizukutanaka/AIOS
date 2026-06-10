@@ -114,7 +114,7 @@ python3 -m aictl recommend     # HW適合モデル推薦
 | **K8sエクスポート** | KServe, Gateway API, KEDA, HPA, Dynamo, P/D Disagg, ModelService (7形式) |
 | **コスト最適化** | 7 GPU実勢価格比較, vLLMフラグ自動チューニング |
 | **セキュリティ** | Cosign v3署名, セキュリティスキャナ, APIキー管理, 監査ログ |
-| **MCP Server** | Claude Desktop/Cursor/VS Codeから直接操作 (16ツール) |
+| **MCP Server** | Claude Desktop/Cursor/VS Codeから直接操作 (19ツール) |
 | **OS機能** | KVキャッシュ永続化, cgroup v2 OOM保護, メモリファブリック |
 | **モニタリング** | OTel GenAI SemConv, Prometheus, Grafana ダッシュボード |
 | **ローカルRAG** | `aictl rag index/ask/search` — SQLite、ゼロ外部依存 |

@@ -23,7 +23,7 @@
 ### Changed
 - Project source is now tracked in the repository (was shipped only as a zip).
 - Documentation counts reconciled with reality: 1380 tests, 65 CLI commands,
-  18 MCP tools, 147 modules.
+  19 MCP tools, 147 modules.
 - Added `tests/test_improvements_v16.py` (7 regression tests).
 
 ## v1.6.0 (2026-04-25) — Competitor Gap Release
