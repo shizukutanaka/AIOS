@@ -471,6 +471,12 @@ func cmdDown() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"stack":  name,
+					"status": "stopping",
+				})
+			}
 			fmt.Printf("✓ Stopping stack: %s\n", name)
 			// TODO: port from Python
 			return nil
@@ -925,11 +931,31 @@ func cmdHealth() *cobra.Command {
 			}
 			passed := 0
 			for _, c := range checks {
+				if c.ok {
+					passed++
+				}
+			}
+			if jsonFlag {
+				type checkResult struct {
+					Name   string `json:"name"`
+					Ok     bool   `json:"ok"`
+					Detail string `json:"detail,omitempty"`
+				}
+				var results []checkResult
+				for _, c := range checks {
+					results = append(results, checkResult{c.name, c.ok, c.detail})
+				}
+				return printJSON(map[string]interface{}{
+					"checks_passed": passed,
+					"checks_total":  len(checks),
+					"healthy":       passed == len(checks),
+					"checks":        results,
+				})
+			}
+			for _, c := range checks {
 				icon := "✓"
 				if !c.ok {
 					icon = "✗"
-				} else {
-					passed++
 				}
 				detail := ""
 				if c.detail != "" {
@@ -950,23 +976,34 @@ func cmdInfo() *cobra.Command {
 		Use:   "info",
 		Short: "Project information",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("✓ aictl 1.5.0 (Go port)")
-			fmt.Println()
-			fmt.Println("  Commands  29 Go + 46 Python")
-			fmt.Println("  REST API  22 endpoints")
-			fmt.Println("  Recipes   10")
-			fmt.Println("  Models    29")
-			fmt.Println("  Tests     626+")
-			fmt.Println()
-			fmt.Println("  Stack:")
-			for _, s := range []string{
+			stack := []string{
 				"bootc v1.15 (Fedora 42)",
 				"vLLM v0.19 / SGLang v0.5 / Ollama v0.20",
 				"K3s v1.35 + KServe v0.17 + llm-d (CNCF)",
 				"NVIDIA Dynamo v0.8 (KVBM + NIXL)",
 				"Gateway API InferencePool v1",
 				"OTel GenAI SemConv + Prometheus",
-			} {
+			}
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"version":         "1.6.0",
+					"go_commands":     29,
+					"python_commands": 65,
+					"rest_endpoints":  22,
+					"recipes":         10,
+					"tests":           "1695+",
+					"stack":           stack,
+				})
+			}
+			fmt.Println("✓ aictl v1.6.0 (Go port)")
+			fmt.Println()
+			fmt.Println("  Commands  29 Go + 65 Python")
+			fmt.Println("  REST API  22 endpoints")
+			fmt.Println("  Recipes   10")
+			fmt.Println("  Tests     1695+")
+			fmt.Println()
+			fmt.Println("  Stack:")
+			for _, s := range stack {
 				fmt.Printf("    %s\n", s)
 			}
 			return nil
@@ -1002,12 +1039,18 @@ func cmdMeter() *cobra.Command {
 			store := getStore()
 			data, err := os.ReadFile(store.Dir + "/metering.json")
 			if err != nil {
+				if jsonFlag {
+					return printJSON([]interface{}{})
+				}
 				fmt.Println("No usage recorded yet.")
 				return nil
 			}
 			var buckets map[string]interface{}
 			if err := json.Unmarshal(data, &buckets); err != nil {
 				return fmt.Errorf("parse metering: %w", err)
+			}
+			if jsonFlag {
+				return printJSON(buckets)
 			}
 			fmt.Printf("%-20s %10s %10s %10s\n", "ENTITY", "PROMPT", "COMPLETION", "TOTAL")
 			for id, v := range buckets {
