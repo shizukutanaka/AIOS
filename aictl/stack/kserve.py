@@ -158,11 +158,15 @@ def _build_llmisvc(svc: ServiceDef, stack_name: str, namespace: str,
             llmisvc["spec"]["parallelism"]["pipelineParallel"] = config.pipeline_parallel
 
     # P/D disaggregation (llm-d v0.5: hierarchical KV offloading)
-    if config.enable_pd_disagg:
+    # Requires at least 2 replicas; with only 1, both prefill and decode
+    # cannot each get a replica without exceeding the total allocation.
+    if config.enable_pd_disagg and config.replicas >= 2:
+        prefill = max(1, config.replicas // 3)
+        decode = max(1, config.replicas - prefill)
         llmisvc["spec"]["disaggregation"] = {
             "enabled": True,
-            "prefillReplicas": max(1, config.replicas // 3),
-            "decodeReplicas": max(1, config.replicas - max(1, config.replicas // 3)),
+            "prefillReplicas": prefill,
+            "decodeReplicas": decode,
             "kvOffloading": "hierarchical",  # llm-d v0.5
         }
 

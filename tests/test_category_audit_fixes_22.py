@@ -58,10 +58,22 @@ class TestKServeDecodeReplicas(unittest.TestCase):
     def test_kserve_source_has_max1_guard(self):
         import pathlib
         src = (pathlib.Path(__file__).parent.parent / "aictl" / "stack" / "kserve.py").read_text()
+        # New implementation uses a 'decode' variable with max(1, ...) — verify both:
         self.assertIn(
-            '"decodeReplicas": max(1,',
+            "decode = max(1,",
             src,
-            "kserve.py decodeReplicas must be wrapped in max(1, ...) to prevent 0",
+            "kserve.py decode must be computed with max(1, ...) to prevent 0",
+        )
+        self.assertIn(
+            '"decodeReplicas": decode',
+            src,
+            "kserve.py must assign the 'decode' variable to decodeReplicas",
+        )
+        # Also verify the replicas >= 2 guard prevents over-allocation
+        self.assertIn(
+            "config.replicas >= 2",
+            src,
+            "kserve.py must guard PD disagg to replicas >= 2",
         )
 
 

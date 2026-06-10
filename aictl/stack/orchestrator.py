@@ -14,6 +14,7 @@ from typing import Any
 
 from aictl.stack.manifest import ServiceDef, StackManifest
 from aictl.runtime.broker import detect_container_runtime, detect_ollama
+from aictl.core.constants import OLLAMA_DEFAULT_PORT, PROXY_PORT, VLLM_DEFAULT_PORT
 
 
 @dataclass
@@ -60,7 +61,7 @@ def apply_stack(manifest: StackManifest, dry_run: bool = False) -> list[RunningS
 def _apply_ollama_service(svc: ServiceDef, stack_name: str, dry_run: bool) -> RunningService:
     """Write Quadlet unit for an Ollama service."""
     rs = RunningService(name=svc.name, stack=stack_name, runtime="ollama")
-    port = svc.port or 11434
+    port = svc.port or OLLAMA_DEFAULT_PORT
     rs.endpoint = f"http://localhost:{port}"
 
     if dry_run:
@@ -70,7 +71,8 @@ def _apply_ollama_service(svc: ServiceDef, stack_name: str, dry_run: bool) -> Ru
     # Check if ollama is already running
     try:
         import urllib.request
-        urllib.request.urlopen(f"http://localhost:{port}/api/tags", timeout=2)
+        with urllib.request.urlopen(f"http://localhost:{port}/api/tags", timeout=2):
+            pass
         rs.status = "running"
     except Exception:
         # Start ollama serve in background
@@ -113,7 +115,7 @@ def _apply_container_service(
     """Write Quadlet unit for a container service."""
     rs = RunningService(name=svc.name, stack=stack_name, runtime=rt)
     container_name = f"aios-{stack_name}-{svc.name}"
-    port = svc.port or 8080
+    port = svc.port or PROXY_PORT
 
     cmd = [
         rt, "run", "-d",
@@ -176,7 +178,7 @@ def _apply_inference_engine(
         rs.error = f"No image for runtime {svc.runtime}"
         return rs
 
-    port = svc.port or 8000
+    port = svc.port or VLLM_DEFAULT_PORT
     container_name = f"aios-{stack_name}-{svc.name}"
     gpu_flag = ["--gpus", "all"] if rt == "docker" else ["--device", "nvidia.com/gpu=all"]
 
