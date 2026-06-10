@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 import importlib
+import io
 import os
 import sys
 import time
@@ -77,7 +78,7 @@ def run(args: argparse.Namespace) -> int:
         tests_dir = project_root / "tests"
         loader = unittest.TestLoader()
         suite = loader.discover(str(tests_dir))
-        runner = unittest.TextTestRunner(verbosity=0, stream=open(os.devnull, "w"))
+        runner = unittest.TextTestRunner(verbosity=0, stream=io.StringIO())
         result = runner.run(suite)
         passed = result.testsRun - len(result.failures) - len(result.errors)
         results.append(("Tests", result.wasSuccessful(),
@@ -190,7 +191,7 @@ def run(args: argparse.Namespace) -> int:
             results.append(("Ruff", True, "All checks passed"))
         else:
             lines = proc.stdout.strip().splitlines()
-            n = proc.stdout.count("\n--> ") or (lines[-1] if lines else "errors")
+            n = proc.stdout.count("\n--> ") or len(lines)
             results.append(("Ruff", False, f"errors found: {n}"))
     except FileNotFoundError:
         results.append(("Ruff", True, "ruff not installed (skipped)"))
