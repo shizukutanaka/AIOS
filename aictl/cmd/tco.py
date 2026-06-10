@@ -89,6 +89,13 @@ def register(sub: Any) -> None:
     sp.add_parser("setup", help="Configure GPU price, electricity rate.").set_defaults(func=run_setup)
     sp.add_parser("history", help="Cost history by day/week.").set_defaults(func=run_history)
 
+    fc = sp.add_parser("forecast",
+                       help="Project next 30-day cost based on recent trend.")
+    fc.add_argument("--days", type=int, default=14,
+                    help="Historical window for trend extrapolation (default: 14)")
+    fc.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    fc.set_defaults(func=run_forecast)
+
     carbon = sp.add_parser("carbon",
                            help="Energy + carbon advisor: kWh, CO₂e, GPU power-cap flags.")
     carbon.add_argument("--region", default="global",
@@ -362,6 +369,89 @@ def run_history(args: argparse.Namespace) -> int:
         total = elec + daily_fixed
         print(f"  {date_str:<12}  {cmds:>5}  {elec:>8.0f}  {daily_fixed:>8.0f}  {total:>9.0f}")
 
+    print()
+    return 0
+
+
+def run_forecast(args: argparse.Namespace) -> int:
+    """Project next 30-day cost by extrapolating the recent daily trend."""
+    from aictl.core.perf import read_recent
+    from aictl.core.output import ok, warn, print_json
+    from collections import defaultdict
+
+    window = getattr(args, "days", 14)
+    records = read_recent(limit=5000)
+
+    if not records:
+        warn("No activity recorded. Run some commands first.")
+        return 0
+
+    cfg = _load_config()
+    daily_fixed = (cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)) / 30
+
+    # Build per-day cost using same model as run_history()
+    by_date: dict[str, int] = defaultdict(int)
+    for r in records:
+        date_str = time.strftime("%Y-%m-%d", time.localtime(r.timestamp))
+        by_date[date_str] += 1
+
+    sorted_dates = sorted(by_date.keys())[-window:]
+    if not sorted_dates:
+        warn("Not enough data for forecast.")
+        return 0
+
+    daily_costs: list[float] = []
+    for date_str in sorted_dates:
+        cmds = by_date[date_str]
+        gpu_hours = cmds / 100 * 2
+        elec = (cfg["gpu_watts"] / 1000) * gpu_hours * cfg["kwh_rate_jpy"]
+        daily_costs.append(elec + daily_fixed)
+
+    n = len(daily_costs)
+    avg_daily = sum(daily_costs) / n
+    projected_monthly = avg_daily * 30
+
+    # Simple trend: compare first half vs second half
+    if n >= 4:
+        first_half = sum(daily_costs[: n // 2]) / (n // 2)
+        second_half = sum(daily_costs[n // 2 :]) / (n - n // 2)
+        delta_pct = ((second_half - first_half) / max(first_half, 1)) * 100
+        if abs(delta_pct) < 5:
+            trend = "flat"
+        elif delta_pct > 0:
+            trend = f"up {delta_pct:.0f}%"
+        else:
+            trend = f"down {abs(delta_pct):.0f}%"
+    else:
+        delta_pct = 0.0
+        trend = "insufficient data"
+
+    # Trend-adjusted projection (simple linear extrapolation)
+    trend_multiplier = 1.0 + (delta_pct / 100)
+    adjusted_monthly = projected_monthly * trend_multiplier
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print_json({
+            "window_days": n,
+            "avg_daily_jpy": round(avg_daily, 0),
+            "projected_monthly_jpy": round(projected_monthly, 0),
+            "trend": trend,
+            "trend_adjusted_monthly_jpy": round(adjusted_monthly, 0),
+            "currency": "JPY",
+        })
+        return 0
+
+    print()
+    print(f"  ── 30-Day Cost Forecast  (based on last {n} days) ──────")
+    print()
+    print(f"  Average daily cost:       ¥{avg_daily:>10,.0f}")
+    print(f"  Trend (vs prior half):    {trend}")
+    print()
+    print(f"  Flat projection:          ¥{projected_monthly:>10,.0f}/month")
+    print(f"  Trend-adjusted:           ¥{adjusted_monthly:>10,.0f}/month")
+    print()
+    ok("Forecast complete")
     print()
     return 0
 
