@@ -6,4 +6,4 @@
 - Engine health check timeout: 5 seconds max
 - Broker profile detection: nvidia → amd → intel → npu → cpu-only
 - NEVER add external Python deps — stdlib only
-- Model recommendations: 26 models in DB, sorted by VRAM fit
+- Model recommendations: 34 models in DB, sorted by VRAM fit
