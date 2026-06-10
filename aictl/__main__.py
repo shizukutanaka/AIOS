@@ -171,6 +171,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import help as help_cmd
     help_cmd.register(sub)
 
+    # Plugin management
+    from aictl.cmd import plugin as plugin_cmd
+    plugin_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins
