@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	version  = "1.4.0"
+	version  = "1.6.0"
 	jsonFlag bool
 	stateDir string
 )
@@ -1080,7 +1080,7 @@ func cmdInfo() *cobra.Command {
 					"python_commands": 65,
 					"rest_endpoints":  22,
 					"recipes":         10,
-					"tests":           "1695+",
+					"tests":           "1742+",
 					"stack":           stack,
 				})
 			}
@@ -1089,7 +1089,7 @@ func cmdInfo() *cobra.Command {
 			fmt.Println("  Commands  29 Go + 65 Python")
 			fmt.Println("  REST API  22 endpoints")
 			fmt.Println("  Recipes   10")
-			fmt.Println("  Tests     1695+")
+			fmt.Println("  Tests     1742+")
 			fmt.Println()
 			fmt.Println("  Stack:")
 			for _, s := range stack {
