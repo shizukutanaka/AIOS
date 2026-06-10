@@ -16,13 +16,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.constants import (
+    DAEMON_PORT, VLLM_DEFAULT_URL, OLLAMA_DEFAULT_URL, SGLANG_DEFAULT_URL,
+)
 
 
 @dataclass
 class EngineEndpoints:
-    vllm: str = "http://localhost:8000"
-    ollama: str = "http://localhost:11434"
-    sglang: str = "http://localhost:30000"
+    vllm: str = VLLM_DEFAULT_URL
+    ollama: str = OLLAMA_DEFAULT_URL
+    sglang: str = SGLANG_DEFAULT_URL
 
     def to_dict(self) -> dict[str, str]:
         """To dict."""
@@ -43,7 +46,7 @@ class SLOConfig:
 @dataclass
 class DaemonConfig:
     host: str = "127.0.0.1"
-    port: int = 7700
+    port: int = DAEMON_PORT
 
 
 @dataclass

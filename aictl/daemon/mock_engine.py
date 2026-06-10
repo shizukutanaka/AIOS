@@ -18,6 +18,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Any
 
+from aictl.core.constants import AICTL_VERSION
+
 # Mock model catalog
 MOCK_MODELS = [
     {"id": "mock-llama3-8b", "object": "model", "owned_by": "aios-mock"},
@@ -29,7 +31,7 @@ RESPONSES = {
     "hello": "Hello! I'm a mock inference engine running inside aictl. How can I help you today?",
     "what": "That's a great question. As a mock engine, I generate deterministic responses for testing the full aictl stack — daemon, proxy, router, and SLO governor.",
     "test": "Test confirmed. The mock engine is working correctly. All systems operational.",
-    "default": "This is a response from the aictl mock inference engine (v1.6.0). It demonstrates that the full request path works: client → proxy → router → engine → response.",
+    "default": f"This is a response from the aictl mock inference engine (v{AICTL_VERSION}). It demonstrates that the full request path works: client → proxy → router → engine → response.",
 }
 
 # Metrics state
