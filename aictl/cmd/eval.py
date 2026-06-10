@@ -77,7 +77,8 @@ _TEMPLATE = {
 
 # ── Assertion engine ─────────────────────────────────────
 
-def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, cost_usd: float) -> tuple[bool, str]:
+def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, cost_usd: float,
+                     prompt: str = "") -> tuple[bool, str]:
     """Run one assertion. Returns (passed, reason)."""
     kind = assertion.get("type", "")
     value = assertion.get("value")
@@ -132,6 +133,15 @@ def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, co
 
     if kind == "llm_judge":
         return _llm_judge(output, assertion)
+
+    if kind == "route_tier":
+        # Validate routing decision against the prompt (no LLM call needed).
+        from aictl.cmd.route import score_complexity, classify_complexity
+        expected = str(value).upper()
+        actual_tier = classify_complexity(score_complexity(prompt))
+        passed = actual_tier == expected
+        return passed, (f"route tier {actual_tier} {'==' if passed else '!='} expected {expected} "
+                        f"(score={score_complexity(prompt)})")
 
     return False, f"unknown assertion type: {kind!r}"
 
@@ -193,7 +203,7 @@ def _run_case(case: dict[str, Any], model: str) -> dict[str, Any]:
     # Evaluate assertions
     results = []
     for assertion in assertions:
-        passed, reason = _check_assertion(assertion, output, latency_ms, cost_usd)
+        passed, reason = _check_assertion(assertion, output, latency_ms, cost_usd, prompt)
         results.append({
             "type": assertion.get("type"),
             "passed": passed,
