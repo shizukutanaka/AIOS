@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> int:
         "version": VERSION,
         "python_commands": _count_commands(),
         "go_commands": 29,
-        "rest_endpoints": 22,
+        "rest_endpoints": 30,
         "recipes": len(list_recipes()),
         "model_db": len(MODELS),
         "skills": 8,
