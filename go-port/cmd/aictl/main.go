@@ -440,6 +440,13 @@ func cmdApply() *cobra.Command {
 			if file == "" {
 				return fmt.Errorf("--file/-f required")
 			}
+			if jsonFlag {
+				return printJSON(map[string]interface{}{
+					"file":   file,
+					"quadlet": quadlet,
+					"status": "stub",
+				})
+			}
 			fmt.Printf("✓ Applying stack from %s", file)
 			if quadlet {
 				fmt.Printf(" (quadlet mode)")
@@ -747,16 +754,40 @@ func cmdSecurity() *cobra.Command {
 			}
 			passed := 0
 			for _, c := range checks {
-				icon := "✗"
 				if c.pass {
-					icon = "✓"
 					passed++
 				} else {
 					switch c.severity {
-					case "high": score -= 15
-					case "medium": score -= 10
-					case "low": score -= 5
+					case "high":
+						score -= 15
+					case "medium":
+						score -= 10
+					case "low":
+						score -= 5
 					}
+				}
+			}
+			if jsonFlag {
+				type finding struct {
+					Name     string `json:"name"`
+					Severity string `json:"severity"`
+					Pass     bool   `json:"pass"`
+				}
+				var findings []finding
+				for _, c := range checks {
+					findings = append(findings, finding{c.name, c.severity, c.pass})
+				}
+				return printJSON(map[string]interface{}{
+					"score":          score,
+					"checks_passed":  passed,
+					"checks_total":   len(checks),
+					"findings":       findings,
+				})
+			}
+			for _, c := range checks {
+				icon := "✗"
+				if c.pass {
+					icon = "✓"
 				}
 				fmt.Printf("  %s %s\n", icon, c.name)
 			}
