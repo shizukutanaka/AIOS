@@ -29,6 +29,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from aictl.core.constants import AICTL_VERSION
+
 
 @dataclass
 class ToolSpan:
@@ -89,11 +91,11 @@ def export_tool_spans(spans: list[ToolSpan],
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": service_name}},
-                    {"key": "service.version", "value": {"stringValue": "1.6.0"}},
+                    {"key": "service.version", "value": {"stringValue": AICTL_VERSION}},
                 ],
             },
             "scopeSpans": [{
-                "scope": {"name": "aictl.mcp", "version": "1.6.0"},
+                "scope": {"name": "aictl.mcp", "version": AICTL_VERSION},
                 "spans": [s.to_otlp_span(service_name) for s in spans],
             }],
         }],
@@ -222,11 +224,11 @@ def export_spans(spans: list[GenAISpan],
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": service_name}},
-                    {"key": "service.version", "value": {"stringValue": "1.5.0"}},
+                    {"key": "service.version", "value": {"stringValue": AICTL_VERSION}},
                 ],
             },
             "scopeSpans": [{
-                "scope": {"name": "aictl.genai", "version": "1.5.0"},
+                "scope": {"name": "aictl.genai", "version": AICTL_VERSION},
                 "spans": [s.to_otlp_span(service_name) for s in spans],
             }],
         }],
