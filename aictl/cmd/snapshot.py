@@ -153,8 +153,8 @@ def _compute_diff(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
     diffs = []
     if a.get("version") != b.get("version"):
         diffs.append(f"Version: {a.get('version')} \u2192 {b.get('version')}")
-    a_stacks = {s.get("name") for s in a.get("stacks", [])}
-    b_stacks = {s.get("name") for s in b.get("stacks", [])}
+    a_stacks = {s.get("name") for s in a.get("stacks", []) if s.get("name")}
+    b_stacks = {s.get("name") for s in b.get("stacks", []) if s.get("name")}
     for s in a_stacks - b_stacks:
         diffs.append(f"Stack removed: {s}")
     for s in b_stacks - a_stacks:

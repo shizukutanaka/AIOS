@@ -17,7 +17,7 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from aictl.core.constants import VLLM_IMAGE, DEFAULT_MAX_MODEL_LEN, DEFAULT_GPU_MEMORY_UTIL
+from aictl.core.constants import VLLM_IMAGE, DEFAULT_MAX_MODEL_LEN, DEFAULT_GPU_MEMORY_UTIL, VLLM_DEFAULT_PORT
 from typing import Any
 
 
@@ -37,7 +37,7 @@ class DisaggConfig:
     enable_chunked_prefill: bool = True
     image: str = VLLM_IMAGE
     namespace: str = "default"
-    port: int = 8000
+    port: int = VLLM_DEFAULT_PORT
 
 
 def generate_disagg_manifests(config: DisaggConfig) -> list[dict[str, Any]]:
