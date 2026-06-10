@@ -145,6 +145,33 @@ def _emit_value_prop_metrics(lines: list[str]) -> None:
     except Exception:
         pass  # metering store may be empty; skip silently
 
+    # Guard: scan/block counts derived from perf records.
+    try:
+        from aictl.core.perf import summary as perf_summary
+        g = perf_summary().get("guard", {})
+        if g:
+            _counter(lines, "aios_guard_scans_total",
+                     "Total aictl guard scan invocations", int(g.get("count", 0)))
+            _counter(lines, "aios_guard_blocks_total",
+                     "Guard scans that detected PII or violated policy (non-zero exit)",
+                     int(g.get("failures", 0)))
+    except Exception:
+        pass
+
+    # Cascade routing: escalation counters from persistent stats file.
+    try:
+        import json as _json
+        import os as _os
+        _base = _os.environ.get("AIOS_STATE_DIR", _os.path.expanduser("~/.aios"))
+        _cs = _json.loads((__import__("pathlib").Path(_base) / "cascade_stats.json").read_text())
+        _counter(lines, "aios_route_cascade_runs_total",
+                 "Total cascade routing invocations", int(_cs.get("total_runs", 0)))
+        _counter(lines, "aios_route_cascade_escalations_total",
+                 "Cascade routes that escalated from simple to complex model",
+                 int(_cs.get("escalations", 0)))
+    except Exception:
+        pass  # stats file absent until first cascade run
+
 
 def _escape_label(v: Any) -> str:
     """Escape a Prometheus label value (\\, ", and newline) per the text format."""

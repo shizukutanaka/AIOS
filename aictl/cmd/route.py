@@ -488,6 +488,7 @@ def run_cascade(args: argparse.Namespace) -> int:
         label = "escalated" if escalated else "direct"
         print(f"  Cost: {total_cost}  Latency: {elapsed_ms}ms  Path: {label}")
         print()
+    _record_cascade_stat(escalated)
     return 0
 
 
@@ -535,6 +536,30 @@ def _config_path() -> Path:
     """Return the path to the TCO configuration file."""
     base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
     return Path(base) / "route_config.json"
+
+
+def _cascade_stats_path() -> Path:
+    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    return Path(base) / "cascade_stats.json"
+
+
+def _record_cascade_stat(escalated: bool) -> None:
+    """Increment persistent cascade run/escalation counters (best-effort)."""
+    try:
+        path = _cascade_stats_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stats: dict[str, int] = {"total_runs": 0, "escalations": 0}
+        if path.exists():
+            try:
+                stats = json.loads(path.read_text())
+            except Exception:
+                pass
+        stats["total_runs"] = int(stats.get("total_runs", 0)) + 1
+        if escalated:
+            stats["escalations"] = int(stats.get("escalations", 0)) + 1
+        path.write_text(json.dumps(stats))
+    except Exception:
+        pass  # stats are advisory; never crash the main path
 
 
 def _load_config() -> dict[str, Any]:
