@@ -12,6 +12,9 @@ Based on enterprise spec section 5 (tenant-class.regulated.yaml).
 
 from __future__ import annotations
 
+import collections
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -93,6 +96,63 @@ class Tenant:
 def get_tenant_class(name: str) -> TenantClass:
     """Get tenant class."""
     return TENANT_CLASSES.get(name, TENANT_CLASSES["standard"])
+
+
+class TenantRateLimiter:
+    """Per-tenant sliding-window rate limiter (requests/min and tokens/min).
+
+    Thread-safe. Uses a deque to track timestamps within the last 60 seconds.
+    Call check() before routing a request; call record() after the request
+    completes to track tokens consumed.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # tenant_id → deque of (timestamp, tokens) for the sliding window
+        self._windows: dict[str, collections.deque] = collections.defaultdict(
+            lambda: collections.deque()
+        )
+
+    def _evict(self, window: collections.deque, now: float) -> None:
+        """Remove entries older than 60 seconds."""
+        cutoff = now - 60.0
+        while window and window[0][0] < cutoff:
+            window.popleft()
+
+    def check(self, tenant_id: str, tenant_class: str, tokens_requested: int = 0) -> bool:
+        """Return True if the request is within quota, False if it should be rejected."""
+        tc = get_tenant_class(tenant_class)
+        now = time.monotonic()
+        with self._lock:
+            window = self._windows[tenant_id]
+            self._evict(window, now)
+            req_count = len(window)
+            token_count = sum(t for _, t in window)
+            if req_count >= tc.max_requests_per_min:
+                return False
+            if tokens_requested and token_count + tokens_requested > tc.max_tokens_per_min:
+                return False
+            return True
+
+    def record(self, tenant_id: str, tokens_used: int = 0) -> None:
+        """Record a completed request and its token usage."""
+        now = time.monotonic()
+        with self._lock:
+            window = self._windows[tenant_id]
+            self._evict(window, now)
+            window.append((now, tokens_used))
+
+
+# Module-level singleton — used by proxy and daemon for enforcement
+_default_limiter: TenantRateLimiter | None = None
+
+
+def get_rate_limiter() -> TenantRateLimiter:
+    """Return the module-level TenantRateLimiter singleton."""
+    global _default_limiter
+    if _default_limiter is None:
+        _default_limiter = TenantRateLimiter()
+    return _default_limiter
 
 
 def generate_k8s_namespace(tenant: Tenant) -> dict[str, Any]:
