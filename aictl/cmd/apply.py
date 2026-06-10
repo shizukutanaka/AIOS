@@ -25,10 +25,13 @@ def register(sub: Any) -> None:
     p = sub.add_parser("apply", help="Apply a Stack manifest")
     p.add_argument("-f", "--file", required=True, help="Path to stack manifest")
     p.add_argument("--dry-run", action="store_true", help="Show plan without executing")
+    p.add_argument("--validate-only", action="store_true",
+                   help="Parse and validate manifest without applying")
     p.add_argument("--quadlet", action="store_true",
                    help="Generate systemd Quadlet units (persistent)")
     p.add_argument("--root", action="store_true",
                    help="Install Quadlet units system-wide (requires root)")
+    p.add_argument("--json", action="store_true", help="JSON output")
     p.set_defaults(func=run)
 
 
@@ -39,7 +42,21 @@ def run(args: argparse.Namespace) -> int:
         manifest = parse_file(args.file)
     except StackParseError as e:
         err(str(e))
+        if getattr(args, "json", False):
+            print_json({"valid": False, "error": str(e)})
         return 1
+
+    if getattr(args, "validate_only", False):
+        services = [{"name": s.name, "runtime": s.runtime, "model": s.model}
+                    for s in manifest.services]
+        if getattr(args, "json", False):
+            print_json({"valid": True, "stack": manifest.name,
+                        "services": len(manifest.services), "service_list": services})
+        else:
+            ok(f"Manifest valid: '{manifest.name}' ({len(manifest.services)} services)")
+            for s in manifest.services:
+                print(f"  - {s.name} ({s.runtime or 'no runtime'})")
+        return 0
 
     dry = getattr(args, "dry_run", False)
     quadlet = getattr(args, "quadlet", False)
