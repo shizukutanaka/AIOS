@@ -43,7 +43,14 @@ class TrustPolicy:
                 return False, "No digest specified — enforce mode rejects unsigned models"
             return True, "WARNING: no digest — skipping verification"
 
-        if verify_digest(path, expected_digest):
+        try:
+            match = verify_digest(path, expected_digest)
+        except FileNotFoundError:
+            if self.mode == "enforce":
+                return False, f"File not found: {path}"
+            return True, f"WARNING: file not found, skipping digest check: {path}"
+
+        if match:
             return True, "Digest verified"
 
         if self.mode == "enforce":

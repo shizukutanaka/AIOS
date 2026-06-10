@@ -104,6 +104,14 @@ def detect_dynamo() -> dict[str, Any]:
     ]
     result["nixl_available"] = any(p.exists() for p in nixl_paths)
 
+    # Check for KVBM (KV Block Manager) library — co-located with NIXL in Dynamo
+    kvbm_paths = [
+        Path("/usr/lib/libkvbm.so"),
+        Path("/usr/local/lib/libkvbm.so"),
+        Path("/opt/nvidia/dynamo/lib/libkvbm.so"),
+    ]
+    result["kvbm_available"] = any(p.exists() for p in kvbm_paths)
+
     # Check for Grove K8s operator
     if shutil.which("kubectl"):
         try:

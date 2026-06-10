@@ -107,6 +107,7 @@ def verify_attestation(
     result = VerifyResult(method="cosign-attestation")
 
     if not cosign_available():
+        result.method = "cosign-unavailable"
         result.error = "cosign not installed"
         return result
 
