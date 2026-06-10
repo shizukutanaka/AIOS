@@ -239,6 +239,7 @@ def run_ask(args: argparse.Namespace) -> int:
             print()
     except Exception as e:
         warn(f"Inference failed: {e}")
+        return 1
     return 0
 
 
