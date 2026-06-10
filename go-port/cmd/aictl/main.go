@@ -216,7 +216,18 @@ func cmdPs() *cobra.Command {
 			stacks, _ := store.LoadStacks()
 
 			if jsonFlag {
-				return printJSON(map[string]interface{}{"stacks": stacks})
+				services := []string{}
+				for _, s := range stacks {
+					for _, svc := range s.Services {
+						if n, ok := svc["name"].(string); ok && n != "" {
+							services = append(services, n)
+						}
+					}
+				}
+				return printJSON(map[string]interface{}{
+					"stacks":   stacks,
+					"services": services,
+				})
 			}
 
 			if len(stacks) > 0 {
@@ -265,8 +276,12 @@ func cmdStatus() *cobra.Command {
 
 			if jsonFlag {
 				return printJSON(map[string]interface{}{
-					"node": node, "profile": report.Profile,
-					"gpus": len(report.GPUs), "stacks": len(stacks),
+					"node":    node,
+					"profile": report.Profile,
+					"gpus":    len(report.GPUs),
+					"stacks":  len(stacks),
+					"healthy": store.IsInitialized(),
+					"issues":  report.Issues,
 				})
 			}
 

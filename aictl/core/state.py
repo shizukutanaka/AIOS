@@ -130,19 +130,22 @@ class StateStore:
                        status: str = "available") -> None:
         """Register model. registered_at<=0 → now (preserves order on restore)."""
         db = self._db()
-        db.execute(
-            "INSERT OR REPLACE INTO models VALUES (?,?,?,?,?,?,?,?,?)",
-            (model_id, name, digest, size_bytes, fmt, int(signed), signer,
-             registered_at if registered_at > 0 else time.time(), status),
-        )
-        db.commit()
-        db.close()
+        try:
+            db.execute(
+                "INSERT OR REPLACE INTO models VALUES (?,?,?,?,?,?,?,?,?)",
+                (model_id, name, digest, size_bytes, fmt, int(signed), signer,
+                 registered_at if registered_at > 0 else time.time(), status),
+            )
+            db.commit()
+        finally:
+            db.close()
 
     def list_models(self) -> list[dict[str, Any]]:
         """List models."""
         db = self._db()
-        cur = db.execute("SELECT * FROM models ORDER BY registered_at DESC")
-        cols = [d[0] for d in cur.description]
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        db.close()
-        return rows
+        try:
+            cur = db.execute("SELECT * FROM models ORDER BY registered_at DESC")
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+        finally:
+            db.close()
