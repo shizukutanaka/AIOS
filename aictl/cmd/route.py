@@ -166,6 +166,19 @@ def register(sub: Any) -> None:
     b.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     b.set_defaults(func=run_batch)
 
+    # cascade
+    cas = sp.add_parser(
+        "cascade",
+        help="Try simple model first; escalate to complex model if quality is insufficient.",
+    )
+    cas.add_argument("prompt", help="The prompt to answer")
+    cas.add_argument(
+        "--min-length", type=int, default=20,
+        help="Minimum response word count to accept (default: 20)",
+    )
+    cas.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    cas.set_defaults(func=run_cascade)
+
 
 def run_show(args: argparse.Namespace) -> int:
     """Show routing decision for a prompt."""
@@ -368,6 +381,132 @@ def run_batch(args: argparse.Namespace) -> int:
         print(f"    {tier:<8} {count:>3} prompts → {model}")
     print()
     return 0
+
+
+def run_cascade(args: argparse.Namespace) -> int:
+    """Cascade routing: cheap model first, escalate to powerful model on low quality.
+
+    Algorithm:
+      1. Score the prompt — if already COMPLEX, skip cascade (go direct to complex).
+      2. Try the SIMPLE model.
+      3. Check response quality heuristic (length + uncertainty phrases).
+      4. If quality is insufficient, escalate to the COMPLEX model.
+      5. Report which path was taken and both costs.
+    """
+    prompt = args.prompt
+    min_length = getattr(args, "min_length", 20)
+    use_json = getattr(args, "json", False)
+
+    score = score_complexity(prompt)
+    tier = classify_complexity(score)
+    cfg = _load_config()
+
+    # For COMPLEX prompts, cascade doesn't save cost — go direct.
+    if tier == "COMPLEX":
+        model = cfg["complex"]["model"]
+        escalated = False
+        first_model = model
+        first_response = None
+        try:
+            from aictl.sdk import _AmbientContext
+            _AmbientContext.reset_for_testing()
+            import aictl
+            t0 = time.perf_counter()
+            r = aictl.ai.ask(prompt, model=model)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            response_text = str(r)
+            total_cost = r.cost
+        except Exception as e:
+            warn(f"Inference failed: {e}")
+            return 1
+    else:
+        # Step 1: try simple model
+        first_model = cfg["simple"]["model"]
+        escalated = False
+        first_response = None
+        total_cost = 0.0
+        response_text = ""
+        elapsed_ms = 0
+
+        try:
+            from aictl.sdk import _AmbientContext
+            _AmbientContext.reset_for_testing()
+            import aictl
+            t0 = time.perf_counter()
+            r1 = aictl.ai.ask(prompt, model=first_model)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            first_response = str(r1)
+            total_cost = r1.cost
+        except Exception as e:
+            warn(f"Simple model failed: {e}")
+            return 1
+
+        # Step 2: quality check
+        if not _cascade_quality_ok(first_response, min_length):
+            # Escalate to complex model
+            escalated = True
+            complex_model = cfg["complex"]["model"]
+            model = complex_model
+            try:
+                _AmbientContext.reset_for_testing()
+                t0 = time.perf_counter()
+                r2 = aictl.ai.ask(prompt, model=complex_model)
+                elapsed_ms += int((time.perf_counter() - t0) * 1000)
+                response_text = str(r2)
+                total_cost += r2.cost
+            except Exception as e:
+                warn(f"Complex model also failed: {e}")
+                return 1
+        else:
+            model = first_model
+            response_text = first_response
+
+    if use_json:
+        result: dict = {
+            "prompt": prompt,
+            "score": score,
+            "tier": tier,
+            "first_model": first_model,
+            "final_model": model,
+            "escalated": escalated,
+            "response": response_text,
+            "total_cost": total_cost,
+            "latency_ms": elapsed_ms,
+        }
+        if first_response and escalated:
+            result["first_response"] = first_response
+        print_json(result)
+    else:
+        print()
+        if escalated:
+            ok(f"Cascade: {first_model} → escalated → {model} (score={score})")
+        else:
+            ok(f"Cascade: {model} (score={score}, no escalation needed)")
+        print()
+        print(response_text)
+        print()
+        label = "escalated" if escalated else "direct"
+        print(f"  Cost: {total_cost}  Latency: {elapsed_ms}ms  Path: {label}")
+        print()
+    return 0
+
+
+def _cascade_quality_ok(response: str, min_words: int) -> bool:
+    """Heuristic quality gate for cascade routing.
+
+    Returns False (triggering escalation) when the response is too short
+    OR contains uncertainty phrases that indicate the small model gave up.
+    """
+    words = response.split()
+    if len(words) < min_words:
+        return False
+    lower = response.lower()
+    uncertainty_phrases = [
+        "i don't know", "i'm not sure", "i cannot", "i can't",
+        "as an ai", "i don't have", "beyond my", "not able to",
+        "i apologize", "unfortunately i",
+    ]
+    return not any(phrase in lower for phrase in uncertainty_phrases)
 
 
 # ── Helpers ───────────────────────────────────────────────
