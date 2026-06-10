@@ -85,9 +85,10 @@ class KeyManager:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         keys = self._load_keys()
 
-        # Find by hash
+        # Find by hash — use constant-time comparison to prevent timing attacks
         for kid, kdata in keys.items():
-            if kdata.get("key_hash") == key_hash:
+            stored_hash = kdata.get("key_hash", "")
+            if stored_hash and secrets.compare_digest(stored_hash, key_hash):
                 key = APIKey(**{k: v for k, v in kdata.items() if k in APIKey.__dataclass_fields__})
 
                 if not key.active:

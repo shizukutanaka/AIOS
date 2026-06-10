@@ -185,6 +185,8 @@ def _apply_inference_engine(
         model_arg = ["--model", svc.model, "--port", str(port)]
     elif svc.runtime == "sglang" and svc.model:
         model_arg = ["--model-path", svc.model, "--port", str(port)]
+    elif svc.runtime == "trt-llm" and svc.model:
+        model_arg = ["--model", svc.model, "--port", str(port)]
 
     cmd = [
         rt, "run", "-d",

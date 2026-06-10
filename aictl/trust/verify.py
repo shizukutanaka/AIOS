@@ -29,9 +29,16 @@ def verify_digest(path: str | Path, expected: str) -> bool:
 class TrustPolicy:
     """Trust policy for model loading."""
 
+    VALID_MODES = frozenset({"enforce", "warn", "disabled"})
+
     def __init__(self, mode: str = "warn"):
         """Initialize model verifier."""
-        self.mode = mode  # enforce | warn | disabled
+        if mode not in self.VALID_MODES:
+            raise ValueError(
+                f"Invalid TrustPolicy mode {mode!r}; "
+                f"must be one of: {', '.join(sorted(self.VALID_MODES))}"
+            )
+        self.mode = mode
 
     def check(self, path: str | Path, expected_digest: str) -> tuple[bool, str]:
         """Check."""
