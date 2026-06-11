@@ -1,11 +1,17 @@
-"""Pass 33 regression tests: Python command count stale (65→66) across docs."""
+"""Pass 33 regression tests: Python command count stays consistent across docs.
+
+Originally pinned at 66; bumped to 69 after plugin/export/import were added.
+The count must stay consistent across CLAUDE.md, go-port, and info.py.
+"""
 
 import pathlib
 import unittest
 
 
 class TestPythonCommandCount(unittest.TestCase):
-    """Python command count must be consistent at 66 across all docs and code."""
+    """Python command count must be consistent across all docs and code."""
+
+    EXPECTED = 69
 
     @classmethod
     def _claude_md(cls) -> str:
@@ -23,15 +29,15 @@ class TestPythonCommandCount(unittest.TestCase):
         self.assertNotIn(
             "65 Python",
             self._claude_md(),
-            'CLAUDE.md still says "65 Python" in header — update to "66 Python".',
+            'CLAUDE.md still says "65 Python" in header.',
         )
 
-    def test_claude_md_header_has_66(self):
-        """CLAUDE.md header must say '66 Python'."""
+    def test_claude_md_header_has_expected(self):
+        """CLAUDE.md header must say '<EXPECTED> Python'."""
         self.assertIn(
-            "66 Python",
+            f"{self.EXPECTED} Python",
             self._claude_md(),
-            'CLAUDE.md header must contain "66 Python + 29 Go commands".',
+            f'CLAUDE.md header must contain "{self.EXPECTED} Python + 29 Go commands".',
         )
 
     def test_claude_md_map_not_65(self):
@@ -39,47 +45,31 @@ class TestPythonCommandCount(unittest.TestCase):
         self.assertNotIn(
             "65 CLI commands",
             self._claude_md(),
-            'CLAUDE.md map still says "65 CLI commands" — update to "66 CLI commands".',
+            'CLAUDE.md map still says "65 CLI commands".',
         )
 
-    def test_claude_md_map_has_66(self):
-        """CLAUDE.md map section must say '66 CLI commands'."""
+    def test_claude_md_map_has_expected(self):
+        """CLAUDE.md map section must say '<EXPECTED> CLI commands'."""
         self.assertIn(
-            "66 CLI commands",
+            f"{self.EXPECTED} CLI commands",
             self._claude_md(),
-            'CLAUDE.md map must contain "66 CLI commands".',
+            f'CLAUDE.md map must contain "{self.EXPECTED} CLI commands".',
         )
 
-    def test_go_port_json_not_65(self):
-        """go-port main.go python_commands must not be 65."""
-        self.assertNotIn(
-            '"python_commands": 65',
-            self._go_main(),
-            'go-port/cmd/aictl/main.go still has "python_commands": 65.',
-        )
-
-    def test_go_port_json_has_66(self):
-        """go-port main.go python_commands must be 66."""
+    def test_go_port_json_has_expected(self):
+        """go-port main.go python_commands must equal EXPECTED."""
         self.assertIn(
-            '"python_commands": 66',
+            f'"python_commands": {self.EXPECTED}',
             self._go_main(),
-            'go-port/cmd/aictl/main.go must have "python_commands": 66.',
+            f'go-port/cmd/aictl/main.go must have "python_commands": {self.EXPECTED}.',
         )
 
-    def test_go_port_text_not_65(self):
-        """go-port text output must not say '65 Python'."""
-        self.assertNotIn(
-            "29 Go + 65 Python",
-            self._go_main(),
-            'go-port/cmd/aictl/main.go text output still says "29 Go + 65 Python".',
-        )
-
-    def test_go_port_text_has_66(self):
-        """go-port text output must say '66 Python'."""
+    def test_go_port_text_has_expected(self):
+        """go-port text output must say '<EXPECTED> Python'."""
         self.assertIn(
-            "29 Go + 66 Python",
+            f"29 Go + {self.EXPECTED} Python",
             self._go_main(),
-            'go-port/cmd/aictl/main.go text output must say "29 Go + 66 Python".',
+            f'go-port/cmd/aictl/main.go text output must say "29 Go + {self.EXPECTED} Python".',
         )
 
     def test_info_py_fallback(self):
@@ -90,11 +80,11 @@ class TestPythonCommandCount(unittest.TestCase):
         self.assertNotIn(
             "return 58",
             src,
-            "aictl/cmd/info.py fallback is still 58 — update to 66.",
+            "aictl/cmd/info.py fallback is still 58.",
         )
 
     def test_actual_command_count(self):
-        """aictl/__main__.py parser must expose at least 66 subcommands."""
+        """aictl/__main__.py parser must expose at least EXPECTED subcommands."""
         try:
             from aictl.__main__ import build_parser
             p = build_parser()
@@ -102,8 +92,8 @@ class TestPythonCommandCount(unittest.TestCase):
                 if hasattr(action, "choices") and action.choices:
                     count = len(action.choices)
                     self.assertGreaterEqual(
-                        count, 66,
-                        f"Expected at least 66 commands in parser, got {count}",
+                        count, self.EXPECTED,
+                        f"Expected at least {self.EXPECTED} commands in parser, got {count}",
                     )
                     return
         except Exception as exc:
