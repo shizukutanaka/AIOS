@@ -183,6 +183,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import import_cmd
     import_cmd.register(sub)
 
+    # Live resource monitor
+    from aictl.cmd import top as top_cmd
+    top_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins

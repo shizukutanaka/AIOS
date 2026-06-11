@@ -165,6 +165,48 @@ def detect_nvidia() -> list[GPUInfo]:
     return gpus
 
 
+def gpu_live_stats() -> list[dict]:
+    """Query live per-GPU utilization and memory via nvidia-smi.
+
+    Returns a list of dicts: {index, name, util_pct, mem_used_mb,
+    mem_total_mb, temp_c, power_w}. Empty list if nvidia-smi is unavailable.
+    """
+    if not shutil.which("nvidia-smi"):
+        return []
+
+    out = _run([
+        "nvidia-smi",
+        "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,"
+        "temperature.gpu,power.draw",
+        "--format=csv,noheader,nounits",
+    ])
+    if not out:
+        return []
+
+    stats: list[dict] = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+
+        def _num(value: str, cast=int):
+            try:
+                return cast(float(value))
+            except (ValueError, TypeError):
+                return 0
+
+        stats.append({
+            "index": _num(parts[0]),
+            "name": parts[1],
+            "util_pct": _num(parts[2]),
+            "mem_used_mb": _num(parts[3]),
+            "mem_total_mb": _num(parts[4]),
+            "temp_c": _num(parts[5]) if len(parts) > 5 else 0,
+            "power_w": _num(parts[6], float) if len(parts) > 6 else 0.0,
+        })
+    return stats
+
+
 def detect_amd() -> list[GPUInfo]:
     """Detect AMD GPUs via rocm-smi."""
     if not shutil.which("rocm-smi"):
