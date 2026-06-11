@@ -19,7 +19,107 @@ def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("doctor", help="Comprehensive system diagnosis")
     p.add_argument("--deep", action="store_true", help="Include security + fabric + network")
+    p.add_argument("--fix", action="store_true",
+                   help="Suggest remediation for detected issues and auto-apply safe fixes")
     p.set_defaults(func=run)
+
+
+def build_remediations(report: Any, store: Any) -> list[dict]:
+    """Build a list of remediation actions for detected problems.
+
+    Each entry: {issue, command, auto (bool — safe to auto-apply in-process)}.
+    """
+    fixes: list[dict] = []
+
+    if not store.is_initialized():
+        fixes.append({
+            "issue": "Node not initialized",
+            "command": "aictl init",
+            "auto": True,
+        })
+
+    if report.container_runtime == "none":
+        fixes.append({
+            "issue": "No container runtime found",
+            "command": "sudo dnf install -y podman  # or: apt install podman",
+            "auto": False,
+        })
+
+    if not report.system.cgroup_v2:
+        fixes.append({
+            "issue": "cgroup v2 not enabled (needed for resource limits)",
+            "command": "Add 'systemd.unified_cgroup_hierarchy=1' to kernel cmdline, then reboot",
+            "auto": False,
+        })
+
+    if not report.system.psi_enabled:
+        fixes.append({
+            "issue": "PSI (pressure stall info) unavailable",
+            "command": "Add 'psi=1' to kernel cmdline, then reboot",
+            "auto": False,
+        })
+
+    # Map any free-form issues from the detector to generic guidance
+    for issue in (report.issues or []):
+        if not any(f["issue"] == issue for f in fixes):
+            fixes.append({"issue": issue, "command": "", "auto": False})
+
+    return fixes
+
+
+def run_fix(args: argparse.Namespace, store: Any, report: Any) -> int:
+    """Print remediation plan and auto-apply safe in-process fixes."""
+    fixes = build_remediations(report, store)
+
+    if getattr(args, "json", False):
+        applied = []
+        for f in fixes:
+            if f["auto"] and f["command"] == "aictl init":
+                _auto_init(store)
+                applied.append(f["issue"])
+        print_json({"remediations": fixes, "applied": applied})
+        return 0
+
+    if not fixes:
+        print("\n✓ No issues detected — nothing to fix")
+        return 0
+
+    print("\nRemediation plan")
+    applied = []
+    for f in fixes:
+        if f["auto"] and f["command"] == "aictl init":
+            _auto_init(store)
+            applied.append(f["issue"])
+            print(f"  ✓ Fixed: {f['issue']} (ran: {f['command']})")
+        elif f["command"]:
+            print(f"  → {f['issue']}")
+            print(f"      Run: {f['command']}")
+        else:
+            print(f"  ✗ {f['issue']} (no automatic remediation available)")
+
+    if applied:
+        print(f"\n  Auto-applied {len(applied)} safe fix(es). Re-run 'aictl doctor' to confirm.")
+    return 0
+
+
+def _auto_init(store: Any) -> None:
+    """Initialize the node in-process (safe auto-fix)."""
+    if store.is_initialized():
+        return
+    from aictl.core.state import NodeState
+    import socket
+    import time
+    report = full_detect()
+    ns = NodeState(
+        node_id=__import__("uuid").uuid4().hex[:6],
+        hostname=socket.gethostname(),
+        initialized_at=time.time(),
+        profile=report.profile,
+        gpu_count=len(report.gpus),
+        vram_total_mb=sum(g.vram_mb for g in report.gpus),
+        ram_total_mb=report.system.ram_total_mb,
+    )
+    store.save_node(ns)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -27,6 +127,10 @@ def run(args: argparse.Namespace) -> int:
     store = StateStore(getattr(args, "state_dir", None))
     report = full_detect()
     deep = getattr(args, "deep", False)
+
+    # --fix short-circuits to the remediation flow (handles its own json output)
+    if getattr(args, "fix", False):
+        return run_fix(args, store, report)
 
     if getattr(args, "json", False):
         result = {"hardware": report.__dict__}

@@ -20,6 +20,11 @@ def register(sub: Any) -> None:
     show = csub.add_parser("show", help="Show current config")
     show.set_defaults(func=run_show)
 
+    get = csub.add_parser("get", help="Get a single config value by key")
+    get.add_argument("key", help="Dot-separated key (e.g. engines.vllm)")
+    get.add_argument("--json", action="store_true", help="JSON output")
+    get.set_defaults(func=run_get)
+
     st = csub.add_parser("set", help="Set a config value")
     st.add_argument("key", help="Dot-separated key (e.g. engines.vllm)")
     st.add_argument("value", help="New value")
@@ -42,6 +47,34 @@ def run_show(args: argparse.Namespace) -> int:
 
     d = asdict(config)
     _print_nested(d)
+    return 0
+
+
+def run_get(args: argparse.Namespace) -> int:
+    """Execute the get subcommand — retrieve a single config value by dot-key."""
+    state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    config = load_config(state_dir)
+    from dataclasses import asdict
+
+    parts = args.key.split(".")
+    obj: Any = asdict(config)
+    for part in parts:
+        if isinstance(obj, dict) and part in obj:
+            obj = obj[part]
+        else:
+            err(f"Unknown key: {args.key}")
+            if getattr(args, "json", False):
+                print_json({"key": args.key, "found": False})
+            return 1
+
+    if getattr(args, "json", False):
+        print_json({"key": args.key, "value": obj, "found": True})
+        return 0
+
+    if isinstance(obj, dict):
+        _print_nested(obj)
+    else:
+        print(obj)
     return 0
 
 
