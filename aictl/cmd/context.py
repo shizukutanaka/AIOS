@@ -130,6 +130,10 @@ def run_switch(args: argparse.Namespace) -> int:
                   or s.snapshot_id.startswith(args.snapshot_id)), None)
 
     if match is None:
+        if getattr(args, "json", False):
+            print_json({"switched": False, "snapshot_id": args.snapshot_id,
+                        "error": f"Snapshot not found: {args.snapshot_id}"})
+            return 1
         err(f"Snapshot not found: {args.snapshot_id}")
         return 1
 
@@ -174,6 +178,10 @@ def run_export(args: argparse.Namespace) -> int:
                   or s.snapshot_id.startswith(args.snapshot_id)), None)
 
     if match is None:
+        if getattr(args, "json", False):
+            print_json({"exported": False, "snapshot_id": args.snapshot_id,
+                        "error": f"Snapshot not found: {args.snapshot_id}"})
+            return 1
         err(f"Snapshot not found: {args.snapshot_id}")
         return 1
 

@@ -184,11 +184,18 @@ def run_delete(args: argparse.Namespace) -> int:
     reg = _load_registry(path)
 
     if args.tenant_id not in reg:
+        if getattr(args, "json", False):
+            print_json({"deleted": False, "tenant_id": args.tenant_id,
+                        "error": f"Tenant not found: {args.tenant_id}"})
+            return 1
         err(f"Tenant not found: {args.tenant_id}")
         return 1
 
     del reg[args.tenant_id]
     _save_registry(path, reg)
+    if getattr(args, "json", False):
+        print_json({"deleted": True, "tenant_id": args.tenant_id})
+        return 0
     ok(f"Tenant deleted: {args.tenant_id}")
     return 0
 

@@ -130,8 +130,15 @@ def run_delete(args: argparse.Namespace) -> int:
     store = StateStore(getattr(args, "state_dir", None))
     mgr = SnapshotManager(store)
     if mgr.delete(args.id):
+        if getattr(args, "json", False):
+            print_json({"deleted": True, "id": args.id})
+            return 0
         ok(f"Snapshot deleted: {args.id}")
         return 0
+    if getattr(args, "json", False):
+        print_json({"deleted": False, "id": args.id,
+                    "error": f"Snapshot not found: {args.id}"})
+        return 1
     err(f"Snapshot not found: {args.id}")
     return 1
 
@@ -197,6 +204,10 @@ def run_export(args: argparse.Namespace) -> int:
     mgr = SnapshotManager(store)
     snap_path = mgr._find_snapshot(args.id)
     if not snap_path:
+        if getattr(args, "json", False):
+            print_json({"exported": False, "id": args.id,
+                        "error": f"Snapshot not found: {args.id}"})
+            return 1
         err(f"Snapshot not found: {args.id}")
         return 1
 
@@ -235,6 +246,10 @@ def run_validate(args: argparse.Namespace) -> int:
     snap_path = mgr._find_snapshot(args.id)
 
     if not snap_path:
+        if getattr(args, "json", False):
+            print_json({"valid": False, "snapshot_id": args.id,
+                        "error": f"Snapshot not found: {args.id}"})
+            return 1
         err(f"Snapshot not found: {args.id}")
         return 1
 
