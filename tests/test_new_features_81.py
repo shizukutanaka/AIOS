@@ -212,6 +212,59 @@ class TestRecipeTestExport(unittest.TestCase):
         # dry_run_apply check should be present
         self.assertIn("dry_run_apply", checks_by_name)
 
+    def test_run_test_dry_run_detail_is_honest_on_error(self):
+        """Regression: when a service errors in dry-run, the detail must name the
+        service and its reason — not claim 'N service(s) would start'. Found by
+        running the real CLI (recipe test local-chat) where the llm service errors
+        because ollama is absent, yet the old detail still said both would start."""
+        from aictl.cmd.recipe import run_test
+
+        good = MagicMock(name="webui", status="dry-run", error="")
+        good.name = "webui"
+        bad = MagicMock(status="error", error="Cannot determine how to start this service")
+        bad.name = "llm"
+
+        captured = []
+        with patch("aictl.cmd.recipe.get_recipe") as mock_recipe, \
+             patch("aictl.cmd.recipe.apply_stack", return_value=[good, bad]), \
+             patch("aictl.cmd.recipe.validate_manifest", return_value=[]), \
+             patch("aictl.cmd.recipe.print_json", side_effect=captured.append):
+            manifest = MagicMock()
+            manifest.services = []  # no GPU-required services
+            mock_recipe.return_value = manifest
+            args = argparse.Namespace(name="local-chat", state_dir=None, json=True)
+            ret = run_test(args)
+
+        self.assertEqual(ret, 1)  # errored service → overall fail
+        dry = next(c for c in captured[0]["checks"] if c["check"] == "dry_run_apply")
+        self.assertFalse(dry["passed"])
+        # Detail must name the errored service and not claim it would start
+        self.assertIn("llm", dry["detail"])
+        self.assertIn("Cannot determine", dry["detail"])
+        self.assertNotIn("would start", dry["detail"])
+
+    def test_run_test_dry_run_passes_when_all_planned(self):
+        """When every service plans cleanly, detail reports the count and passes."""
+        from aictl.cmd.recipe import run_test
+        s1 = MagicMock(status="dry-run", error="")
+        s1.name = "a"
+        s2 = MagicMock(status="dry-run", error="")
+        s2.name = "b"
+        captured = []
+        with patch("aictl.cmd.recipe.get_recipe") as mock_recipe, \
+             patch("aictl.cmd.recipe.apply_stack", return_value=[s1, s2]), \
+             patch("aictl.cmd.recipe.validate_manifest", return_value=[]), \
+             patch("aictl.cmd.recipe.print_json", side_effect=captured.append):
+            manifest = MagicMock()
+            manifest.services = []
+            mock_recipe.return_value = manifest
+            args = argparse.Namespace(name="x", state_dir=None, json=True)
+            ret = run_test(args)
+        self.assertEqual(ret, 0)
+        dry = next(c for c in captured[0]["checks"] if c["check"] == "dry_run_apply")
+        self.assertTrue(dry["passed"])
+        self.assertIn("2 service(s) would start", dry["detail"])
+
     def test_run_export_unknown_recipe(self):
         from aictl.cmd.recipe import run_export
         captured = []

@@ -197,24 +197,19 @@ def run_forecast(args: argparse.Namespace) -> int:
     daily_cloud = est.cloud_monthly_usd / 30
     daily_onprem = est.onprem_monthly_usd / 30
 
-    milestones = []
-    for days in [30, 60, horizon]:
-        if days > horizon:
-            continue
-        milestones.append({
+    # Distinct, sorted milestone days within the horizon (always include the
+    # horizon itself). Using a set dedupes the case where the horizon coincides
+    # with a fixed checkpoint, e.g. --horizon 30 or 60.
+    milestone_days = sorted({d for d in (30, 60, horizon) if d <= horizon})
+    milestones = [
+        {
             "days": days,
             "cloud_usd": round(daily_cloud * days, 2),
             "onprem_usd": round(daily_onprem * days, 2),
             "delta_usd": round((daily_cloud - daily_onprem) * days, 2),
-        })
-    # Always include the horizon itself
-    if not milestones or milestones[-1]["days"] != horizon:
-        milestones.append({
-            "days": horizon,
-            "cloud_usd": round(daily_cloud * horizon, 2),
-            "onprem_usd": round(daily_onprem * horizon, 2),
-            "delta_usd": round((daily_cloud - daily_onprem) * horizon, 2),
-        })
+        }
+        for days in milestone_days
+    ]
 
     if getattr(args, "json", False):
         print_json({

@@ -181,14 +181,22 @@ def run_test(args: argparse.Namespace) -> int:
             "detail": f"{len(hw.gpus)} GPU(s) detected" if has_gpu else "no GPUs found (recipe requires GPU)",
         })
 
-    # Dry-run apply (applies no real changes)
+    # Dry-run apply (applies no real changes). Report the per-service outcome
+    # honestly: a service that errors in dry-run (e.g. its runtime isn't present
+    # in this environment) must be named with its reason, not hidden behind a
+    # blanket "N service(s) would start".
     try:
         results = apply_stack(manifest, dry_run=True)
-        dry_run_ok = all(r.status in ("dry-run", "running", "starting") for r in results)
+        errored = [r for r in results if r.status == "error"]
+        planned = [r for r in results if r.status in ("dry-run", "running", "starting")]
+        if errored:
+            detail = "; ".join(f"{r.name}: {r.error or 'error'}" for r in errored)
+        else:
+            detail = f"{len(planned)} service(s) would start"
         checks.append({
             "check": "dry_run_apply",
-            "passed": dry_run_ok,
-            "detail": f"{len(results)} service(s) would start",
+            "passed": not errored,
+            "detail": detail,
         })
     except Exception as exc:
         checks.append({"check": "dry_run_apply", "passed": False, "detail": str(exc)})

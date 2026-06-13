@@ -75,6 +75,24 @@ class TestCostForecastProviders(unittest.TestCase):
         self.assertEqual(ret, 0)
         self.assertIn("gpu", captured[0])
 
+    def test_run_forecast_no_duplicate_milestone_days(self):
+        """Regression: --horizon equal to a fixed checkpoint (30/60) must not
+        duplicate that milestone row. Found by running the real CLI; the original
+        mocked tests missed it because they never asserted day uniqueness."""
+        from aictl.cmd.cost import run_forecast
+        for horizon, expected in [(30, [30]), (60, [30, 60]), (90, [30, 60, 90]),
+                                  (45, [30, 45]), (20, [20])]:
+            captured = []
+            with patch("aictl.cmd.cost.print_json", side_effect=captured.append):
+                args = argparse.Namespace(gpu="RTX 4090", gpus=1, horizon=horizon,
+                                          hours=24, json=True)
+                ret = run_forecast(args)
+            self.assertEqual(ret, 0)
+            days = [m["days"] for m in captured[0]["milestones"]]
+            self.assertEqual(days, sorted(set(days)),
+                             f"horizon={horizon} produced duplicate/unsorted days: {days}")
+            self.assertEqual(days, expected, f"horizon={horizon}: {days} != {expected}")
+
     def test_run_providers_json(self):
         from aictl.cmd.cost import run_providers
         captured = []
