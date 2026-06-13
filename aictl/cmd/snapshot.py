@@ -37,6 +37,17 @@ def register(sub: Any) -> None:
     diff.add_argument("id_b", help="Second snapshot ID")
     diff.set_defaults(func=run_diff)
 
+    export_p = ssub.add_parser("export", help="Export snapshot to a portable JSON file")
+    export_p.add_argument("id", help="Snapshot ID or prefix")
+    export_p.add_argument("--output", "-o", default="", help="Output file (default: <id>.json)")
+    export_p.set_defaults(func=run_export)
+
+    import_p = ssub.add_parser("import", help="Import snapshot from an exported file")
+    import_p.add_argument("file", help="Snapshot JSON file to import")
+    import_p.add_argument("--restore", action="store_true",
+                          help="Also restore state from the imported snapshot")
+    import_p.set_defaults(func=run_import)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -164,3 +175,90 @@ def _compute_diff(a: dict[str, Any], b: dict[str, Any]) -> list[str]:
     if a_models != b_models:
         diffs.append(f"Models: {a_models} \u2192 {b_models}")
     return diffs
+
+
+def run_export(args: argparse.Namespace) -> int:
+    """Export a snapshot to a portable JSON file."""
+    import json as _json
+    store = StateStore(getattr(args, "state_dir", None))
+    mgr = SnapshotManager(store)
+    snap_path = mgr._find_snapshot(args.id)
+    if not snap_path:
+        err(f"Snapshot not found: {args.id}")
+        return 1
+
+    try:
+        data = _json.loads(snap_path.read_text())
+    except (OSError, _json.JSONDecodeError) as e:
+        err(f"Cannot read snapshot: {e}")
+        return 1
+
+    snap_id = data.get("snapshot_id", snap_path.stem)
+    out_path = getattr(args, "output", "") or f"{snap_id}.json"
+
+    try:
+        from pathlib import Path
+        Path(out_path).write_text(_json.dumps(data, indent=2))
+    except OSError as e:
+        err(f"Cannot write to {out_path}: {e}")
+        return 1
+
+    if getattr(args, "json", False):
+        print_json({"exported": True, "snapshot_id": snap_id, "file": out_path})
+        return 0
+
+    ok(f"Snapshot exported to {out_path}")
+    print(f"  stacks : {len(data.get('stacks', []))}")
+    print(f"  models : {len(data.get('models', []))}")
+    return 0
+
+
+def run_import(args: argparse.Namespace) -> int:
+    """Import a snapshot from an exported JSON file."""
+    import json as _json
+    from pathlib import Path
+
+    file_path = Path(args.file)
+    if not file_path.exists():
+        err(f"File not found: {args.file}")
+        return 1
+
+    try:
+        data = _json.loads(file_path.read_text())
+    except (OSError, _json.JSONDecodeError) as e:
+        err(f"Cannot parse {args.file}: {e}")
+        return 1
+
+    snap_id = data.get("snapshot_id")
+    if not snap_id:
+        err("File does not look like a snapshot export (missing snapshot_id)")
+        return 1
+
+    store = StateStore(getattr(args, "state_dir", None))
+    mgr = SnapshotManager(store)
+    dest = mgr.snap_dir / f"{snap_id}.json"
+
+    try:
+        dest.write_text(_json.dumps(data, indent=2))
+    except OSError as e:
+        err(f"Cannot write snapshot: {e}")
+        return 1
+
+    if getattr(args, "restore", False):
+        success, msg = mgr.restore(snap_id)
+        if not success:
+            err(f"Import succeeded but restore failed: {msg}")
+            if getattr(args, "json", False):
+                print_json({"imported": True, "snapshot_id": snap_id, "restored": False,
+                             "restore_error": msg})
+            return 1
+
+    if getattr(args, "json", False):
+        print_json({"imported": True, "snapshot_id": snap_id,
+                     "restored": getattr(args, "restore", False)})
+        return 0
+
+    ok(f"Snapshot {snap_id!r} imported")
+    if getattr(args, "restore", False):
+        ok("State restored from snapshot")
+    return 0

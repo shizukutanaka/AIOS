@@ -203,6 +203,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import optimize as optimize_cmd
     optimize_cmd.register(sub)
 
+    # Integration hooks inspection
+    from aictl.cmd import hooks as hooks_cmd
+    hooks_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins
