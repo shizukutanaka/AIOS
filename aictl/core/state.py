@@ -44,9 +44,15 @@ class StackEntry:
 class StateStore:
     """Filesystem + SQLite state store."""
 
-    def __init__(self, state_dir: Path | None = None):
-        """Initialize state store with directory path."""
-        self.dir = state_dir or DEFAULT_STATE_DIR
+    def __init__(self, state_dir: Path | str | None = None):
+        """Initialize state store with directory path.
+
+        Accepts either a Path or a str: the global `--state-dir` flag delivers a
+        string, and ~24 commands pass it straight through as
+        `StateStore(args.state_dir)`. Coerce to Path here so every caller works
+        uniformly instead of crashing on `str.mkdir`.
+        """
+        self.dir = Path(state_dir) if state_dir else DEFAULT_STATE_DIR
         self.dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self.dir / "state.json"
         self._stacks_path = self.dir / "stacks.json"
