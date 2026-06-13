@@ -211,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import isolation as isolation_cmd
     isolation_cmd.register(sub)
 
+    # Prometheus SLO alert rules management
+    from aictl.cmd import alert as alert_cmd
+    alert_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins

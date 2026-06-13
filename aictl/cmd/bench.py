@@ -8,6 +8,7 @@ import argparse
 
 from aictl.core.output import ok, err, warn, print_json, print_kv, print_table
 from aictl.core.constants import OLLAMA_DEFAULT_PORT
+from aictl.runtime.benchmark import run_benchmark, BenchResult
 
 
 def register(sub: Any) -> None:
@@ -25,6 +26,17 @@ def register(sub: Any) -> None:
     p.add_argument("--json", action="store_true", help="JSON output")
     p.set_defaults(func=run)
 
+    # SLO verification subcommand
+    slo = bsub.add_parser("slo", help="Verify endpoint meets configured SLO thresholds")
+    slo.add_argument("endpoint", help="Inference endpoint URL")
+    slo.add_argument("--model", default="", help="Model name")
+    slo.add_argument("-n", "--requests", type=int, default=5, help="Number of requests")
+    slo.set_defaults(func=run_slo)
+
+    # Baseline subcommand
+    baseline = bsub.add_parser("baseline", help="Show expected baselines for common models")
+    baseline.set_defaults(func=run_baseline)
+
     # Compare subcommand
     cmp = bsub.add_parser("compare", help="Compare two inference endpoints side-by-side")
     cmp.add_argument("endpoints", nargs="+", metavar="URL",
@@ -36,9 +48,80 @@ def register(sub: Any) -> None:
     cmp.set_defaults(func=run_compare)
 
 
+def run_slo(args: argparse.Namespace) -> int:
+    """Run a benchmark and verify results against SLO thresholds."""
+    from aictl.metrics.slo import SLOTarget
+
+    slo = SLOTarget()
+    ok(f"SLO verification: {args.endpoint}")
+    try:
+        result = run_benchmark(
+            endpoint=args.endpoint,
+            model=args.model or "mock-llama3-8b",
+            num_requests=getattr(args, "requests", 5),
+            max_tokens=100,
+        )
+    except Exception as exc:
+        err(f"Benchmark failed: {exc}")
+        return 1
+
+    checks = [
+        ("TTFT p95", result.ttft_ms_p95, slo.ttft_p95_ms, "≤",
+         result.ttft_ms_p95 <= slo.ttft_p95_ms),
+        ("tokens/sec", result.tokens_per_sec, slo.tokens_per_sec_min, "≥",
+         result.tokens_per_sec >= slo.tokens_per_sec_min),
+        ("error_rate", result.errors / max(result.requests, 1),
+         slo.error_rate_max, "≤",
+         result.errors / max(result.requests, 1) <= slo.error_rate_max),
+    ]
+
+    passed = sum(1 for *_, ok_flag in checks if ok_flag)
+
+    if getattr(args, "json", False):
+        print_json({
+            "endpoint": result.endpoint,
+            "slo_passed": passed == len(checks),
+            "checks": [{"metric": m, "value": v, "threshold": t, "op": op, "pass": p}
+                       for m, v, t, op, p in checks],
+        })
+        return 0 if passed == len(checks) else 1
+
+    rows = [{"metric": m, "value": f"{v:.1f}", "threshold": f"{op} {t:.1f}",
+             "pass": "✓" if p else "✗"}
+            for m, v, t, op, p in checks]
+    print_table(rows, ["metric", "value", "threshold", "pass"])
+    if passed == len(checks):
+        ok("SLO: PASS")
+    else:
+        err(f"SLO: FAIL ({passed}/{len(checks)} checks passed)")
+    return 0 if passed == len(checks) else 1
+
+
+# Known reference baselines for common hardware + model combinations
+_BASELINES = [
+    {"model": "llama3.2:3b",  "hw": "RTX 4090",  "ttft_ms_p95": 50,   "tok_s": 120},
+    {"model": "llama3.1:8b",  "hw": "RTX 4090",  "ttft_ms_p95": 150,  "tok_s": 60},
+    {"model": "llama3.1:70b", "hw": "H100 (2x)", "ttft_ms_p95": 300,  "tok_s": 35},
+    {"model": "mixtral:8x7b", "hw": "A100 (2x)", "ttft_ms_p95": 200,  "tok_s": 45},
+    {"model": "phi3:mini",    "hw": "M2 Pro CPU", "ttft_ms_p95": 800,  "tok_s": 12},
+    {"model": "llama3.2:1b",  "hw": "CPU (16c)",  "ttft_ms_p95": 2000, "tok_s": 6},
+]
+
+
+def run_baseline(args: argparse.Namespace) -> int:
+    """Show expected performance baselines for common model/hardware combos."""
+    if getattr(args, "json", False):
+        print_json(_BASELINES)
+        return 0
+
+    ok("Reference baselines (community measured)")
+    print_table(_BASELINES, ["model", "hw", "ttft_ms_p95", "tok_s"])
+    print("\n  Compare with: aictl bench --endpoint <url> --model <name>")
+    return 0
+
+
 def run_compare(args: argparse.Namespace) -> int:
     """Execute the bench compare subcommand."""
-    from aictl.runtime.benchmark import run_benchmark, BenchResult
 
     endpoints = args.endpoints
     if len(endpoints) < 2:
@@ -92,7 +175,6 @@ def run_compare(args: argparse.Namespace) -> int:
 
 def run(args: argparse.Namespace) -> int:
     """Execute the bench command."""
-    from aictl.runtime.benchmark import run_benchmark
     import time
 
     endpoint = args.endpoint
