@@ -92,6 +92,9 @@ def run_list(args: argparse.Namespace) -> int:
     snapshots = engine.list_snapshots()
 
     if not snapshots:
+        if getattr(args, "json", False):
+            print_json([])
+            return 0
         print("No saved contexts. Use: aictl context save")
         return 0
 
