@@ -36,6 +36,18 @@ def register(sub: Any) -> None:
     bgt.add_argument("--json", action="store_true", help="JSON output")
     bgt.set_defaults(func=run_budget)
 
+    forecast = csub.add_parser("forecast", help="Project costs over a future horizon")
+    forecast.add_argument("--gpu", default="", help="GPU type (auto-detect if empty)")
+    forecast.add_argument("--gpus", type=int, default=1, help="Number of GPUs")
+    forecast.add_argument("--horizon", type=int, default=90,
+                          help="Forecast horizon in days (default: 90)")
+    forecast.add_argument("--hours", type=float, default=24, help="Hours/day usage")
+    forecast.set_defaults(func=run_forecast)
+
+    providers = csub.add_parser("providers", help="Show cheapest cloud providers per GPU")
+    providers.add_argument("--hours", type=float, default=24, help="Hours/day usage")
+    providers.set_defaults(func=run_providers)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -166,6 +178,99 @@ def run_budget(args: argparse.Namespace) -> int:
         warn(f"Projected monthly cost exceeds budget by "
              f"{symbol}{projected_display - monthly_max:,.0f}")
     return 0 if under_budget else 1
+
+
+def run_forecast(args: argparse.Namespace) -> int:
+    """Project GPU costs over a future horizon using current estimate."""
+    gpu = getattr(args, "gpu", "")
+    if not gpu:
+        report = full_detect()
+        if report.gpus:
+            gpu = _map_gpu_name(report.gpus[0].name)
+        else:
+            gpu = "RTX 4090"
+
+    est = estimate_cost(gpu_type=gpu, num_gpus=getattr(args, "gpus", 1),
+                        hours_per_day=getattr(args, "hours", 24))
+    horizon = max(1, getattr(args, "horizon", 90))
+
+    daily_cloud = est.cloud_monthly_usd / 30
+    daily_onprem = est.onprem_monthly_usd / 30
+
+    milestones = []
+    for days in [30, 60, horizon]:
+        if days > horizon:
+            continue
+        milestones.append({
+            "days": days,
+            "cloud_usd": round(daily_cloud * days, 2),
+            "onprem_usd": round(daily_onprem * days, 2),
+            "delta_usd": round((daily_cloud - daily_onprem) * days, 2),
+        })
+    # Always include the horizon itself
+    if not milestones or milestones[-1]["days"] != horizon:
+        milestones.append({
+            "days": horizon,
+            "cloud_usd": round(daily_cloud * horizon, 2),
+            "onprem_usd": round(daily_onprem * horizon, 2),
+            "delta_usd": round((daily_cloud - daily_onprem) * horizon, 2),
+        })
+
+    if getattr(args, "json", False):
+        print_json({
+            "gpu": gpu, "gpus": est.num_gpus, "horizon_days": horizon,
+            "daily_cloud_usd": round(daily_cloud, 2),
+            "daily_onprem_usd": round(daily_onprem, 2),
+            "milestones": milestones,
+            "recommendation": est.recommendation,
+        })
+        return 0
+
+    ok(f"Cost Forecast — {gpu} x{est.num_gpus} ({horizon}-day horizon)")
+    print()
+    rows = [{"days": str(m["days"]),
+             "cloud ($)": f"{m['cloud_usd']:,.0f}",
+             "onprem ($)": f"{m['onprem_usd']:,.0f}",
+             "cloud saves": f"+{m['delta_usd']:,.0f}" if m["delta_usd"] > 0 else f"{m['delta_usd']:,.0f}",
+             } for m in milestones]
+    print_table(rows, ["days", "cloud ($)", "onprem ($)", "cloud saves"])
+    print()
+    print(f"  Recommendation: {est.recommendation}")
+    return 0
+
+
+def run_providers(args: argparse.Namespace) -> int:
+    """Show cheapest cloud provider per GPU type."""
+    results = compare_gpus(hours_per_day=getattr(args, "hours", 24))
+
+    provider_map: dict[str, list[dict]] = {}
+    for r in results:
+        p = r.cloud_provider
+        if p not in provider_map:
+            provider_map[p] = []
+        provider_map[p].append(r)
+
+    if getattr(args, "json", False):
+        print_json([{
+            "provider": r.cloud_provider,
+            "gpu": r.gpu_type,
+            "cloud_monthly_usd": r.cloud_monthly_usd,
+            "cloud_rate_hr": r.cloud_rate_hr,
+            "cost_per_million_tokens": r.cost_per_million_tokens,
+        } for r in results])
+        return 0
+
+    ok("Cloud Providers — cheapest options per GPU")
+    print()
+    rows = [{
+        "provider": r.cloud_provider,
+        "gpu": r.gpu_type,
+        "$/hr": f"${r.cloud_rate_hr:.2f}",
+        "$/mo": f"${r.cloud_monthly_usd:,.0f}",
+        "$/M tok": f"${r.cost_per_million_tokens:.4f}" if r.cost_per_million_tokens > 0 else "—",
+    } for r in results]
+    print_table(rows, ["provider", "gpu", "$/hr", "$/mo", "$/M tok"])
+    return 0
 
 
 def _map_gpu_name(name: str) -> str:

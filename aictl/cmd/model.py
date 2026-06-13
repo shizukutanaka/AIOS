@@ -49,6 +49,15 @@ def register(sub: Any) -> None:
     inspect.add_argument("--json", action="store_true")
     inspect.set_defaults(func=run_inspect)
 
+    cleanup = msub.add_parser("cleanup", help="Remove stale model registry entries")
+    cleanup.add_argument("--days", type=int, default=30,
+                         help="Remove models not updated in N days (default: 30)")
+    cleanup.add_argument("--status", default="",
+                         help="Only remove entries with this status (e.g. unavailable)")
+    cleanup.add_argument("--dry-run", action="store_true",
+                         help="Show what would be removed without deleting")
+    cleanup.set_defaults(func=run_cleanup)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -235,6 +244,65 @@ def run_ps(args: argparse.Namespace) -> int:
 
     print_table(loaded, ["engine", "model", "vram_mb", "expires_at"])
     return 0
+
+
+def run_cleanup(args: argparse.Namespace) -> int:
+    """Remove stale model registry entries by age or status."""
+    import time as _time
+    store = StateStore(getattr(args, "state_dir", None))
+    models = store.list_models()
+    days = getattr(args, "days", 30)
+    status_filter = getattr(args, "status", "")
+    dry_run = getattr(args, "dry_run", False)
+    cutoff = _time.time() - days * 86400
+
+    candidates = [
+        m for m in models
+        if (m.get("registered_at", 0) < cutoff)
+        and (not status_filter or m.get("status", "") == status_filter)
+    ]
+
+    if not candidates:
+        print("No stale model entries found.")
+        if getattr(args, "json", False):
+            print_json({"removed": 0, "dry_run": dry_run, "candidates": []})
+        return 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "removed": 0 if dry_run else len(candidates),
+            "dry_run": dry_run,
+            "candidates": [{"id": m.get("id"), "name": m.get("name"),
+                             "status": m.get("status"), "registered_at": m.get("registered_at")}
+                            for m in candidates],
+        })
+        if not dry_run:
+            _delete_models(store, [m["id"] for m in candidates])
+        return 0
+
+    action = "Would remove" if dry_run else "Removing"
+    ok(f"{action} {len(candidates)} stale model entries (>{days} days old)")
+    for m in candidates:
+        reg = _time.strftime("%Y-%m-%d", _time.localtime(m.get("registered_at", 0)))
+        print(f"  - {m.get('name')} [{m.get('status')}] registered {reg}")
+
+    if not dry_run:
+        _delete_models(store, [m["id"] for m in candidates])
+        ok("Cleanup complete")
+    else:
+        print("\n  (dry-run — no changes made)")
+    return 0
+
+
+def _delete_models(store: StateStore, model_ids: list[str]) -> None:
+    """Delete model registry entries by ID."""
+    db = store._db()
+    try:
+        for mid in model_ids:
+            db.execute("DELETE FROM models WHERE id=?", (mid,))
+        db.commit()
+    finally:
+        db.close()
 
 
 def run_inspect(args: argparse.Namespace) -> int:

@@ -48,6 +48,19 @@ def register(sub: Any) -> None:
                           help="Also restore state from the imported snapshot")
     import_p.set_defaults(func=run_import)
 
+    validate_p = ssub.add_parser("validate", help="Validate snapshot integrity")
+    validate_p.add_argument("id", help="Snapshot ID or prefix")
+    validate_p.set_defaults(func=run_validate)
+
+    purge_p = ssub.add_parser("purge", help="Delete snapshots older than N days")
+    purge_p.add_argument("--max-age", type=int, default=7, dest="max_age",
+                         help="Delete snapshots older than N days (default: 7)")
+    purge_p.add_argument("--keep", type=int, default=1,
+                         help="Minimum number of snapshots to keep (default: 1)")
+    purge_p.add_argument("--dry-run", action="store_true",
+                         help="Show what would be deleted without deleting")
+    purge_p.set_defaults(func=run_purge)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -210,6 +223,113 @@ def run_export(args: argparse.Namespace) -> int:
     ok(f"Snapshot exported to {out_path}")
     print(f"  stacks : {len(data.get('stacks', []))}")
     print(f"  models : {len(data.get('models', []))}")
+    return 0
+
+
+def run_validate(args: argparse.Namespace) -> int:
+    """Validate a snapshot's integrity and version compatibility."""
+    import json as _json
+    from aictl import __version__
+    store = StateStore(getattr(args, "state_dir", None))
+    mgr = SnapshotManager(store)
+    snap_path = mgr._find_snapshot(args.id)
+
+    if not snap_path:
+        err(f"Snapshot not found: {args.id}")
+        return 1
+
+    try:
+        data = _json.loads(snap_path.read_text())
+    except (OSError, _json.JSONDecodeError) as e:
+        err(f"Cannot read snapshot: {e}")
+        return 1
+
+    problems: list[str] = []
+    required = ["snapshot_id", "created_at", "version", "stacks", "models"]
+    for field_name in required:
+        if field_name not in data:
+            problems.append(f"Missing required field: {field_name!r}")
+
+    snap_ver = data.get("version", "")
+    if snap_ver and snap_ver != __version__:
+        problems.append(f"Version mismatch: snapshot={snap_ver}, current={__version__}")
+
+    if not isinstance(data.get("stacks", []), list):
+        problems.append("Field 'stacks' must be a list")
+    if not isinstance(data.get("models", []), list):
+        problems.append("Field 'models' must be a list")
+
+    valid = len(problems) == 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "valid": valid, "snapshot_id": data.get("snapshot_id", args.id),
+            "version": snap_ver, "problems": problems,
+            "stacks": len(data.get("stacks", [])),
+            "models": len(data.get("models", [])),
+        })
+        return 0 if valid else 1
+
+    if valid:
+        ok(f"Snapshot {args.id} is valid (version={snap_ver})")
+        print(f"  stacks: {len(data.get('stacks', []))}, models: {len(data.get('models', []))}")
+    else:
+        err(f"Snapshot {args.id} has {len(problems)} problem(s):")
+        for p in problems:
+            print(f"    - {p}")
+    return 0 if valid else 1
+
+
+def run_purge(args: argparse.Namespace) -> int:
+    """Delete snapshots older than max_age days, keeping at least --keep newest."""
+    import json as _json
+    import time as _time
+    store = StateStore(getattr(args, "state_dir", None))
+    mgr = SnapshotManager(store)
+    snaps = mgr.list_snapshots()
+
+    max_age_secs = getattr(args, "max_age", 7) * 86400
+    keep = max(0, getattr(args, "keep", 1))
+    dry_run = getattr(args, "dry_run", False)
+    now = _time.time()
+
+    # Sort newest-first, protect the `keep` most recent
+    sorted_snaps = sorted(snaps, key=lambda s: s.get("created_at", 0), reverse=True)
+    protected = {s["id"] for s in sorted_snaps[:keep]}
+
+    to_delete = [
+        s for s in snaps
+        if s["id"] not in protected
+        and (now - s.get("created_at", now)) > max_age_secs
+    ]
+
+    if not to_delete:
+        print("No snapshots match purge criteria.")
+        if getattr(args, "json", False):
+            print_json({"purged": 0, "dry_run": dry_run, "kept": len(snaps)})
+        return 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "purged": 0 if dry_run else len(to_delete),
+            "dry_run": dry_run,
+            "ids": [s["id"] for s in to_delete],
+        })
+        if not dry_run:
+            for s in to_delete:
+                mgr.delete(s["id"])
+        return 0
+
+    action = "Would delete" if dry_run else "Deleting"
+    ok(f"{action} {len(to_delete)} snapshots (>{args.max_age} days old)")
+    for s in to_delete:
+        print(f"  - {s['id'][:40]}")
+    if not dry_run:
+        for s in to_delete:
+            mgr.delete(s["id"])
+        ok("Purge complete")
+    else:
+        print("\n  (dry-run — no changes made)")
     return 0
 
 
