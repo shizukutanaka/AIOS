@@ -199,6 +199,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import engines as engines_cmd
     engines_cmd.register(sub)
 
+    # Performance tuning advisor
+    from aictl.cmd import optimize as optimize_cmd
+    optimize_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins

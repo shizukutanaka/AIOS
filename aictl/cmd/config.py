@@ -33,6 +33,14 @@ def register(sub: Any) -> None:
     reset = csub.add_parser("reset", help="Reset config to defaults")
     reset.set_defaults(func=run_reset)
 
+    validate = csub.add_parser("validate", help="Validate config for common errors")
+    validate.add_argument("--json", action="store_true")
+    validate.set_defaults(func=run_validate)
+
+    diff = csub.add_parser("diff", help="Show config keys that differ from defaults")
+    diff.add_argument("--json", action="store_true")
+    diff.set_defaults(func=run_diff)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -138,6 +146,126 @@ def _print_nested(d: Any, prefix: Any="") -> None:
             _print_nested(v, key)
         else:
             print(f"  {key} = {v}")
+
+
+def _validate_config(config: Any) -> list[str]:
+    """Return a list of validation problems for the config (empty = valid)."""
+    from dataclasses import asdict
+    problems: list[str] = []
+    d = asdict(config)
+
+    # trust_policy must be one of the valid values
+    valid_policies = {"enforce", "warn", "disabled"}
+    if d.get("trust_policy", "warn") not in valid_policies:
+        problems.append(f"trust_policy must be one of {sorted(valid_policies)}, "
+                        f"got {d['trust_policy']!r}")
+
+    # log_level must be valid
+    valid_levels = {"debug", "info", "warning", "error", "critical"}
+    if d.get("log_level", "info").lower() not in valid_levels:
+        problems.append(f"log_level must be one of {sorted(valid_levels)}, "
+                        f"got {d['log_level']!r}")
+
+    # daemon port must be in valid range
+    daemon_port = d.get("daemon", {}).get("port", 7700)
+    if not (1 <= daemon_port <= 65535):
+        problems.append(f"daemon.port {daemon_port} is out of range (1-65535)")
+
+    # SLO values must be positive
+    slo = d.get("slo", {})
+    for field_name, label in [
+        ("ttft_p95_ms", "slo.ttft_p95_ms"),
+        ("itl_p95_ms", "slo.itl_p95_ms"),
+        ("tokens_per_sec_min", "slo.tokens_per_sec_min"),
+    ]:
+        val = slo.get(field_name, 1)
+        if val <= 0:
+            problems.append(f"{label} must be > 0, got {val}")
+
+    for field_name, label in [
+        ("error_rate_max", "slo.error_rate_max"),
+        ("kv_cache_max", "slo.kv_cache_max"),
+    ]:
+        val = slo.get(field_name, 0.5)
+        if not (0.0 < val <= 1.0):
+            problems.append(f"{label} must be in (0, 1], got {val}")
+
+    # model_cache_dir must be writable if set
+    cache_dir = d.get("model_cache_dir", "")
+    if cache_dir:
+        import os
+        if not os.path.isdir(cache_dir):
+            problems.append(f"model_cache_dir {cache_dir!r} does not exist")
+        elif not os.access(cache_dir, os.W_OK):
+            problems.append(f"model_cache_dir {cache_dir!r} is not writable")
+
+    # engine endpoints must look like URLs
+    for engine_name, url in d.get("engines", {}).items():
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            problems.append(f"engines.{engine_name} must be an http(s) URL, got {url!r}")
+
+    return problems
+
+
+def run_validate(args: argparse.Namespace) -> int:
+    """Validate configuration for common errors."""
+    state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    config = load_config(state_dir)
+    problems = _validate_config(config)
+    valid = not problems
+
+    if getattr(args, "json", False):
+        print_json({"valid": valid, "problems": problems})
+        return 0 if valid else 1
+
+    if valid:
+        ok("Config is valid")
+    else:
+        err(f"Config has {len(problems)} problem(s):")
+        for p in problems:
+            print(f"    - {p}")
+    return 0 if valid else 1
+
+
+def _flatten_dict(d: Any, prefix: str = "") -> dict[str, Any]:
+    """Flatten a nested dict to dot-separated keys."""
+    result: dict[str, Any] = {}
+    for k, v in d.items():
+        key = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict):
+            result.update(_flatten_dict(v, key))
+        else:
+            result[key] = v
+    return result
+
+
+def run_diff(args: argparse.Namespace) -> int:
+    """Show config keys that differ from their default values."""
+    from dataclasses import asdict
+    state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    current = _flatten_dict(asdict(load_config(state_dir)))
+    defaults = _flatten_dict(asdict(Config()))
+
+    diffs = [
+        {"key": k, "current": current.get(k), "default": defaults.get(k)}
+        for k in current
+        if current.get(k) != defaults.get(k)
+    ]
+
+    if getattr(args, "json", False):
+        print_json(diffs)
+        return 0
+
+    if not diffs:
+        print("Config matches defaults (no customizations).")
+        return 0
+
+    print(f"  {len(diffs)} key(s) differ from defaults:")
+    for d in diffs:
+        print(f"    {d['key']}")
+        print(f"      current : {d['current']}")
+        print(f"      default : {d['default']}")
+    return 0
 
 
 def _dict_to_config(d: dict[str, Any]) -> Config:

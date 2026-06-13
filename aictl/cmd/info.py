@@ -18,7 +18,7 @@ def _count_commands() -> int:
                 return len(action.choices)
     except Exception:
         pass  # best-effort; failure is non-critical
-    return 73  # fallback
+    return 74  # fallback
 
 
 def _count_tests() -> str:

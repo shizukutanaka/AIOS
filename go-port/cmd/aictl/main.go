@@ -1077,7 +1077,7 @@ func cmdInfo() *cobra.Command {
 				return printJSON(map[string]interface{}{
 					"version":         "1.6.0",
 					"go_commands":     29,
-					"python_commands": 73,
+					"python_commands": 74,
 					"rest_endpoints":  30,
 					"recipes":         10,
 					"tests":           "1840+",
@@ -1086,7 +1086,7 @@ func cmdInfo() *cobra.Command {
 			}
 			fmt.Println("✓ aictl v1.6.0 (Go port)")
 			fmt.Println()
-			fmt.Println("  Commands  29 Go + 73 Python")
+			fmt.Println("  Commands  29 Go + 74 Python")
 			fmt.Println("  REST API  30 endpoints")
 			fmt.Println("  Recipes   10")
 			fmt.Println("  Tests     1840+")

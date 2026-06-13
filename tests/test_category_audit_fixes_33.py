@@ -11,7 +11,7 @@ import unittest
 class TestPythonCommandCount(unittest.TestCase):
     """Python command count must be consistent across all docs and code."""
 
-    EXPECTED = 73
+    EXPECTED = 74
 
     @classmethod
     def _claude_md(cls) -> str:
