@@ -172,8 +172,15 @@ def _extract_param_billions(name: str) -> float:
 
 def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[str, Any]:
     """Calculate and return the numeric result."""
-    base_mb = model.vram_required_mb
     model_b = _extract_param_billions(model.name)
+    # fp16 base = params × 2 bytes/param (1024 MB per GB). The quant multipliers
+    # below are fractions of fp16, so the base must be the fp16 weight size — NOT
+    # the DB's `vram_required_mb`, which is the model's *recommended-quantization*
+    # footprint (e.g. q4_K_M for llama3.1:8b). Using the quantized value as the
+    # fp16 base under-reported every row (an 8B model showed fp16 ≈ 6 GB instead
+    # of ~16 GB). Deriving from the param count also matches the DB's own fp16
+    # entries (e.g. Llama-3.2-8B fp16 = 16384 MB).
+    base_mb = int(model_b * 2 * 1024)
     kv_per_1k = max(1, int(2 * (model_b / 7.0)))
     kv_total = int(kv_per_1k * (context / 1000) * concurrent)
     overhead = 500  # CUDA context
