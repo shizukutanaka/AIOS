@@ -52,7 +52,6 @@ def run_save(args: argparse.Namespace) -> int:
     config = load_config(store.dir)
     engine = ContextContinuityEngine()
 
-    ok("Saving engine contexts...")
     snapshots = engine.pre_upgrade_save(config.engines.to_dict())
 
     if getattr(args, "json", False):
@@ -60,6 +59,7 @@ def run_save(args: argparse.Namespace) -> int:
         print_json([asdict(s) for s in snapshots])
         return 0
 
+    ok("Saving engine contexts...")
     for s in snapshots:
         icon = "\u2713" if s.status == "saved" else "\u2717"
         print(f"  {icon} {s.engine}: {s.num_entries} entries ({s.status})")

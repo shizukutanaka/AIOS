@@ -113,10 +113,15 @@ def run_schedule(args: argparse.Namespace) -> int:
 def run_cancel(args: argparse.Namespace) -> int:
     """Cancel the warmup schedule."""
     path = _schedule_path(args)
-    if not path.exists():
+    existed = path.exists()
+    if existed:
+        path.unlink()
+    if getattr(args, "json", False):
+        print_json({"cancelled": existed})
+        return 0
+    if not existed:
         print("No warmup schedule configured.")
         return 0
-    path.unlink()
     ok("Warmup schedule cancelled")
     return 0
 

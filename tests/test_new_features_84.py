@@ -108,5 +108,40 @@ class TestJsonContract(unittest.TestCase):
                     self.fail(f"`aictl --json {cmd}` emitted non-JSON: {out[:200]!r} ({e})")
 
 
+class TestMutatingJsonContract(unittest.TestCase):
+    """State-changing commands must also emit parseable JSON under --json.
+
+    The read-only net (above) does not exercise mutations, so round 5 found
+    config set/reset, quota create/reset, context save, and warmup cancel all
+    emitting human text under --json. These run in sequence against the shared
+    state dir (create-before-read ordering matters).
+    """
+
+    # (argv, must-be-valid-json) executed in order against the shared state dir.
+    MUTATIONS = [
+        "config set log_level debug",
+        "config reset",
+        "quota create netcheck-team --tokens-per-month 1000",
+        "quota reset netcheck-team --yes",
+        "context save",
+        "warmup schedule --every 1h",
+        "warmup cancel",
+        "snapshot create --label netcheck",
+        "model register netcheck-model:7b",
+        "apikey create netcheck-key",
+    ]
+
+    def test_mutations_emit_json(self):
+        for cmd in self.MUTATIONS:
+            with self.subTest(cmd=cmd):
+                rc, out, err = _run(cmd.split())
+                for marker in _CRASH_MARKERS:
+                    self.assertNotIn(marker, out + err, f"{cmd} crashed")
+                try:
+                    json.loads(out)
+                except json.JSONDecodeError as e:
+                    self.fail(f"`aictl --json {cmd}` emitted non-JSON: {out[:200]!r} ({e})")
+
+
 if __name__ == "__main__":
     unittest.main()

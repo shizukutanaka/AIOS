@@ -59,6 +59,10 @@ def run_create(args: argparse.Namespace) -> int:
         "used_tokens": db["teams"].get(args.team, {}).get("used_tokens", 0),
     }
     _save(db)
+    if getattr(args, "json", False):
+        print_json({"team": args.team, "tokens_per_month": args.tokens_per_month,
+                    "priority": args.priority})
+        return 0
     ok(f"Quota set: {args.team} → {args.tokens_per_month:,} tokens/month "
        f"(priority: {args.priority})")
     return 0
@@ -156,6 +160,9 @@ def run_reset(args: argparse.Namespace) -> int:
         return 1
     db["teams"][args.team]["used_tokens"] = 0
     _save(db)
+    if getattr(args, "json", False):
+        print_json({"team": args.team, "reset": True})
+        return 0
     ok(f"{args.team} usage counter reset.")
     return 0
 

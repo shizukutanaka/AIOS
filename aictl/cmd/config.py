@@ -134,6 +134,9 @@ def run_set(args: argparse.Namespace) -> int:
     # Rebuild config
     config = _dict_to_config(d)
     save_config(config, state_dir)
+    if getattr(args, "json", False):
+        print_json({"key": args.key, "value": obj[last]})
+        return 0
     ok(f"{args.key} = {obj[last]}")
     return 0
 
@@ -142,6 +145,9 @@ def run_reset(args: argparse.Namespace) -> int:
     """Execute the reset subcommand."""
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
     save_config(Config(), state_dir)
+    if getattr(args, "json", False):
+        print_json({"reset": True})
+        return 0
     ok("Config reset to defaults")
     return 0
 
