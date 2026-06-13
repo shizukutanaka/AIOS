@@ -29,6 +29,18 @@ def register(sub: Any) -> None:
                     choices=["istio", "nginx", "kgateway", "gke"])
     gw.set_defaults(func=run_gateway)
 
+    failover = csub.add_parser("failover", help="Simulate failover for a stack")
+    failover.add_argument("stack", help="Stack name to failover")
+    failover.add_argument("--to", default="", help="Target endpoint for failover")
+    failover.set_defaults(func=run_failover)
+
+    recovery = csub.add_parser("recovery-policy", help="Show or set cluster recovery policy")
+    recovery.add_argument("--set-retries", type=int, default=-1, metavar="N",
+                          help="Max restart retries per container")
+    recovery.add_argument("--set-delay", type=int, default=-1, metavar="SECS",
+                          help="Restart backoff delay in seconds")
+    recovery.set_defaults(func=run_recovery_policy)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -86,6 +98,92 @@ def run_export(args: argparse.Namespace) -> int:
         err(f"Stack '{args.stack}' not found")
         return 1
     print(json_mod.dumps(manifests, indent=2))
+    return 0
+
+
+def run_failover(args: argparse.Namespace) -> int:
+    """Simulate a failover sequence for a stack."""
+    from aictl.core.events import emit as emit_event
+
+    stack = args.stack
+    target = getattr(args, "to", "") or "auto"
+    steps = [
+        f"Mark stack '{stack}' unhealthy in service registry",
+        f"Drain in-flight requests (grace period 30s)",
+        f"Redirect traffic to fallback endpoint: {target}",
+        f"Restart failed containers with exponential backoff",
+        f"Verify fallback endpoint health",
+        f"Emit health.failover event to event bus",
+    ]
+
+    emit_event("cluster.failover.simulated", source="aictl-cluster",
+               stack=stack, target=target, steps=len(steps))
+
+    if getattr(args, "json", False):
+        print_json({"simulated": True, "stack": stack, "target": target, "steps": steps})
+        return 0
+
+    ok(f"Failover simulation: {stack} → {target}")
+    for i, step in enumerate(steps, 1):
+        print(f"  {i}. {step}")
+    print()
+    warn("This is a simulation only — no actual traffic was redirected")
+    return 0
+
+
+def run_recovery_policy(args: argparse.Namespace) -> int:
+    """Show or update the cluster recovery policy."""
+    from pathlib import Path
+    import json as json_mod
+
+    state_dir = getattr(args, "state_dir", None)
+    if state_dir:
+        policy_path = Path(state_dir) / "recovery_policy.json"
+    else:
+        from aictl.core.state import DEFAULT_STATE_DIR
+        policy_path = DEFAULT_STATE_DIR / "recovery_policy.json"
+
+    # Load or create default policy
+    if policy_path.exists():
+        try:
+            policy = json_mod.loads(policy_path.read_text())
+        except (json_mod.JSONDecodeError, OSError):
+            policy = {}
+    else:
+        policy = {}
+
+    defaults = {"max_retries": 3, "restart_delay_s": 30, "backoff_multiplier": 2,
+                "circuit_breaker_threshold": 5, "recovery_window_s": 300}
+    policy = {**defaults, **policy}
+
+    # Apply updates
+    updated = False
+    if getattr(args, "set_retries", -1) >= 0:
+        policy["max_retries"] = args.set_retries
+        updated = True
+    if getattr(args, "set_delay", -1) >= 0:
+        policy["restart_delay_s"] = args.set_delay
+        updated = True
+
+    if updated:
+        policy_path.parent.mkdir(parents=True, exist_ok=True)
+        policy_path.write_text(json_mod.dumps(policy, indent=2))
+
+    if getattr(args, "json", False):
+        print_json(policy)
+        return 0
+
+    from aictl.core.output import print_kv
+    ok("Cluster Recovery Policy")
+    print_kv([
+        ("max_retries",         str(policy["max_retries"])),
+        ("restart_delay_s",     str(policy["restart_delay_s"])),
+        ("backoff_multiplier",  str(policy["backoff_multiplier"])),
+        ("circuit_breaker",     str(policy["circuit_breaker_threshold"])),
+        ("recovery_window_s",   str(policy["recovery_window_s"])),
+    ], indent=2)
+    if updated:
+        ok("Policy updated")
     return 0
 
 

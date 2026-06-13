@@ -12,6 +12,7 @@ import argparse
 import json
 from aictl.core.constants import VLLM_IMAGE
 from aictl.core.output import ok, print_json, print_kv
+from aictl.runtime.broker import full_detect
 from aictl.runtime.dynamo import (
     DGDRSpec, detect_dynamo, generate_dgdr_yaml,
     estimate_dgdr_resources, generate_kvbm_config,
@@ -86,7 +87,74 @@ def register(sub: Any) -> None:
     ms.add_argument("--lora", nargs="*", default=[], help="LoRA adapter names")
     ms.set_defaults(func=run_modelservice)
 
+    dryrun = dsub.add_parser("dry-run", help="Preview deployment plan with risk analysis (no changes)")
+    dryrun.add_argument("model", help="Model name")
+    dryrun.add_argument("--hardware", default="auto", help="GPU type")
+    dryrun.add_argument("--ttft", type=int, default=500, help="Target TTFT p95 (ms)")
+    dryrun.add_argument("--tps", type=int, default=100, help="Target throughput (tokens/sec)")
+    dryrun.add_argument("--max-gpus", type=int, default=8, help="Max GPUs")
+    dryrun.add_argument("--quant", default="auto", help="Quantization")
+    dryrun.set_defaults(func=run_dryrun)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
+
+
+def run_dryrun(args: argparse.Namespace) -> int:
+    """Preview deployment plan with risk analysis — no changes made."""
+    from aictl.core.output import warn
+
+    spec = DGDRSpec(
+        model=args.model, hardware=args.hardware,
+        sla_ttft_ms=args.ttft, sla_throughput_tps=args.tps,
+        max_gpus=args.max_gpus, quantization=args.quant,
+    )
+    est = estimate_dgdr_resources(spec)
+
+    # Risk analysis
+    hw = full_detect()
+    available_vram_gb = sum(g.vram_mb for g in hw.gpus) / 1024
+    available_gpus = len(hw.gpus)
+
+    risks = []
+    if est["total_vram_gb"] > available_vram_gb:
+        risks.append(f"VRAM: need {est['total_vram_gb']:.1f} GB, have {available_vram_gb:.1f} GB")
+    if est["gpus_needed"] > available_gpus:
+        risks.append(f"GPU count: need {est['gpus_needed']}, have {available_gpus}")
+    if not est["meets_sla"]:
+        risks.append(f"SLA: estimated TPS {est['estimated_tps']} < target {args.tps}")
+
+    safe = len(risks) == 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "dry_run": True,
+            "model": args.model,
+            "safe": safe,
+            "risks": risks,
+            "plan": est,
+        })
+        return 0 if safe else 1
+
+    ok(f"[DRY-RUN] Deployment preview: {args.model}")
+    print()
+    print_kv([
+        ("Parameters", f"{est['model_params_b']:.0f}B"),
+        ("Model VRAM", f"{est['model_vram_gb']:.1f} GB"),
+        ("Total VRAM", f"{est['total_vram_gb']:.1f} GB (model + KV cache)"),
+        ("GPUs needed", f"{est['gpus_needed']}x {est['gpu_type']}"),
+        ("Est. TPS",    f"{est['estimated_tps']} tokens/sec"),
+        ("P/D disagg",  "recommended" if est["disagg_recommended"] else "not needed"),
+    ], indent=2)
+    print()
+    if safe:
+        ok("Risk analysis: SAFE — no conflicts detected")
+    else:
+        for r in risks:
+            warn(f"Risk: {r}")
+        print()
+        from aictl.core.output import err
+        err("Deployment would FAIL — resolve risks above before deploying")
+    return 0 if safe else 1
 
 
 def run_plan(args: argparse.Namespace) -> int:
