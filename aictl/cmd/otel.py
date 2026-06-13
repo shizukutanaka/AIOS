@@ -20,6 +20,10 @@ def register(sub: Any) -> None:
     gen.add_argument("--output", default="", help="Write to file")
     gen.set_defaults(func=run_config)
 
+    alerts = osub.add_parser("alerts", help="Generate Prometheus alerting rules from SLO targets")
+    alerts.add_argument("--output", default="", help="Write to file")
+    alerts.set_defaults(func=run_alerts)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -41,4 +45,23 @@ def run_config(args: argparse.Namespace) -> int:
             return 1
     else:
         print(yaml_str)
+    return 0
+
+
+def run_alerts(args: argparse.Namespace) -> int:
+    """Generate Prometheus alerting rules from the configured SLO targets."""
+    from aictl.metrics.alerts import generate_alert_rules
+    rules_yaml = generate_alert_rules()
+
+    out = getattr(args, "output", "")
+    if out:
+        try:
+            Path(out).write_text(rules_yaml)
+            ok(f"Prometheus alert rules written to {out}")
+        except OSError as e:
+            from aictl.core.output import err as print_err
+            print_err(f"Cannot write to {out}: {e}")
+            return 1
+    else:
+        print(rules_yaml)
     return 0
