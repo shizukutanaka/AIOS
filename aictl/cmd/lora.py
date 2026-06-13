@@ -50,6 +50,18 @@ def register(sub: Any) -> None:
     deactivate.add_argument("name", help="Adapter name")
     deactivate.set_defaults(func=run_deactivate)
 
+    route = lsub.add_parser("route", help="Set traffic weight for an adapter")
+    route.add_argument("name", help="Adapter name")
+    route.add_argument("--weight", type=int, default=100,
+                       help="Traffic weight 0-100 (proportional routing)")
+    route.set_defaults(func=run_route)
+
+    autotune = lsub.add_parser("auto-tune", help="Recommend which adapters to keep loaded")
+    autotune.add_argument("base", help="Base model name")
+    autotune.add_argument("--vram", type=int, default=24,
+                          help="Available VRAM in GB for adapter budget")
+    autotune.set_defaults(func=run_autotune)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -182,4 +194,82 @@ def run_deactivate(args: argparse.Namespace) -> int:
     data["adapters"][args.name]["active"] = False
     mgr._save(data)
     ok(f"Adapter deactivated: {args.name}")
+    return 0
+
+
+def run_route(args: argparse.Namespace) -> int:
+    """Set traffic weight for a LoRA adapter (proportional routing)."""
+    weight = max(0, min(100, getattr(args, "weight", 100)))
+    mgr = LoRAManager()
+    data = mgr._load()
+    if args.name not in data.get("adapters", {}):
+        from aictl.core.output import err
+        err(f"Adapter not found: {args.name}")
+        return 1
+    data["adapters"][args.name]["traffic_weight"] = weight
+    mgr._save(data)
+
+    if getattr(args, "json", False):
+        print_json({"name": args.name, "traffic_weight": weight})
+        return 0
+
+    ok(f"Adapter {args.name} → weight {weight}")
+    # Show sibling weights for the same base model
+    adapter_data = data["adapters"][args.name]
+    base = adapter_data.get("base_model", "")
+    siblings = [(n, d["traffic_weight"])
+                for n, d in data["adapters"].items()
+                if d.get("base_model") == base]
+    if len(siblings) > 1:
+        total = sum(w for _, w in siblings)
+        print()
+        for name, w in sorted(siblings, key=lambda x: -x[1]):
+            pct = w / max(total, 1) * 100
+            print(f"  {name:<30} {w:>3}  ({pct:.0f}%)")
+    return 0
+
+
+def run_autotune(args: argparse.Namespace) -> int:
+    """Recommend which adapters to keep loaded given the VRAM budget."""
+    mgr = LoRAManager()
+    adapters = mgr.list_adapters(base_model=args.base)
+    vram_budget_mb = getattr(args, "vram", 24) * 1024
+
+    if not adapters:
+        print(f"No adapters registered for base model: {args.base}")
+        return 0
+
+    # Sort by traffic_weight desc — keep highest-traffic adapters in VRAM
+    sorted_adapters = sorted(adapters, key=lambda a: a.traffic_weight, reverse=True)
+    used_mb = 0
+    keep: list = []
+    evict: list = []
+
+    for a in sorted_adapters:
+        if used_mb + a.vram_overhead_mb <= vram_budget_mb:
+            keep.append(a)
+            used_mb += a.vram_overhead_mb
+        else:
+            evict.append(a)
+
+    if getattr(args, "json", False):
+        print_json({
+            "base_model": args.base,
+            "vram_budget_mb": vram_budget_mb,
+            "vram_used_mb": used_mb,
+            "keep": [a.name for a in keep],
+            "evict": [a.name for a in evict],
+        })
+        return 0
+
+    ok(f"LoRA auto-tune for {args.base} ({getattr(args, 'vram', 24)} GB VRAM budget)")
+    print(f"\n  Used: {used_mb} MB / {vram_budget_mb} MB")
+    if keep:
+        print("\n  Keep loaded (by traffic weight):")
+        for a in keep:
+            print(f"    ✓ {a.name:<30} weight={a.traffic_weight}  {a.vram_overhead_mb} MB")
+    if evict:
+        print("\n  Evict (low traffic / over budget):")
+        for a in evict:
+            print(f"    ✗ {a.name:<30} weight={a.traffic_weight}  {a.vram_overhead_mb} MB")
     return 0
