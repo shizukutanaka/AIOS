@@ -29,6 +29,10 @@ def run_plan(args: argparse.Namespace) -> int:
     mig_gpus = [g for g in report.gpus if g.mig_capable]
 
     if not mig_gpus:
+        if getattr(args, "json", False):
+            print_json({"mig_capable": False, "plans": [],
+                        "error": "No MIG-capable GPUs detected (requires A100/H100/H200)"})
+            return 1
         err("No MIG-capable GPUs detected (requires A100/H100/H200)")
         return 1
 
