@@ -168,7 +168,9 @@ class TestG2ExitCodes(unittest.TestCase):
             orig_build = m.build_parser
 
             class _P:
-                def parse_args(self_inner):
+                # Mirror argparse's real signature: main() passes a sanitized
+                # argv (with global --json stripped) to parse_args.
+                def parse_args(self_inner, argv=None):
                     return _Args()
             m.build_parser = lambda: _P()
             rc = m.main()

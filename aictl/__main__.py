@@ -239,13 +239,21 @@ def main() -> int:
         return show_welcome()
 
     parser = build_parser()
-    args = parser.parse_args()
-    # A subcommand that defines its own `--json` (32 of them do) resets the dest
-    # to its local default (False) during subparser parsing, silently defeating
-    # the global `aictl --json <cmd>` form — the documented universal flag. The
-    # global parser already set json=True, so honor it uniformly by re-deriving
-    # from argv regardless of where `--json` appears (store_true → token match).
-    if "--json" in sys.argv:
+    # Make the global `--json` positionally uniform. argparse otherwise rejects a
+    # trailing `--json` on the ~45 subcommands that don't redefine it (e.g.
+    # `aictl cost forecast --json` errors), even though `aictl --json cost
+    # forecast` works and `aictl events list --json` works — an inconsistent
+    # surface for the documented universal flag. Since the flag is re-derived
+    # below, strip standalone `--json` tokens before parsing so every command
+    # accepts it in any position; subcommands that DO declare --json still parse
+    # cleanly without it.
+    json_requested = "--json" in sys.argv
+    argv_for_parse = [a for a in sys.argv[1:] if a != "--json"]
+    args = parser.parse_args(argv_for_parse)
+    # A subcommand that defines its own `--json` resets the dest to its local
+    # default (False) during subparser parsing, and the strip above removes the
+    # global one from argparse's view, so set it explicitly from the raw argv.
+    if json_requested:
         args.json = True
     if args.command is None:
         parser.print_help()

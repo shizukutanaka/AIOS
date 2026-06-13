@@ -9,8 +9,56 @@ parseable object while preserving rc=1 and the human-readable message.
 from __future__ import annotations
 
 import argparse
+import io
+import json
+import os
+import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch, MagicMock
+
+
+class TestJsonFlagPlacement(unittest.TestCase):
+    """`--json` must work in ANY position, including trailing on subcommands that
+    do not declare their own --json (e.g. `aictl cost forecast --json`).
+
+    Before: argparse rejected the trailing form with "unrecognized arguments:
+    --json" for ~45 subcommands, while `aictl --json cost forecast` and
+    `aictl events list --json` worked — an inconsistent surface. main() now
+    strips standalone --json before parsing and re-derives it from argv.
+    """
+
+    def _run(self, argv: list[str]) -> tuple[int, str]:
+        from aictl.__main__ import main
+        buf = io.StringIO()
+        with tempfile.TemporaryDirectory() as sd, \
+             patch.dict(os.environ, {"AIOS_STATE_DIR": sd}), \
+             patch.object(sys, "argv", argv), redirect_stdout(buf):
+            rc = main()
+        return rc, buf.getvalue()
+
+    def test_trailing_json_on_command_without_own_flag(self):
+        # snapshot list does not declare its own --json; trailing must still work.
+        rc, out = self._run(["aictl", "snapshot", "list", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertIsInstance(json.loads(out), list)
+
+    def test_global_json_form(self):
+        rc, out = self._run(["aictl", "--json", "snapshot", "list"])
+        self.assertEqual(rc, 0)
+        json.loads(out)
+
+    def test_middle_json_form(self):
+        rc, out = self._run(["aictl", "cost", "--json", "forecast", "--gpu", "RTX_4090"])
+        self.assertEqual(rc, 0)
+        json.loads(out)
+
+    def test_no_json_stays_human(self):
+        rc, out = self._run(["aictl", "snapshot", "list"])
+        self.assertEqual(rc, 0)
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(out)
 
 
 class TestMigPlanJsonNoGpu(unittest.TestCase):
