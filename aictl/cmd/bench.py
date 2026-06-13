@@ -47,6 +47,41 @@ def register(sub: Any) -> None:
     cmp.add_argument("--json", action="store_true", help="JSON output")
     cmp.set_defaults(func=run_compare)
 
+    hist = bsub.add_parser("history", help="Show recent benchmark results from perf records")
+    hist.add_argument("-n", "--last", type=int, default=20, help="Number of records to show")
+    hist.set_defaults(func=run_history)
+
+
+def run_history(args: argparse.Namespace) -> int:
+    """Show recent inference timing records from the perf store."""
+    from aictl.core.perf import read_recent
+    import time as _time
+    records = read_recent(limit=getattr(args, "last", 20))
+
+    if not records:
+        print("No performance history. Run benchmarks or make inference calls first.")
+        if getattr(args, "json", False):
+            print_json([])
+        return 0
+
+    if getattr(args, "json", False):
+        print_json([{
+            "command": r.command, "duration_ms": r.duration_ms,
+            "exit_code": r.exit_code, "rss_mb_peak": r.rss_mb_peak,
+            "ts": _time.strftime("%Y-%m-%dT%H:%M:%S", _time.localtime(r.timestamp)),
+        } for r in records])
+        return 0
+
+    rows = [{
+        "time": _time.strftime("%H:%M:%S", _time.localtime(r.timestamp)),
+        "command": r.command[:35],
+        "duration_ms": f"{r.duration_ms:.0f}",
+        "exit": str(r.exit_code),
+        "rss_mb": f"{r.rss_mb_peak:.0f}",
+    } for r in records]
+    print_table(rows, ["time", "command", "duration_ms", "exit", "rss_mb"])
+    return 0
+
 
 def run_slo(args: argparse.Namespace) -> int:
     """Run a benchmark and verify results against SLO thresholds."""

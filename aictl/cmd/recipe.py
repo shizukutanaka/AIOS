@@ -33,6 +33,15 @@ def register(sub: Any) -> None:
     val.add_argument("--json", action="store_true", help="JSON output")
     val.set_defaults(func=run_validate)
 
+    test_p = rsub.add_parser("test", help="Test a recipe with dry-run and resource checks")
+    test_p.add_argument("name", help="Recipe name to test")
+    test_p.set_defaults(func=run_test)
+
+    export_p = rsub.add_parser("export", help="Export a recipe manifest to a JSON file")
+    export_p.add_argument("name", help="Recipe name")
+    export_p.add_argument("--output", default="", help="Output file (default: <name>.json)")
+    export_p.set_defaults(func=run_export)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -138,6 +147,93 @@ def run_list(args: argparse.Namespace) -> int:
         print(f"  {name} — {svc_count} services{tag}")
 
     print("\nRun with: aictl recipe run <name>")
+    return 0
+
+
+def run_test(args: argparse.Namespace) -> int:
+    """Test a recipe: validate + dry-run + resource checks."""
+    manifest = get_recipe(args.name)
+    if manifest is None:
+        err(f"Unknown recipe: {args.name}")
+        if getattr(args, "json", False):
+            print_json({"passed": False, "error": f"unknown recipe: {args.name}"})
+        return 1
+
+    checks: list[dict] = []
+
+    # Structural validation
+    problems = validate_manifest(manifest)
+    checks.append({
+        "check": "structural_validation",
+        "passed": not problems,
+        "detail": problems if problems else "OK",
+    })
+
+    # GPU resource check
+    gpu_required = any(s.gpu_required for s in manifest.services)
+    if gpu_required:
+        from aictl.runtime.broker import full_detect
+        hw = full_detect()
+        has_gpu = len(hw.gpus) > 0
+        checks.append({
+            "check": "gpu_available",
+            "passed": has_gpu,
+            "detail": f"{len(hw.gpus)} GPU(s) detected" if has_gpu else "no GPUs found (recipe requires GPU)",
+        })
+
+    # Dry-run apply (applies no real changes)
+    try:
+        results = apply_stack(manifest, dry_run=True)
+        dry_run_ok = all(r.status in ("dry-run", "running", "starting") for r in results)
+        checks.append({
+            "check": "dry_run_apply",
+            "passed": dry_run_ok,
+            "detail": f"{len(results)} service(s) would start",
+        })
+    except Exception as exc:
+        checks.append({"check": "dry_run_apply", "passed": False, "detail": str(exc)})
+
+    passed = all(c["passed"] for c in checks)
+
+    if getattr(args, "json", False):
+        print_json({"recipe": args.name, "passed": passed, "checks": checks})
+        return 0 if passed else 1
+
+    ok(f"Recipe test: {args.name}") if passed else err(f"Recipe test FAILED: {args.name}")
+    for c in checks:
+        icon = "✓" if c["passed"] else "✗"
+        detail = c["detail"] if isinstance(c["detail"], str) else "; ".join(c["detail"])
+        print(f"  {icon} {c['check']}: {detail}")
+    return 0 if passed else 1
+
+
+def run_export(args: argparse.Namespace) -> int:
+    """Export a recipe manifest to a portable JSON file."""
+    import json as _json
+    from dataclasses import asdict
+    manifest = get_recipe(args.name)
+    if manifest is None:
+        err(f"Unknown recipe: {args.name}")
+        if getattr(args, "json", False):
+            print_json({"exported": False, "error": f"unknown recipe: {args.name}"})
+        return 1
+
+    data = asdict(manifest)
+    output = getattr(args, "output", "") or f"{args.name}.json"
+    try:
+        from pathlib import Path
+        Path(output).write_text(_json.dumps(data, indent=2))
+    except OSError as exc:
+        err(f"Cannot write to {output}: {exc}")
+        return 1
+
+    if getattr(args, "json", False):
+        print_json({"exported": True, "recipe": args.name, "output": output})
+        return 0
+
+    ok(f"Recipe '{args.name}' exported to {output}")
+    svc_count = len(manifest.services)
+    print(f"  services: {svc_count}")
     return 0
 
 

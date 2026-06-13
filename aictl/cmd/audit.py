@@ -45,6 +45,112 @@ def register(sub: Any) -> None:
     p.add_argument("--export", default="", metavar="FILE", help="Export entries to JSON file")
     p.set_defaults(func=run)
 
+    asub = p.add_subparsers(dest="audit_cmd")
+
+    stats = asub.add_parser("stats", help="Summarize audit events by type/actor/outcome")
+    stats.add_argument("--since", default="7d", dest="stats_since",
+                       help="Time window (e.g. 7d, 24h). default: 7d")
+    stats.add_argument("--top", type=int, default=10, help="Top N event types to show")
+    stats.set_defaults(func=run_stats)
+
+    purge = asub.add_parser("purge", help="Delete audit log files older than N days")
+    purge.add_argument("--max-age", type=int, default=30, dest="max_age",
+                       help="Delete audit files older than N days (default: 30)")
+    purge.add_argument("--dry-run", action="store_true",
+                       help="Show what would be deleted without deleting")
+    purge.set_defaults(func=run_purge)
+
+
+def run_stats(args: argparse.Namespace) -> int:
+    """Summarize audit events by type, actor, and outcome."""
+    from collections import Counter
+    from pathlib import Path as _Path
+    state_dir = _Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    log = get_audit_log(state_dir)
+    since_ts = _parse_since(getattr(args, "stats_since", "7d"))
+    entries = log.read(n=100000, event_filter="")
+    if since_ts > 0:
+        entries = [e for e in entries if e.timestamp >= since_ts]
+
+    total = len(entries)
+    by_event: Counter = Counter(e.event for e in entries)
+    by_actor: Counter = Counter(e.actor for e in entries)
+    by_outcome: Counter = Counter(e.outcome for e in entries)
+    top = getattr(args, "top", 10)
+    top_events = by_event.most_common(top)
+
+    if getattr(args, "json", False):
+        print_json({
+            "total": total,
+            "window": getattr(args, "stats_since", "7d"),
+            "top_events": [{"event": e, "count": c} for e, c in top_events],
+            "by_actor": dict(by_actor),
+            "by_outcome": dict(by_outcome),
+        })
+        return 0
+
+    from aictl.core.output import ok as _ok
+    _ok(f"Audit Stats (last {getattr(args, 'stats_since', '7d')}) — {total} events")
+    print()
+    print(f"  Top {min(top, len(top_events))} event types:")
+    for evt, cnt in top_events:
+        print(f"    {cnt:>5}  {evt}")
+    print()
+    print("  By actor:")
+    for actor, cnt in sorted(by_actor.items(), key=lambda x: -x[1]):
+        print(f"    {cnt:>5}  {actor}")
+    print()
+    print("  By outcome:")
+    for outcome, cnt in sorted(by_outcome.items(), key=lambda x: -x[1]):
+        print(f"    {cnt:>5}  {outcome}")
+    return 0
+
+
+def run_purge(args: argparse.Namespace) -> int:
+    """Delete audit log files older than max_age days."""
+    import time as _time
+    from pathlib import Path as _Path
+    state_dir = _Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    log = get_audit_log(state_dir)
+    max_age_secs = getattr(args, "max_age", 30) * 86400
+    dry_run = getattr(args, "dry_run", False)
+    now = _time.time()
+
+    to_delete = [
+        p for p in sorted(log.dir.glob("audit-*.jsonl"))
+        if (now - p.stat().st_mtime) > max_age_secs
+    ]
+
+    if not to_delete:
+        print("No audit files match purge criteria.")
+        if getattr(args, "json", False):
+            print_json({"purged": 0, "dry_run": dry_run})
+        return 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "purged": 0 if dry_run else len(to_delete),
+            "dry_run": dry_run,
+            "files": [str(p.name) for p in to_delete],
+        })
+        if not dry_run:
+            for p in to_delete:
+                p.unlink(missing_ok=True)
+        return 0
+
+    from aictl.core.output import ok as _ok
+    action = "Would delete" if dry_run else "Deleting"
+    _ok(f"{action} {len(to_delete)} audit file(s) (>{args.max_age} days old)")
+    for p in to_delete:
+        print(f"  - {p.name}")
+    if not dry_run:
+        for p in to_delete:
+            p.unlink(missing_ok=True)
+        _ok("Purge complete")
+    else:
+        print("\n  (dry-run — no changes made)")
+    return 0
+
 
 def run(args: argparse.Namespace) -> int:
     """Execute the audit command."""
