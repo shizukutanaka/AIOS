@@ -240,6 +240,13 @@ def main() -> int:
 
     parser = build_parser()
     args = parser.parse_args()
+    # A subcommand that defines its own `--json` (32 of them do) resets the dest
+    # to its local default (False) during subparser parsing, silently defeating
+    # the global `aictl --json <cmd>` form — the documented universal flag. The
+    # global parser already set json=True, so honor it uniformly by re-deriving
+    # from argv regardless of where `--json` appears (store_true → token match).
+    if "--json" in sys.argv:
+        args.json = True
     if args.command is None:
         parser.print_help()
         return 0

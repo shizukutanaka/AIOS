@@ -59,9 +59,10 @@ def run_history(args: argparse.Namespace) -> int:
     records = read_recent(limit=getattr(args, "last", 20))
 
     if not records:
-        print("No performance history. Run benchmarks or make inference calls first.")
         if getattr(args, "json", False):
             print_json([])
+            return 0
+        print("No performance history. Run benchmarks or make inference calls first.")
         return 0
 
     if getattr(args, "json", False):

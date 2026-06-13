@@ -98,6 +98,9 @@ def run_report(args: argparse.Namespace) -> int:
     """Generate a usage report."""
     db = _load()
     if not db["teams"]:
+        if getattr(args, "json", False):
+            print_json({})
+            return 0
         warn("No quotas defined.")
         return 0
 

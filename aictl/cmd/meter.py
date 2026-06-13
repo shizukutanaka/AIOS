@@ -78,6 +78,9 @@ def run_report(args: argparse.Namespace) -> int:
     buckets = meter.list_usage()
 
     if not buckets:
+        if getattr(args, "json", False):
+            print_json([])
+            return 0
         print("No usage recorded yet.")
         return 0
 
