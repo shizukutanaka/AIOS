@@ -41,6 +41,14 @@ def register(sub: Any) -> None:
     diff.add_argument("--json", action="store_true")
     diff.set_defaults(func=run_diff)
 
+    export_p = csub.add_parser("export", help="Export config to a portable JSON file")
+    export_p.add_argument("--output", default="", help="Output file path (default: aios-config.json)")
+    export_p.set_defaults(func=run_export)
+
+    import_p = csub.add_parser("import", help="Import config from a JSON file")
+    import_p.add_argument("file", help="Path to config JSON file")
+    import_p.set_defaults(func=run_import)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -265,6 +273,55 @@ def run_diff(args: argparse.Namespace) -> int:
         print(f"    {d['key']}")
         print(f"      current : {d['current']}")
         print(f"      default : {d['default']}")
+    return 0
+
+
+def run_export(args: argparse.Namespace) -> int:
+    """Export current config to a portable JSON file."""
+    import json as _json
+    from dataclasses import asdict
+    state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    config = load_config(state_dir)
+    data = asdict(config)
+    output = getattr(args, "output", "") or "aios-config.json"
+    try:
+        Path(output).write_text(_json.dumps(data, indent=2))
+    except OSError as exc:
+        err(f"Failed to write: {exc}")
+        return 1
+    if getattr(args, "json", False):
+        print_json({"exported": True, "output": output})
+        return 0
+    ok(f"Config exported: {output}")
+    return 0
+
+
+def run_import(args: argparse.Namespace) -> int:
+    """Import config from a JSON file."""
+    import json as _json
+    f = Path(args.file)
+    if not f.exists():
+        err(f"File not found: {args.file}")
+        return 1
+    try:
+        data = _json.loads(f.read_text())
+    except (ValueError, OSError) as exc:
+        err(f"Invalid JSON: {exc}")
+        return 1
+    if not isinstance(data, dict):
+        err("Config file must be a JSON object")
+        return 1
+    try:
+        config = _dict_to_config(data)
+    except (TypeError, KeyError) as exc:
+        err(f"Config structure invalid: {exc}")
+        return 1
+    state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    save_config(config, state_dir)
+    if getattr(args, "json", False):
+        print_json({"imported": True, "file": args.file})
+        return 0
+    ok(f"Config imported from: {args.file}")
     return 0
 
 
