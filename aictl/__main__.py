@@ -195,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import daemon as daemon_cmd
     daemon_cmd.register(sub)
 
+    # Engine discovery and health
+    from aictl.cmd import engines as engines_cmd
+    engines_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins
