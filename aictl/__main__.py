@@ -187,6 +187,14 @@ def build_parser() -> argparse.ArgumentParser:
     from aictl.cmd import top as top_cmd
     top_cmd.register(sub)
 
+    # Event bus query and streaming
+    from aictl.cmd import events as events_cmd
+    events_cmd.register(sub)
+
+    # Daemon lifecycle management
+    from aictl.cmd import daemon as daemon_cmd
+    daemon_cmd.register(sub)
+
     # Plugins (user-defined extensions)
     try:
         from aictl.core.plugins import register_plugins

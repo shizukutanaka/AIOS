@@ -44,6 +44,11 @@ def register(sub: Any) -> None:
     ps.add_argument("--json", action="store_true", help="JSON output")
     ps.set_defaults(func=run_ps)
 
+    inspect = msub.add_parser("inspect", help="Show full metadata for a registered model")
+    inspect.add_argument("name", help="Model name or id")
+    inspect.add_argument("--json", action="store_true")
+    inspect.set_defaults(func=run_inspect)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -229,4 +234,47 @@ def run_ps(args: argparse.Namespace) -> int:
         return 0
 
     print_table(loaded, ["engine", "model", "vram_mb", "expires_at"])
+    return 0
+
+
+def run_inspect(args: argparse.Namespace) -> int:
+    """Show full metadata for a registered model by name or id."""
+    store = StateStore(getattr(args, "state_dir", None))
+    models = store.list_models()
+    query = args.name.lower()
+    match = next(
+        (m for m in models if m.get("name", "").lower() == query
+         or m.get("id", "").startswith(query)),
+        None,
+    )
+
+    if match is None:
+        err(f"Model not found: {args.name}")
+        if getattr(args, "json", False):
+            print_json({"found": False, "name": args.name})
+        return 1
+
+    if getattr(args, "json", False):
+        print_json(match)
+        return 0
+
+    import time as _time
+    reg_time = match.get("registered_at", 0)
+    reg_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(reg_time)) if reg_time else "unknown"
+    size = match.get("size_bytes", 0)
+    size_str = f"{size / 1_073_741_824:.2f} GB" if size >= 1_073_741_824 else (
+        f"{size / 1_048_576:.1f} MB" if size >= 1_048_576 else f"{size} B"
+    )
+
+    print(f"Model: {match.get('name', '')}")
+    print(f"  id          : {match.get('id', '')}")
+    print(f"  format      : {match.get('format', match.get('fmt', ''))}")
+    print(f"  status      : {match.get('status', '')}")
+    print(f"  size        : {size_str}")
+    print(f"  signed      : {bool(match.get('signed', False))}")
+    if match.get("signer"):
+        print(f"  signer      : {match.get('signer')}")
+    if match.get("digest"):
+        print(f"  digest      : {match.get('digest')}")
+    print(f"  registered  : {reg_str}")
     return 0
