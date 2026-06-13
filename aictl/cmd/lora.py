@@ -34,6 +34,22 @@ def register(sub: Any) -> None:
     vllm.add_argument("base", help="Base model name")
     vllm.set_defaults(func=run_vllm_args)
 
+    inspect = lsub.add_parser("inspect", help="Show full details for an adapter")
+    inspect.add_argument("name", help="Adapter name")
+    inspect.set_defaults(func=run_inspect)
+
+    delete = lsub.add_parser("delete", help="Remove a registered adapter")
+    delete.add_argument("name", help="Adapter name")
+    delete.set_defaults(func=run_delete)
+
+    activate = lsub.add_parser("activate", help="Mark adapter as active")
+    activate.add_argument("name", help="Adapter name")
+    activate.set_defaults(func=run_activate)
+
+    deactivate = lsub.add_parser("deactivate", help="Mark adapter as inactive")
+    deactivate.add_argument("name", help="Adapter name")
+    deactivate.set_defaults(func=run_deactivate)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
@@ -96,4 +112,74 @@ def run_vllm_args(args: argparse.Namespace) -> int:
         print(" ".join(vllm_args))
     else:
         print("No active adapters for this base model")
+    return 0
+
+
+def run_inspect(args: argparse.Namespace) -> int:
+    """Show full metadata for a single adapter."""
+    mgr = LoRAManager()
+    adapters = mgr.list_adapters()
+    match = next((a for a in adapters if a.name == args.name), None)
+
+    if match is None:
+        from aictl.core.output import err
+        err(f"Adapter not found: {args.name}")
+        return 1
+
+    if getattr(args, "json", False):
+        from dataclasses import asdict
+        print_json(asdict(match))
+        return 0
+
+    ok(f"Adapter: {match.name}")
+    print_kv([
+        ("base_model",  match.base_model),
+        ("path",        match.path or "(none)"),
+        ("rank",        str(match.rank)),
+        ("vram_mb",     str(match.vram_overhead_mb)),
+        ("active",      str(match.active)),
+        ("weight",      str(match.traffic_weight)),
+    ], indent=2)
+    return 0
+
+
+def run_delete(args: argparse.Namespace) -> int:
+    """Remove an adapter from the registry."""
+    mgr = LoRAManager()
+    data = mgr._load()
+    if args.name not in data.get("adapters", {}):
+        from aictl.core.output import err
+        err(f"Adapter not found: {args.name}")
+        return 1
+    del data["adapters"][args.name]
+    mgr._save(data)
+    ok(f"Adapter deleted: {args.name}")
+    return 0
+
+
+def run_activate(args: argparse.Namespace) -> int:
+    """Mark an adapter as active."""
+    mgr = LoRAManager()
+    data = mgr._load()
+    if args.name not in data.get("adapters", {}):
+        from aictl.core.output import err
+        err(f"Adapter not found: {args.name}")
+        return 1
+    data["adapters"][args.name]["active"] = True
+    mgr._save(data)
+    ok(f"Adapter activated: {args.name}")
+    return 0
+
+
+def run_deactivate(args: argparse.Namespace) -> int:
+    """Mark an adapter as inactive."""
+    mgr = LoRAManager()
+    data = mgr._load()
+    if args.name not in data.get("adapters", {}):
+        from aictl.core.output import err
+        err(f"Adapter not found: {args.name}")
+        return 1
+    data["adapters"][args.name]["active"] = False
+    mgr._save(data)
+    ok(f"Adapter deactivated: {args.name}")
     return 0
