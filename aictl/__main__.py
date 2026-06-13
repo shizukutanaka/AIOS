@@ -239,22 +239,45 @@ def main() -> int:
         return show_welcome()
 
     parser = build_parser()
-    # Make the global `--json` positionally uniform. argparse otherwise rejects a
-    # trailing `--json` on the ~45 subcommands that don't redefine it (e.g.
-    # `aictl cost forecast --json` errors), even though `aictl --json cost
-    # forecast` works and `aictl events list --json` works — an inconsistent
-    # surface for the documented universal flag. Since the flag is re-derived
-    # below, strip standalone `--json` tokens before parsing so every command
-    # accepts it in any position; subcommands that DO declare --json still parse
-    # cleanly without it.
+    # Make the global flags `--json` and `--state-dir` positionally uniform.
+    # argparse otherwise rejects them when they trail a subcommand that doesn't
+    # redefine them (e.g. `aictl cost forecast --json`, `aictl snapshot list
+    # --state-dir DIR` both error), even though the leading forms work — an
+    # inconsistent surface for documented global flags. Pull both out of argv
+    # before parsing (re-deriving --json, capturing --state-dir's value) so they
+    # are accepted in leading, middle, or trailing position; subcommands that DO
+    # declare --json still parse cleanly.
     json_requested = "--json" in sys.argv
-    argv_for_parse = [a for a in sys.argv[1:] if a != "--json"]
+    state_dir_override = None
+    argv_for_parse: list[str] = []
+    raw = sys.argv[1:]
+    i = 0
+    while i < len(raw):
+        tok = raw[i]
+        if tok == "--json":
+            i += 1
+            continue
+        if tok == "--state-dir":
+            if i + 1 < len(raw):
+                state_dir_override = raw[i + 1]
+                i += 2
+            else:
+                i += 1  # dangling flag; let argparse report it
+            continue
+        if tok.startswith("--state-dir="):
+            state_dir_override = tok.split("=", 1)[1]
+            i += 1
+            continue
+        argv_for_parse.append(tok)
+        i += 1
     args = parser.parse_args(argv_for_parse)
     # A subcommand that defines its own `--json` resets the dest to its local
     # default (False) during subparser parsing, and the strip above removes the
-    # global one from argparse's view, so set it explicitly from the raw argv.
+    # globals from argparse's view, so set them explicitly from the raw argv.
     if json_requested:
         args.json = True
+    if state_dir_override is not None:
+        args.state_dir = state_dir_override
     if args.command is None:
         parser.print_help()
         return 0

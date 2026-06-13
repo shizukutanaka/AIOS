@@ -61,6 +61,48 @@ class TestJsonFlagPlacement(unittest.TestCase):
             json.loads(out)
 
 
+class TestStateDirPlacement(unittest.TestCase):
+    """The global `--state-dir` must work in any position too (value-bearing).
+
+    Before: `aictl snapshot list --state-dir DIR` errored with "unrecognized
+    arguments" while the leading form worked. main() now extracts --state-dir
+    (both `--state-dir VAL` and `--state-dir=VAL`) from any position.
+    """
+
+    def _seed_and_count(self, argv_tail: list[str]) -> int:
+        """Seed one snapshot in a temp dir, then list it via the given argv tail."""
+        from aictl.__main__ import main
+        from aictl.cmd.snapshot import run_create
+        import argparse as _ap
+        # Isolate AIOS_STATE_DIR so main()'s perf.measure() writes don't pollute
+        # the shared perf store (which would flake perf-count tests under the gate).
+        with tempfile.TemporaryDirectory() as sd, tempfile.TemporaryDirectory() as envd:
+            run_create(_ap.Namespace(state_dir=sd, label="rt", json=False))
+            buf = io.StringIO()
+            argv = ["aictl"] + [a.replace("{SD}", sd) for a in argv_tail]
+            with patch.dict(os.environ, {"AIOS_STATE_DIR": envd}), \
+                 patch.object(sys, "argv", argv), redirect_stdout(buf):
+                rc = main()
+            self.assertEqual(rc, 0)
+            return len(json.loads(buf.getvalue()))
+
+    def test_trailing_state_dir_space(self):
+        self.assertEqual(
+            self._seed_and_count(["snapshot", "list", "--state-dir", "{SD}", "--json"]), 1)
+
+    def test_trailing_state_dir_equals(self):
+        self.assertEqual(
+            self._seed_and_count(["snapshot", "list", "--state-dir={SD}", "--json"]), 1)
+
+    def test_middle_state_dir(self):
+        self.assertEqual(
+            self._seed_and_count(["snapshot", "--state-dir", "{SD}", "list", "--json"]), 1)
+
+    def test_leading_state_dir_still_works(self):
+        self.assertEqual(
+            self._seed_and_count(["--state-dir", "{SD}", "--json", "snapshot", "list"]), 1)
+
+
 class TestMigPlanJsonNoGpu(unittest.TestCase):
 
     def test_no_mig_gpu_json_is_parseable(self):
