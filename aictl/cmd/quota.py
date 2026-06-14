@@ -51,6 +51,15 @@ def register(sub: Any) -> None:
 
 def run_create(args: argparse.Namespace) -> int:
     """Create a new entry."""
+    # A non-positive monthly budget is meaningless and would corrupt utilization
+    # math / enforcement comparisons (negative "limit" reads as already-exceeded
+    # or unlimited depending on the check). Reject it up front.
+    if args.tokens_per_month <= 0:
+        if getattr(args, "json", False):
+            print_json({"team": args.team, "error": "tokens-per-month must be > 0"})
+        else:
+            err(f"tokens-per-month must be > 0 (got {args.tokens_per_month})")
+        return 1
     db = _load()
     db["teams"][args.team] = {
         "tokens_per_month": args.tokens_per_month,
