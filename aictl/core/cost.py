@@ -118,6 +118,13 @@ def estimate_cost(
     cloud_provider: str = "",
 ) -> CostEstimate:
     """Estimate cloud vs on-prem costs."""
+    # A day has 24 hours; <=0 or >24 hours/day is physically impossible and
+    # produces nonsense (negative monthly cost for negative hours). Reject early
+    # — surfaced to the user as an input error by __main__'s handler.
+    if not (0 < hours_per_day <= 24):
+        raise ValueError(f"hours per day must be in (0, 24], got {hours_per_day}")
+    if num_gpus <= 0:
+        raise ValueError(f"number of GPUs must be > 0, got {num_gpus}")
     est = CostEstimate(gpu_type=gpu_type, num_gpus=num_gpus, hours_per_day=hours_per_day)
 
     # Cloud cost

@@ -83,9 +83,15 @@ class TestErrorMessages(unittest.TestCase):
 
     def test_format_for_user_handles_value_error(self):
         from aictl.core.errors import format_for_user
+        # A ValueError is a user-input problem (commands raise it with the reason),
+        # so it is presented as "Invalid input: ..." with an actionable next step —
+        # NOT the generic "Unexpected error … report a bug" path that would
+        # misdirect the user to file an issue for their own typo.
         msg = format_for_user(ValueError("internal detail"))
         self.assertIn("Try this:", msg)
-        self.assertIn("aictl doctor", msg)
+        self.assertIn("Invalid input", msg)
+        self.assertIn("internal detail", msg)
+        self.assertNotIn("report at", msg)  # must not tell user to file a bug
 
     def test_format_for_user_handles_file_not_found(self):
         from aictl.core.errors import format_for_user
