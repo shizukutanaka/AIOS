@@ -63,7 +63,7 @@ def run(args: argparse.Namespace) -> int:
     candidates = recommend(vram_mb=vram_mb, ram_mb=hw.system.ram_total_mb, max_results=4)
 
     if not candidates:
-        err("No models fit your hardware. Try: aictl configure --engine cloud")
+        err("No models fit your hardware. Try: aictl cost compare  # evaluate cloud GPUs")
         return 1
 
     print()
