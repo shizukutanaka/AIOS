@@ -391,14 +391,24 @@ def run_profile(args: argparse.Namespace) -> int:
         return 1
 
     acc_rate = 0.80  # default heuristic
-    if draft:
-        known = next((p for p in PAIRS if p.target == target and p.draft == draft), None)
-        if known:
-            acc_rate = known.acceptance_rate
-
     gamma = 5
-    draft_overhead_ratio = 0.1
-    observed_speedup = max(1.0, acc_rate * gamma / (1 + draft_overhead_ratio * gamma))
+    known = (next((p for p in PAIRS if p.target == target and p.draft == draft), None)
+             if draft else None)
+    if known:
+        acc_rate = known.acceptance_rate
+        gamma = known.gamma
+        # Reuse the canonical pair model so `spec profile` agrees with
+        # `spec recommend` for the same pair (previously profile reported 2.73x
+        # while the table reported 3.0x — two numbers for one physical quantity,
+        # and profile even dropped the guaranteed bonus token).
+        observed_speedup = known.speedup()
+    else:
+        # Same shape as _Pair.speedup() for unknown pairs: accepted tokens over
+        # draft overhead, plus the guaranteed target ("bonus") token, capped at
+        # the 3.0x ceiling the rest of the module uses.
+        draft_overhead_ratio = 0.1
+        observed_speedup = min(
+            acc_rate * gamma / (1 + draft_overhead_ratio * gamma) + 1.0, 3.0)
 
     profile = {
         "target_model": target,
