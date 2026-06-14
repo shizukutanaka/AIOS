@@ -149,13 +149,17 @@ def estimate_cost(
     hw_monthly = est.onprem_hardware_usd / 36
     est.onprem_monthly_usd = hw_monthly + est.onprem_power_monthly_usd
 
-    # Break-even
-    if est.cloud_monthly_usd > est.onprem_monthly_usd:
-        monthly_savings = est.cloud_monthly_usd - est.onprem_monthly_usd
-        if monthly_savings > 0:
-            est.break_even_months = est.onprem_hardware_usd / monthly_savings
+    # Break-even: how many months of cloud spend it takes to recover the on-prem
+    # hardware investment. Compare cloud's monthly cost against on-prem's *ongoing*
+    # cost (power) — NOT the amortized monthly, which already bakes the hardware
+    # into hw_monthly, so dividing the hardware by (cloud - amortized) double-counts
+    # it and overstates break-even (~2.3x here). This matches the savings_3yr model
+    # below (hardware paid once + power * months).
+    if est.cloud_monthly_usd > est.onprem_power_monthly_usd:
+        monthly_savings = est.cloud_monthly_usd - est.onprem_power_monthly_usd
+        est.break_even_months = est.onprem_hardware_usd / monthly_savings
     else:
-        est.break_even_months = 0  # Cloud is cheaper, don't buy
+        est.break_even_months = 0  # cloud cheaper than on-prem power; never recovers
 
     # 3-year savings
     cloud_3yr = est.cloud_monthly_usd * 36
