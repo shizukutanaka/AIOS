@@ -224,9 +224,17 @@ def estimate_dgdr_resources(spec: DGDRSpec) -> dict[str, Any]:
     gpus_needed = max(1, math.ceil(total_vram_gb / gpu_vram))
     gpus_needed = min(gpus_needed, spec.max_gpus)
 
-    # Throughput estimation
+    # Throughput estimation. Decode is memory-bandwidth bound, so single-replica
+    # throughput scales (roughly) inversely with model size; the per-GPU figures
+    # below are calibrated for an ~8B reference model. The previous formula
+    # multiplied by gpus_needed, but gpus_needed grows with VRAM — so a 70B model
+    # (2 GPUs) reported 2x the throughput of an 8B (1 GPU), i.e. "bigger = faster".
+    # Scale by model size instead, so a larger model never appears faster on equal
+    # hardware.
+    REFERENCE_B = 8.0
     tps_per_gpu = {"H100": 280, "H200": 450, "A100": 130, "RTX4090": 80, "auto": 200}
-    est_tps = tps_per_gpu.get(spec.hardware, 200) * gpus_needed
+    base_tps = tps_per_gpu.get(spec.hardware, 200)
+    est_tps = max(1, int(base_tps * REFERENCE_B / max(params_b, 1)))
 
     return {
         "model_params_b": params_b,
