@@ -225,8 +225,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _harden_stdio() -> None:
+    """Make output never crash on its own decorative glyphs (✓/✗/—).
+
+    Under a limited stdout encoding (ASCII / C locale — common in minimal
+    containers, cron, and some CI) printing a Unicode glyph raises
+    UnicodeEncodeError, killing the command. Switch the error handler to
+    'backslashreplace' so glyphs degrade (e.g. \\u2713) instead of crashing;
+    on the normal UTF-8 terminal this changes nothing.
+    """
+    import sys as _sys
+    for stream in (_sys.stdout, _sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main() -> int:
     """Main."""
+    _harden_stdio()
     # Fast path: --version without loading 61 command modules
     if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):
         print(f"aictl {VERSION}")
