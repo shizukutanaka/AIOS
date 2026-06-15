@@ -22,6 +22,16 @@ from typing import Any
 from aictl.core.state import DEFAULT_STATE_DIR
 
 
+def key_id_for(raw_key: str) -> str:
+    """Stable, non-secret id for a raw key (SHA-256 prefix).
+
+    This is the value to use for usage attribution / logging — never the raw key
+    itself, which would persist the secret in plaintext (e.g. the metering store).
+    Matches the key_id shown by `apikey list`.
+    """
+    return hashlib.sha256(raw_key.encode()).hexdigest()[:8]
+
+
 @dataclass
 class APIKey:
     key_id: str              # Short ID for display
@@ -58,7 +68,7 @@ class KeyManager:
         """Generate a new API key. Returns (raw_key, key_record)."""
         raw_key = f"aios-{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        key_id = key_hash[:8]
+        key_id = key_id_for(raw_key)
 
         key = APIKey(
             key_id=key_id,

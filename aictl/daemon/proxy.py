@@ -248,7 +248,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             entity_id = "anonymous"
             if auth.startswith("Bearer ") and auth[7:].startswith("aios-"):
-                entity_id = auth[7:]  # full key after "Bearer " for correct attribution
+                # Attribute by the key's id (SHA-256 prefix), NEVER the raw key —
+                # using the raw key persisted the secret in plaintext in the
+                # metering store and surfaced it in `meter report`. This id matches
+                # `apikey list`, so usage still maps cleanly back to a key.
+                from aictl.core.apikeys import key_id_for
+                entity_id = key_id_for(auth[7:])
 
             model = request_body.get("model", "unknown")
             from aictl.core.metering import TokenMeter
