@@ -9,6 +9,7 @@ import argparse
 import json
 from pathlib import Path
 from aictl.core.output import ok, err, print_json, print_kv, print_table
+from aictl.core.atomicio import atomic_write_text
 from aictl.core.tenant import (
     TENANT_CLASSES, Tenant,
     generate_k8s_namespace, generate_cgroup_limits,
@@ -125,8 +126,7 @@ def _load_registry(path: Path) -> dict:
 
 
 def _save_registry(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2))
+    atomic_write_text(path, json.dumps(data, indent=2))
 
 
 # ── lifecycle commands ────────────────────────────────────────────────────────

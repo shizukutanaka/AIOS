@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.atomicio import atomic_write_text
 from aictl.core.constants import (
     DAEMON_PORT, VLLM_DEFAULT_URL, OLLAMA_DEFAULT_URL, SGLANG_DEFAULT_URL,
 )
@@ -99,5 +100,4 @@ def load_config(state_dir: Path | None = None) -> Config:
 def save_config(config: Config, state_dir: Path | None = None) -> None:
     """Save config."""
     path = (state_dir or DEFAULT_STATE_DIR) / "config.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2))
+    atomic_write_text(path, json.dumps(asdict(config), indent=2))

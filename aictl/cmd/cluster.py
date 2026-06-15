@@ -166,8 +166,8 @@ def run_recovery_policy(args: argparse.Namespace) -> int:
         updated = True
 
     if updated:
-        policy_path.parent.mkdir(parents=True, exist_ok=True)
-        policy_path.write_text(json_mod.dumps(policy, indent=2))
+        from aictl.core.atomicio import atomic_write_text
+        atomic_write_text(policy_path, json_mod.dumps(policy, indent=2))
 
     if getattr(args, "json", False):
         print_json(policy)

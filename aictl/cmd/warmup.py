@@ -99,8 +99,8 @@ def run_schedule(args: argparse.Namespace) -> int:
         "next_run": next_run,
     }
     path = _schedule_path(args)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json.dumps(schedule, indent=2))
+    from aictl.core.atomicio import atomic_write_text
+    atomic_write_text(path, _json.dumps(schedule, indent=2))
 
     if getattr(args, "json", False):
         print_json(schedule)

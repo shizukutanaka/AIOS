@@ -90,7 +90,8 @@ class SnapshotManager:
 
         # Write snapshot
         snap_path = self.snap_dir / f"{snap_id}.json"
-        snap_path.write_text(json.dumps(asdict(snap), indent=2, default=str))
+        from aictl.core.atomicio import atomic_write_text
+        atomic_write_text(snap_path, json.dumps(asdict(snap), indent=2, default=str))
 
         return snap
 

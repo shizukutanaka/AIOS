@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from aictl.core.atomicio import atomic_write_text
+
 
 DEFAULT_STATE_DIR = Path.home() / ".aios"
 
@@ -65,7 +67,7 @@ class StateStore:
 
     def save_node(self, ns: NodeState) -> None:
         """Save node."""
-        self._state_path.write_text(json.dumps(asdict(ns), indent=2))
+        atomic_write_text(self._state_path, json.dumps(asdict(ns), indent=2))
 
     def load_node(self) -> NodeState:
         """Load node."""
@@ -80,8 +82,8 @@ class StateStore:
     # ── stacks ──────────────────────────────────────────
     def save_stacks(self, entries: list[StackEntry]) -> None:
         """Save stacks."""
-        self._stacks_path.write_text(
-            json.dumps([asdict(e) for e in entries], indent=2)
+        atomic_write_text(
+            self._stacks_path, json.dumps([asdict(e) for e in entries], indent=2)
         )
 
     def load_stacks(self) -> list[StackEntry]:

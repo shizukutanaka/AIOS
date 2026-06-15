@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json, print_table
+from aictl.core.atomicio import atomic_write_text
 
 
 def register(sub: Any) -> None:
@@ -196,6 +197,5 @@ def _load() -> dict[str, Any]:
 def _save(db: dict[str, Any]) -> None:
     """Persist data to storage."""
     path = _db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     db["updated_at"] = time.time()
-    path.write_text(json.dumps(db, indent=2, ensure_ascii=False))
+    atomic_write_text(path, json.dumps(db, indent=2, ensure_ascii=False))
