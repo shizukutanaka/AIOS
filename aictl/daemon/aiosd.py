@@ -564,14 +564,28 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     store = StateStore(state_dir)
     AIOSHandler.store = store
 
-    # Start SLO Governor
+    # Bind FIRST so a port conflict fails fast with a clean, actionable message —
+    # before spinning up the governor thread (which would otherwise leak when the
+    # bind raises). HTTPServer sets allow_reuse_address, so a fresh restart after
+    # TIME_WAIT still binds.
+    try:
+        server = ThreadedHTTPServer((host, port), AIOSHandler)
+    except OSError as e:
+        import errno
+        import sys as _sys
+        if e.errno == errno.EADDRINUSE:
+            print(f"aiosd: port {port} is already in use — is the daemon already "
+                  f"running?  Check: aictl daemon status", file=_sys.stderr)
+        else:
+            print(f"aiosd: cannot bind {host}:{port}: {e}", file=_sys.stderr)
+        raise SystemExit(1)
+    server._start_time = time.time()  # type: ignore
+
+    # Start SLO Governor (only now that we own the port)
     from aictl.daemon.governor import GovernorDaemon
     governor = GovernorDaemon(store, interval_s=15.0)
     AIOSHandler._governor = governor  # type: ignore
     governor.start()
-
-    server = ThreadedHTTPServer((host, port), AIOSHandler)
-    server._start_time = time.time()  # type: ignore
 
     def shutdown(sig: Any, frame: Any) -> None:
         """Shutdown."""
