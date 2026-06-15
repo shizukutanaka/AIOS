@@ -165,8 +165,10 @@ def _check_engine(runtime: str) -> bool:
             return subprocess.run(["ollama", "list"], capture_output=True, timeout=5).returncode == 0
         if runtime == "vllm":
             import urllib.request
-            urllib.request.urlopen("http://localhost:8000/health", timeout=3)
-            return True
+            # 'with' closes the response (and its socket); a bare urlopen leaks
+            # the connection/FD until GC.
+            with urllib.request.urlopen("http://localhost:8000/health", timeout=3):
+                return True
         return False
     except Exception:
         return False
