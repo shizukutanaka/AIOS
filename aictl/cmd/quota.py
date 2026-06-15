@@ -22,6 +22,7 @@ from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json, print_table
 from aictl.core.atomicio import atomic_write_text
+from aictl.core.filelock import file_lock
 
 
 def register(sub: Any) -> None:
@@ -61,14 +62,17 @@ def run_create(args: argparse.Namespace) -> int:
         else:
             err(f"tokens-per-month must be > 0 (got {args.tokens_per_month})")
         return 1
-    db = _load()
-    db["teams"][args.team] = {
-        "tokens_per_month": args.tokens_per_month,
-        "priority": args.priority,
-        "created_at": time.time(),
-        "used_tokens": db["teams"].get(args.team, {}).get("used_tokens", 0),
-    }
-    _save(db)
+    # Serialize the load→modify→save so concurrent `quota create` runs for
+    # different teams don't clobber each other (lost-update race).
+    with file_lock(_db_path()):
+        db = _load()
+        db["teams"][args.team] = {
+            "tokens_per_month": args.tokens_per_month,
+            "priority": args.priority,
+            "created_at": time.time(),
+            "used_tokens": db["teams"].get(args.team, {}).get("used_tokens", 0),
+        }
+        _save(db)
     if getattr(args, "json", False):
         print_json({"team": args.team, "tokens_per_month": args.tokens_per_month,
                     "priority": args.priority})
@@ -160,16 +164,17 @@ def run_report(args: argparse.Namespace) -> int:
 
 def run_reset(args: argparse.Namespace) -> int:
     """Reset to empty state."""
-    db = _load()
-    if args.team not in db["teams"]:
-        err(f"Unknown team: {args.team}")
-        return 1
-    if not getattr(args, "yes", False):
-        warn(f"This will reset {args.team}'s token counter to 0.")
-        print("  Re-run with --yes to confirm.")
-        return 1
-    db["teams"][args.team]["used_tokens"] = 0
-    _save(db)
+    with file_lock(_db_path()):
+        db = _load()
+        if args.team not in db["teams"]:
+            err(f"Unknown team: {args.team}")
+            return 1
+        if not getattr(args, "yes", False):
+            warn(f"This will reset {args.team}'s token counter to 0.")
+            print("  Re-run with --yes to confirm.")
+            return 1
+        db["teams"][args.team]["used_tokens"] = 0
+        _save(db)
     if getattr(args, "json", False):
         print_json({"team": args.team, "reset": True})
         return 0

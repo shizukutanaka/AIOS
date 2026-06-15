@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from aictl.core.output import ok, err, print_json, print_kv, print_table
 from aictl.core.atomicio import atomic_write_text
+from aictl.core.filelock import file_lock
 from aictl.core.tenant import (
     TENANT_CLASSES, Tenant,
     generate_k8s_namespace, generate_cgroup_limits,
@@ -155,20 +156,22 @@ def run_create(args: argparse.Namespace) -> int:
     """Provision a new tenant."""
     import time as _time
     path = _registry_path(args)
-    reg = _load_registry(path)
+    # Serialize load→modify→save against concurrent tenant create/delete.
+    with file_lock(path):
+        reg = _load_registry(path)
 
-    if args.tenant_id in reg:
-        err(f"Tenant already exists: {args.tenant_id}")
-        return 1
+        if args.tenant_id in reg:
+            err(f"Tenant already exists: {args.tenant_id}")
+            return 1
 
-    record = {
-        "id": args.tenant_id,
-        "name": getattr(args, "name", "") or args.tenant_id,
-        "tenant_class": getattr(args, "tenant_class", "standard"),
-        "created_at": _time.time(),
-    }
-    reg[args.tenant_id] = record
-    _save_registry(path, reg)
+        record = {
+            "id": args.tenant_id,
+            "name": getattr(args, "name", "") or args.tenant_id,
+            "tenant_class": getattr(args, "tenant_class", "standard"),
+            "created_at": _time.time(),
+        }
+        reg[args.tenant_id] = record
+        _save_registry(path, reg)
 
     if getattr(args, "json", False):
         print_json(record)
@@ -181,18 +184,19 @@ def run_create(args: argparse.Namespace) -> int:
 def run_delete(args: argparse.Namespace) -> int:
     """Remove a provisioned tenant."""
     path = _registry_path(args)
-    reg = _load_registry(path)
+    with file_lock(path):
+        reg = _load_registry(path)
 
-    if args.tenant_id not in reg:
-        if getattr(args, "json", False):
-            print_json({"deleted": False, "tenant_id": args.tenant_id,
-                        "error": f"Tenant not found: {args.tenant_id}"})
+        if args.tenant_id not in reg:
+            if getattr(args, "json", False):
+                print_json({"deleted": False, "tenant_id": args.tenant_id,
+                            "error": f"Tenant not found: {args.tenant_id}"})
+                return 1
+            err(f"Tenant not found: {args.tenant_id}")
             return 1
-        err(f"Tenant not found: {args.tenant_id}")
-        return 1
 
-    del reg[args.tenant_id]
-    _save_registry(path, reg)
+        del reg[args.tenant_id]
+        _save_registry(path, reg)
     if getattr(args, "json", False):
         print_json({"deleted": True, "tenant_id": args.tenant_id})
         return 0
