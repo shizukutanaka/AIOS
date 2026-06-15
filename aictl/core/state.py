@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from aictl.core.atomicio import atomic_write_text
+from aictl.core.filelock import file_lock
 
 
 DEFAULT_STATE_DIR = Path.home() / ".aios"
@@ -98,23 +99,27 @@ class StateStore:
 
     def upsert_stack(self, entry: StackEntry) -> None:
         """Upsert stack."""
-        stacks = self.load_stacks()
-        for i, s in enumerate(stacks):
-            if s.name == entry.name:
-                stacks[i] = entry
-                self.save_stacks(stacks)
-                return
-        stacks.append(entry)
-        self.save_stacks(stacks)
+        # Serialize load→modify→save so concurrent apply/down of different stacks
+        # don't clobber each other in the shared stacks.json (lost-update race).
+        with file_lock(self._stacks_path):
+            stacks = self.load_stacks()
+            for i, s in enumerate(stacks):
+                if s.name == entry.name:
+                    stacks[i] = entry
+                    self.save_stacks(stacks)
+                    return
+            stacks.append(entry)
+            self.save_stacks(stacks)
 
     def remove_stack(self, name: str) -> bool:
         """Remove stack."""
-        stacks = self.load_stacks()
-        new = [s for s in stacks if s.name != name]
-        if len(new) == len(stacks):
-            return False
-        self.save_stacks(new)
-        return True
+        with file_lock(self._stacks_path):
+            stacks = self.load_stacks()
+            new = [s for s in stacks if s.name != name]
+            if len(new) == len(stacks):
+                return False
+            self.save_stacks(new)
+            return True
 
     # ── model DB (SQLite) ───────────────────────────────
     def _db(self) -> sqlite3.Connection:
