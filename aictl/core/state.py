@@ -93,9 +93,23 @@ class StateStore:
             return []
         try:
             data = json.loads(self._stacks_path.read_text())
-            return [StackEntry(**d) for d in data]
-        except (json.JSONDecodeError, KeyError, TypeError):
-            return []  # graceful fallback on corrupted stacks file
+        except (json.JSONDecodeError, OSError):
+            return []  # graceful fallback on a corrupted stacks file
+        # Filter unknown keys (forward-compat with newer schemas) and skip any
+        # individual malformed entry — one bad row must not drop every stack.
+        # Raw StackEntry(**d) would raise TypeError on an unknown field and the
+        # whole list would be lost.
+        entries: list[StackEntry] = []
+        for d in data if isinstance(data, list) else []:
+            if not isinstance(d, dict):
+                continue
+            try:
+                entries.append(StackEntry(**{
+                    k: v for k, v in d.items() if k in StackEntry.__dataclass_fields__
+                }))
+            except (TypeError, ValueError):
+                continue  # skip just this entry
+        return entries
 
     def upsert_stack(self, entry: StackEntry) -> None:
         """Upsert stack."""
