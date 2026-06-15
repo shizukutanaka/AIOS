@@ -391,7 +391,8 @@ def index_directory(
         # Treat as a single file
         files = [root]
     else:
-        files = [f for f in root.rglob("*") if f.is_file()]
+        # Sorted so indexing order (and thus chunk ordering) is reproducible.
+        files = sorted(f for f in root.rglob("*") if f.is_file())
 
     indexed = 0
     skipped = 0

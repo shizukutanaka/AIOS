@@ -215,7 +215,9 @@ def _task_summarize(input_path: str, model: str) -> bool:
     if not path.exists():
         warn(f"Input path not found: {input_path}")
         return False
-    files = list(path.rglob("*.md")) + list(path.rglob("*.txt"))
+    # Sort for determinism: without it the OS-dependent rglob order makes both
+    # the output order AND which files the [:10] slice picks vary run-to-run.
+    files = sorted(path.rglob("*.md")) + sorted(path.rglob("*.txt"))
     count = 0
     for f in files[:10]:  # max 10 files per run
         try:
@@ -237,7 +239,8 @@ def _task_classify(input_path: str, model: str) -> bool:
     path = Path(input_path)
     if not path.exists():
         return False
-    files = list(path.rglob("*.md")) + list(path.rglob("*.txt"))
+    # Sorted for deterministic file selection/order (see run_summarize above).
+    files = sorted(path.rglob("*.md")) + sorted(path.rglob("*.txt"))
     count = 0
     for f in files[:20]:
         try:

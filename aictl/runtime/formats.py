@@ -123,7 +123,7 @@ def detect_model_dir(directory: str | Path) -> list[ModelFormat]:
     model_extensions = {".gguf", ".safetensors", ".onnx", ".pt", ".pth",
                         ".bin", ".engine", ".model"}
 
-    for f in directory.rglob("*"):
+    for f in sorted(directory.rglob("*")):  # sorted: stable scan-result order
         if f.is_file() and f.suffix.lower() in model_extensions:
             result = detect_format(f)
             result.metadata["path"] = str(f)
