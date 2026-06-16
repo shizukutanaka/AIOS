@@ -322,6 +322,18 @@ def run_import(args: argparse.Namespace) -> int:
     except (TypeError, KeyError) as exc:
         err(f"Config structure invalid: {exc}")
         return 1
+    # Validate before persisting — importing a config with an out-of-range port,
+    # an unknown trust_policy, a bad log_level, etc. would otherwise silently
+    # break the daemon / trust enforcement on the next run.
+    problems = _validate_config(config)
+    if problems:
+        if getattr(args, "json", False):
+            print_json({"imported": False, "file": args.file, "problems": problems})
+        else:
+            err(f"Config not imported — {len(problems)} problem(s):")
+            for p in problems:
+                print(f"    - {p}")
+        return 1
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
     save_config(config, state_dir)
     if getattr(args, "json", False):
