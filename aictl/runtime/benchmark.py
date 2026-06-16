@@ -49,6 +49,10 @@ def run_benchmark(
     timeout: int = 60,
 ) -> BenchResult:
     """Run a simple benchmark against an OpenAI-compatible endpoint."""
+    if num_requests < 1:
+        raise ValueError(f"number of requests must be >= 1, got {num_requests}")
+    if max_tokens < 1:
+        raise ValueError(f"max tokens must be >= 1, got {max_tokens}")
     result = BenchResult(endpoint=endpoint, model=model, requests=num_requests)
 
     # Detect API type

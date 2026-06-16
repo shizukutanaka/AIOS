@@ -89,7 +89,8 @@ def run_slo(args: argparse.Namespace) -> int:
     from aictl.metrics.slo import SLOTarget
 
     slo = SLOTarget()
-    ok(f"SLO verification: {args.endpoint}")
+    if not getattr(args, "json", False):  # keep stdout clean for --json consumers
+        ok(f"SLO verification: {args.endpoint}")
     try:
         result = run_benchmark(
             endpoint=args.endpoint,
@@ -215,6 +216,7 @@ def run(args: argparse.Namespace) -> int:
 
     endpoint = args.endpoint
     mock_server = None
+    as_json = getattr(args, "json", False)
 
     if getattr(args, "mock", False):
         from aictl.daemon.mock_engine import start_mock_engine
@@ -222,9 +224,11 @@ def run(args: argparse.Namespace) -> int:
         mock_server = start_mock_engine(port=TEST_BENCH_PORT)
         time.sleep(0.3)
         endpoint = f"http://127.0.0.1:{TEST_BENCH_PORT}"
-        ok("Mock engine started for benchmarking")
+        if not as_json:  # keep stdout clean for --json consumers
+            ok("Mock engine started for benchmarking")
 
-    ok(f"Benchmarking {endpoint} ({args.requests} requests)...")
+    if not as_json:
+        ok(f"Benchmarking {endpoint} ({args.requests} requests)...")
     try:
         result = run_benchmark(
             endpoint=endpoint,
