@@ -69,6 +69,11 @@ SKIP_EXTENSIONS = {
     ".class", ".pyc", ".o", ".a",
 }
 
+# Cap per-file size for indexing: read_text() pulls the whole file into memory,
+# so a multi-GB log/dump in a directory would OOM the process. 10 MB is far more
+# than any real document and already yields thousands of chunks.
+MAX_INDEX_FILE_BYTES = 10 * 1024 * 1024
+
 
 @dataclass
 class Chunk:
@@ -230,6 +235,11 @@ def read_file(path: Path) -> str | None:
     """Read a file's text content. Returns None if unreadable/skip."""
     ext = path.suffix.lower()
     if ext in SKIP_EXTENSIONS:
+        return None
+    try:
+        if path.stat().st_size > MAX_INDEX_FILE_BYTES:
+            return None  # too large to index — don't read GBs into memory
+    except OSError:
         return None
     if ext in TEXT_EXTENSIONS or ext == "":
         try:
