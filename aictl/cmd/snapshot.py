@@ -369,6 +369,14 @@ def run_import(args: argparse.Namespace) -> int:
         err("File does not look like a snapshot export (missing snapshot_id)")
         return 1
 
+    # snap_id (attacker-controlled in the imported file) becomes the destination
+    # filename. Reject anything that isn't a single safe path component, else
+    # "../../etc/evil" would let the write escape the snapshot directory.
+    import re as _re
+    if snap_id in (".", "..") or not _re.fullmatch(r"[A-Za-z0-9_.-]+", str(snap_id)):
+        err(f"Refusing to import: unsafe snapshot_id {snap_id!r}")
+        return 1
+
     store = StateStore(getattr(args, "state_dir", None))
     mgr = SnapshotManager(store)
     dest = mgr.snap_dir / f"{snap_id}.json"
