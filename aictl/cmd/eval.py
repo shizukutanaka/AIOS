@@ -480,9 +480,13 @@ def run_report(args: argparse.Namespace) -> int:
 
     data = json.loads(suite_path.read_text())
 
-    # Accept either a suite definition or saved results
-    _cases = data.get("cases") or [{}]
-    if "cases" in data and "passed" in _cases[0]:
+    # Accept either a suite definition or saved results. Sniff on top-level
+    # summary keys that run_eval writes but a suite definition never carries —
+    # peeking at cases[0]["passed"] misclassified a valid results file whose
+    # `cases` list is empty (e.g. a 0-case run) as a suite and re-ran it,
+    # incurring real inference instead of reporting the saved 0/0 result.
+    is_results = any(k in data for k in ("pass_rate", "total", "failed"))
+    if is_results:
         # It's a results file
         results = data
     else:
