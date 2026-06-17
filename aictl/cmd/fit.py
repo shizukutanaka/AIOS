@@ -73,7 +73,7 @@ def run(args: argparse.Namespace) -> int:
     if args.gpu == "auto":
         hw = full_detect()
         if not hw.gpus:
-            return _analyze_cpu(target, hw)
+            return _analyze_cpu(target, hw, getattr(args, "json", False))
         gpu_name = hw.gpus[0].name
         vram_mb = hw.gpus[0].vram_mb
         unified = getattr(hw.gpus[0], "unified_memory", False)
@@ -245,17 +245,27 @@ def _display(model: str, gpu: str, vram_mb: int, quants: dict[str, Any],
     print()
 
 
-def _analyze_cpu(model: Any, hw: Any) -> int:
+def _analyze_cpu(model: Any, hw: Any, as_json: bool = False) -> int:
     """Analyze CPU-only inference feasibility."""
     ram_mb = hw.system.ram_total_mb
+    q4_mb = int(model.vram_required_mb * 0.30) + 500
+    fits = q4_mb <= ram_mb * 0.70
+
+    if as_json:
+        print_json({
+            "model": model.name, "gpu": "CPU", "ram_mb_available": ram_mb,
+            "q4_mb_needed": q4_mb, "fits": fits,
+            "note": ("Q4_K_M should work — slow but functional CPU inference."
+                     if fits else "Not enough RAM even at Q4_K_M."),
+        })
+        return 0 if fits else 2
+
     warn(f"No GPU detected. Analyzing for CPU (RAM: {ram_mb}MB)")
     print()
     print(f"  Model: {model.name}")
-    q4_mb = int(model.vram_required_mb * 0.30) + 500
-    if q4_mb <= ram_mb * 0.70:
+    if fits:
         ok(f"Q4_K_M should work ({q4_mb}MB needed, {ram_mb*0.7:.0f}MB available)")
         print("  Expected: slow but functional CPU inference")
         return 0
-    else:
-        err(f"Not enough RAM even at Q4_K_M ({q4_mb}MB needed)")
-        return 2
+    err(f"Not enough RAM even at Q4_K_M ({q4_mb}MB needed)")
+    return 2

@@ -32,23 +32,34 @@ def register(sub: Any) -> None:
 
 def run(args: argparse.Namespace) -> int:
     """Execute the command and return an exit code."""
+    as_json = getattr(args, "json", False)
     if getattr(args, "simulate", None):
-        return _diagnose_simulation(args.simulate)
+        return _diagnose_simulation(args.simulate, as_json)
 
     symptom = args.symptom
     if symptom == "auto":
         symptom = _detect_symptom_from_logs()
         if symptom:
-            if not getattr(args, "json", False):
+            if not as_json:
                 print(f"\n  Detected symptom: {symptom}\n")
         else:
-            if getattr(args, "json", False):
+            if as_json:
                 from aictl.core.output import print_json
                 print_json({"symptom": None, "diagnosis": "none", "message": "No obvious problems."})
                 return 0
             ok("No obvious problems in recent activity.")
             print("  Run `aictl doctor` for a thorough check.")
             return 0
+
+    # --json: emit a parseable diagnosis summary instead of the human fix walls,
+    # which would otherwise print non-JSON to stdout under --json.
+    if as_json:
+        from aictl.core.output import print_json
+        diag, message = _DIAGNOSIS_SUMMARY.get(
+            symptom, (symptom, "See `aictl troubleshoot --symptom %s` for full diagnosis." % symptom))
+        print_json({"symptom": symptom, "diagnosis": diag, "message": message,
+                    "details": f"aictl troubleshoot --symptom {symptom}"})
+        return 0
 
     diagnosers = {
         "oom": _diagnose_oom,
@@ -58,6 +69,22 @@ def run(args: argparse.Namespace) -> int:
         "high-cost": _diagnose_high_cost,
     }
     return diagnosers[symptom]()
+
+
+# Short, parseable summaries for `troubleshoot --json` (the human diagnosers print
+# multi-line fix instructions that don't belong on a JSON stdout).
+_DIAGNOSIS_SUMMARY = {
+    "oom": ("out-of-memory",
+            "Model + KV cache + activations exceeded available VRAM."),
+    "slow": ("slow-inference",
+             "Throughput/latency below expectations for the hardware."),
+    "wrong-output": ("wrong-output",
+                     "Output quality issue — often quantization or prompt/template."),
+    "cant-start": ("cant-start",
+                   "The engine/model failed to start."),
+    "high-cost": ("high-cost",
+                  "Spend is higher than necessary for the workload."),
+}
 
 
 def _detect_symptom_from_logs() -> str:
@@ -270,13 +297,13 @@ def _diagnose_high_cost() -> int:
     return 0
 
 
-def _diagnose_simulation(model: str) -> int:
+def _diagnose_simulation(model: str, as_json: bool = False) -> int:
     """Delegate to fit logic without actually serving the model."""
     from aictl.cmd import fit
 
     fake = argparse.Namespace(
         model=model, gpu="auto", context=8192,
-        concurrent=1, use_case="", json=False)
+        concurrent=1, use_case="", json=as_json)
     return fit.run(fake)
 
 

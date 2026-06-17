@@ -46,6 +46,9 @@ def run_warmup(args: argparse.Namespace) -> int:
     candidates = mgr.get_warmup_candidates(top_n=getattr(args, "top", 3))
 
     if not candidates:
+        if getattr(args, "json", False):
+            print_json([])
+            return 0
         print("No model usage history. Use models first, then run warmup.")
         return 0
 
