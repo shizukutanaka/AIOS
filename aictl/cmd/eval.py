@@ -348,7 +348,7 @@ def run_eval(args: argparse.Namespace) -> int:
     output = {
         "suite": suite.get("name", suite_path.stem),
         "model": model,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "total": total,
         "passed": passed,
         "failed": failed,

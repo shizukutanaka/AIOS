@@ -88,7 +88,7 @@ def run_status(args: argparse.Namespace) -> int:
             "reason": decision.reason,
             "metrics": decision.metrics,
             "evaluated_at": time.strftime(
-                "%H:%M:%S", time.localtime(decision.timestamp)
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(decision.timestamp)
             ),
         })
 
