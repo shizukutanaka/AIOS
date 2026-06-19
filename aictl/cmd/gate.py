@@ -240,7 +240,10 @@ def run(args: argparse.Namespace) -> int:
         print_json({"passed": all_pass, "checks": [
             {"name": n, "passed": p, "detail": d} for n, p, d in results
         ], "elapsed_s": round(elapsed, 1)})
-        return 0
+        # Exit code must match the human path: `aictl gate --json` is the
+        # canonical CI gate, so a failed gate must exit non-zero. Previously
+        # this returned 0 even when "passed" was false, so CI never caught it.
+        return 0 if all_pass else 1
 
     print()
     for name, passed, detail in results:
