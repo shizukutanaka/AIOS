@@ -25,7 +25,11 @@ def run(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         from dataclasses import asdict
         print_json(asdict(report))
-        return 0
+        # Exit code must agree with the human path below: a failing audit
+        # (score < 50) returns non-zero so a CI gate doing `aictl security
+        # --json; echo $?` actually blocks on it. Previously this branch
+        # always returned 0, so the JSON consumer never saw the failure.
+        return 0 if report.score >= 50 else 1
 
     # Score display
     if report.score >= 80:
