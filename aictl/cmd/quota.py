@@ -53,12 +53,22 @@ def register(sub: Any) -> None:
 
 def run_create(args: argparse.Namespace) -> int:
     """Create a new entry."""
+    # Leading/trailing whitespace is never part of a team's identity: a quota
+    # set for "eng " must be findable/resettable as "eng". An empty or
+    # whitespace-only team name is invalid.
+    team = (args.team or "").strip()
+    if not team:
+        if getattr(args, "json", False):
+            print_json({"team": args.team, "error": "team name is required"})
+        else:
+            err("Team name is required (empty or whitespace-only is not allowed).")
+        return 1
     # A non-positive monthly budget is meaningless and would corrupt utilization
     # math / enforcement comparisons (negative "limit" reads as already-exceeded
     # or unlimited depending on the check). Reject it up front.
     if args.tokens_per_month <= 0:
         if getattr(args, "json", False):
-            print_json({"team": args.team, "error": "tokens-per-month must be > 0"})
+            print_json({"team": team, "error": "tokens-per-month must be > 0"})
         else:
             err(f"tokens-per-month must be > 0 (got {args.tokens_per_month})")
         return 1
@@ -66,18 +76,18 @@ def run_create(args: argparse.Namespace) -> int:
     # different teams don't clobber each other (lost-update race).
     with file_lock(_db_path()):
         db = _load()
-        db["teams"][args.team] = {
+        db["teams"][team] = {
             "tokens_per_month": args.tokens_per_month,
             "priority": args.priority,
             "created_at": time.time(),
-            "used_tokens": db["teams"].get(args.team, {}).get("used_tokens", 0),
+            "used_tokens": db["teams"].get(team, {}).get("used_tokens", 0),
         }
         _save(db)
     if getattr(args, "json", False):
-        print_json({"team": args.team, "tokens_per_month": args.tokens_per_month,
+        print_json({"team": team, "tokens_per_month": args.tokens_per_month,
                     "priority": args.priority})
         return 0
-    ok(f"Quota set: {args.team} → {args.tokens_per_month:,} tokens/month "
+    ok(f"Quota set: {team} → {args.tokens_per_month:,} tokens/month "
        f"(priority: {args.priority})")
     return 0
 
@@ -164,21 +174,23 @@ def run_report(args: argparse.Namespace) -> int:
 
 def run_reset(args: argparse.Namespace) -> int:
     """Reset to empty state."""
+    # Match run_create's normalization so "eng " resets the "eng" quota.
+    team = (args.team or "").strip()
     with file_lock(_db_path()):
         db = _load()
-        if args.team not in db["teams"]:
-            err(f"Unknown team: {args.team}")
+        if team not in db["teams"]:
+            err(f"Unknown team: {team}")
             return 1
         if not getattr(args, "yes", False):
-            warn(f"This will reset {args.team}'s token counter to 0.")
+            warn(f"This will reset {team}'s token counter to 0.")
             print("  Re-run with --yes to confirm.")
             return 1
-        db["teams"][args.team]["used_tokens"] = 0
+        db["teams"][team]["used_tokens"] = 0
         _save(db)
     if getattr(args, "json", False):
-        print_json({"team": args.team, "reset": True})
+        print_json({"team": team, "reset": True})
         return 0
-    ok(f"{args.team} usage counter reset.")
+    ok(f"{team} usage counter reset.")
     return 0
 
 

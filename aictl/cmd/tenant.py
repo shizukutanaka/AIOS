@@ -152,71 +152,84 @@ def run_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _norm_id(raw: str) -> str:
+    """Normalize a tenant id. Leading/trailing whitespace is never part of the
+    identity, so a tenant created as 'team ' must be findable as 'team'. An
+    empty/whitespace-only id is invalid (callers reject it)."""
+    return (raw or "").strip()
+
+
 def run_create(args: argparse.Namespace) -> int:
     """Provision a new tenant."""
     import time as _time
+    tenant_id = _norm_id(args.tenant_id)
+    if not tenant_id:
+        err("Tenant ID is required (empty or whitespace-only is not allowed).")
+        return 1
     path = _registry_path(args)
     # Serialize load→modify→save against concurrent tenant create/delete.
     with file_lock(path):
         reg = _load_registry(path)
 
-        if args.tenant_id in reg:
-            err(f"Tenant already exists: {args.tenant_id}")
+        if tenant_id in reg:
+            err(f"Tenant already exists: {tenant_id}")
             return 1
 
         record = {
-            "id": args.tenant_id,
-            "name": getattr(args, "name", "") or args.tenant_id,
+            "id": tenant_id,
+            "name": getattr(args, "name", "") or tenant_id,
             "tenant_class": getattr(args, "tenant_class", "standard"),
             "created_at": _time.time(),
         }
-        reg[args.tenant_id] = record
+        reg[tenant_id] = record
         _save_registry(path, reg)
 
     if getattr(args, "json", False):
         print_json(record)
         return 0
 
-    ok(f"Tenant created: {args.tenant_id} (class: {record['tenant_class']})")
+    ok(f"Tenant created: {tenant_id} (class: {record['tenant_class']})")
     return 0
 
 
 def run_delete(args: argparse.Namespace) -> int:
     """Remove a provisioned tenant."""
+    tenant_id = _norm_id(args.tenant_id)
     path = _registry_path(args)
     with file_lock(path):
         reg = _load_registry(path)
 
-        if args.tenant_id not in reg:
+        if tenant_id not in reg:
             if getattr(args, "json", False):
-                print_json({"deleted": False, "tenant_id": args.tenant_id,
-                            "error": f"Tenant not found: {args.tenant_id}"})
+                print_json({"deleted": False, "tenant_id": tenant_id,
+                            "error": f"Tenant not found: {tenant_id}"})
                 return 1
-            err(f"Tenant not found: {args.tenant_id}")
+            err(f"Tenant not found: {tenant_id}")
             return 1
 
-        del reg[args.tenant_id]
+        del reg[tenant_id]
         _save_registry(path, reg)
     if getattr(args, "json", False):
-        print_json({"deleted": True, "tenant_id": args.tenant_id})
+        print_json({"deleted": True, "tenant_id": tenant_id})
         return 0
-    ok(f"Tenant deleted: {args.tenant_id}")
+    ok(f"Tenant deleted: {tenant_id}")
     return 0
 
 
 def run_inspect(args: argparse.Namespace) -> int:
     """Show full metadata for a tenant."""
     import time as _time
+    tenant_id = _norm_id(args.tenant_id)
     path = _registry_path(args)
     reg = _load_registry(path)
 
-    if args.tenant_id not in reg:
-        err(f"Tenant not found: {args.tenant_id}")
+    if tenant_id not in reg:
+        err(f"Tenant not found: {tenant_id}")
         if getattr(args, "json", False):
-            print_json({"found": False, "tenant_id": args.tenant_id})
+            print_json({"found": False, "tenant_id": tenant_id})
         return 1
 
-    record = reg[args.tenant_id]
+    record = reg[tenant_id]
     tc = TENANT_CLASSES.get(record.get("tenant_class", "standard"))
 
     if getattr(args, "json", False):
