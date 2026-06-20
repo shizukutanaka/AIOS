@@ -44,6 +44,11 @@ These hold for the whole CLI and are machine-checked.
   into `build_parser()` so it appears as a CLI subcommand.
 - **G6 — Engine metric prefixes.** vLLM metrics use the `vllm:` prefix; SGLang
   uses `sglang_`. Health checks time out within 5 seconds.
+- **V1–V5 — Input validation & robustness.** Every command must uphold the
+  boundary contracts in `docs/INPUT_VALIDATION_SPEC.md` (physical quantities
+  ≥ 1, symmetric identifier hygiene, no unguarded negative slice, user-error is
+  never a "bug", JSON rejection is clean). Machine-checked by
+  `tests/test_input_validation_spec.py`.
 
 ## 3. Command catalog
 
