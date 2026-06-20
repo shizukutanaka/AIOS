@@ -6,7 +6,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, print_json, print_table
+from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.metering import TokenMeter
 
 
@@ -63,11 +63,48 @@ def run_usage(args: argparse.Namespace) -> int:
 
 def run_quota(args: argparse.Namespace) -> int:
     """Execute the quota subcommand."""
+    as_json = getattr(args, "json", False)
+
+    # Leading/trailing whitespace is never part of an entity's identity: a quota
+    # set for "team " must be enforceable/queryable as "team" (cf. Pass 114).
+    entity = (args.entity or "").strip()
+    if not entity:
+        if as_json:
+            print_json({"entity": args.entity, "error": "entity is required"})
+        else:
+            err("Entity ID is required (empty or whitespace-only is not allowed).")
+        return 1
+
+    per_day = getattr(args, "per_day", None)
+    per_month = getattr(args, "per_month", None)
+
+    # Quota semantics: 0 = unlimited, positive = a real cap. A NEGATIVE value is
+    # invalid and silently broken — enforcement only fires on `quota > 0`, so a
+    # negative quota reads as "unlimited", meaning the user sets `--per-day -100`
+    # believing they capped usage while no cap is ever applied. Reject it.
+    for label, val in (("--per-day", per_day), ("--per-month", per_month)):
+        if val is not None and val < 0:
+            if as_json:
+                print_json({"entity": entity, "error": f"{label} must be >= 0"})
+            else:
+                err(f"{label} must be >= 0 (0 = unlimited), got {val}.")
+            return 1
+
+    # Nothing to set is a no-op masquerading as success — guide the user instead.
+    if per_day is None and per_month is None:
+        if as_json:
+            print_json({"entity": entity, "error": "no quota specified"})
+        else:
+            err("Specify at least one of --per-day or --per-month.")
+        return 1
+
     meter = TokenMeter()
-    meter.set_quota(args.entity,
-                    per_day=getattr(args, "per_day", None),
-                    per_month=getattr(args, "per_month", None))
-    ok(f"Quota set for {args.entity}")
+    meter.set_quota(entity, per_day=per_day, per_month=per_month)
+
+    if as_json:
+        print_json({"entity": entity, "per_day": per_day, "per_month": per_month})
+        return 0
+    ok(f"Quota set for {entity}")
     return 0
 
 
