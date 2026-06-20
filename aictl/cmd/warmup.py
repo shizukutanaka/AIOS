@@ -86,7 +86,10 @@ def _parse_interval_secs(interval: str) -> int:
         unit = interval[-1]
         n = int(interval[:-1])
         return n * mult.get(unit, 3600)
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, IndexError):
+        # IndexError: an empty interval string — `interval[-1]` would raise.
+        # Fall back to the 1h default like any other malformed value, rather
+        # than crashing out as a bogus "Unexpected error / report a bug".
         return 3600
 
 

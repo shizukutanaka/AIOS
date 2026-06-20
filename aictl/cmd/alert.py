@@ -118,7 +118,10 @@ def run_silence(args: argparse.Namespace) -> int:
         unit = duration_str[-1]
         n = int(duration_str[:-1])
         seconds = n * mult.get(unit, 60)
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, IndexError):
+        # IndexError: an empty duration string — `duration_str[-1]` would raise.
+        # Degrade to the default like any malformed value instead of crashing
+        # out as a bogus "Unexpected error / report a bug".
         seconds = 3600
 
     expires_at = time.time() + seconds
