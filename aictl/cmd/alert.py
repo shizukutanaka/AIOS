@@ -152,7 +152,7 @@ def run_history(args: argparse.Namespace) -> int:
                     if "alert" in getattr(e, "type", "").lower()
                     or "slo" in getattr(e, "type", "").lower()
                     or "violation" in getattr(e, "type", "").lower()]
-    alert_events = alert_events[-n:]
+    alert_events = alert_events[-n:] if n > 0 else []
 
     if getattr(args, "json", False):
         print_json([{"type": e.type, "source": e.source,

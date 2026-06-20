@@ -112,6 +112,10 @@ def measure(command: str) -> Iterator[dict[str, Any]]:
 
 def read_recent(limit: int = 50) -> list[PerfRecord]:
     """Read the most recent perf records. Robust to corrupted lines."""
+    # limit==0 must mean "no records": lines[-0:] would otherwise return every
+    # line (same [-n:] trap as EventBus.recent).
+    if limit <= 0:
+        return []
     path = _perf_path()
     if not path.exists():
         return []

@@ -92,6 +92,11 @@ class EventBus:
     def recent(self, n: int = 20, event_type: str = "") -> list[Event]:
         """Recent."""
         with self._lock:
+            # A limit of 0 (or negative) means "no events", not "all of them".
+            # The naive slice self._history[-n:] returns the WHOLE list for n==0
+            # (because [-0:] == [:]) and slices nonsensically for n<0.
+            if n <= 0:
+                return []
             if event_type:
                 filtered = [e for e in self._history if e.type == event_type]
                 return filtered[-n:]

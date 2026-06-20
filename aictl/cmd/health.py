@@ -233,7 +233,7 @@ def run_history(args: argparse.Namespace) -> int:
     n = getattr(args, "last", 10)
     events = [e for e in bus.recent(n=500)
               if getattr(e, "type", "") == "health.snapshot"]
-    events = events[-n:]
+    events = events[-n:] if n > 0 else []
 
     if getattr(args, "json", False):
         print_json([{"ts": e.timestamp, "score": e.data.get("score", 0),
@@ -263,7 +263,7 @@ def run_trends(args: argparse.Namespace) -> int:
     n = getattr(args, "last", 20)
     events = [e for e in bus.recent(n=500)
               if getattr(e, "type", "") == "health.snapshot"]
-    events = events[-n:]
+    events = events[-n:] if n > 0 else []
 
     if not events:
         print("No health snapshots available. Run: aictl health snapshot")
