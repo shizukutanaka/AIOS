@@ -133,8 +133,18 @@ def run_budget(args: argparse.Namespace) -> int:
 
 def run_vllm_args(args: argparse.Namespace) -> int:
     """Execute the vllm_args subcommand."""
+    # Strip the base for lookup symmetry: `lora add` stores a stripped base
+    # (Pass 115), so a padded query here must still match.
+    base = _norm_name(args.base)
     mgr = LoRAManager()
-    vllm_args = mgr.generate_vllm_args(args.base)
+    vllm_args = mgr.generate_vllm_args(base)
+
+    # The universal --json contract (CLAUDE.md) applies to every command: emit
+    # machine-readable output, never the human "No active adapters" sentence.
+    if getattr(args, "json", False):
+        print_json({"base": base, "args": vllm_args})
+        return 0
+
     if vllm_args:
         print(" ".join(vllm_args))
     else:
