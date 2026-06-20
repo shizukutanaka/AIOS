@@ -6,7 +6,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, print_json, print_kv, print_table
+from aictl.core.output import ok, err, print_json, print_kv, print_table
 from aictl.runtime.lora import LoRAManager, LoRAAdapter
 
 
@@ -87,13 +87,28 @@ def run_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _norm_name(raw: str) -> str:
+    """Normalize an adapter or base-model name. Leading/trailing whitespace is
+    never part of an adapter's identity; an empty/whitespace-only name is invalid
+    (callers reject it)."""
+    return (raw or "").strip()
+
+
 def run_add(args: argparse.Namespace) -> int:
     """Execute the add subcommand."""
+    name = _norm_name(args.name)
+    if not name:
+        err("Adapter name is required (empty or whitespace-only is not allowed).")
+        return 1
+    base = _norm_name(getattr(args, "base", ""))
+    if not base:
+        err("Base model name is required (empty or whitespace-only is not allowed).")
+        return 1
     mgr = LoRAManager()
-    adapter = LoRAAdapter(name=args.name, base_model=args.base,
+    adapter = LoRAAdapter(name=name, base_model=base,
                           path=getattr(args, "path", ""), rank=args.rank)
     mgr.register_adapter(adapter)
-    ok(f"Registered adapter: {args.name} (base: {args.base}, rank: {args.rank})")
+    ok(f"Registered adapter: {name} (base: {base}, rank: {args.rank})")
     return 0
 
 
@@ -129,13 +144,13 @@ def run_vllm_args(args: argparse.Namespace) -> int:
 
 def run_inspect(args: argparse.Namespace) -> int:
     """Show full metadata for a single adapter."""
+    name = _norm_name(args.name)
     mgr = LoRAManager()
     adapters = mgr.list_adapters()
-    match = next((a for a in adapters if a.name == args.name), None)
+    match = next((a for a in adapters if a.name == name), None)
 
     if match is None:
-        from aictl.core.output import err
-        err(f"Adapter not found: {args.name}")
+        err(f"Adapter not found: {name}")
         return 1
 
     if getattr(args, "json", False):
@@ -157,65 +172,65 @@ def run_inspect(args: argparse.Namespace) -> int:
 
 def run_delete(args: argparse.Namespace) -> int:
     """Remove an adapter from the registry."""
+    name = _norm_name(args.name)
     mgr = LoRAManager()
     data = mgr._load()
-    if args.name not in data.get("adapters", {}):
-        from aictl.core.output import err
-        err(f"Adapter not found: {args.name}")
+    if name not in data.get("adapters", {}):
+        err(f"Adapter not found: {name}")
         return 1
-    del data["adapters"][args.name]
+    del data["adapters"][name]
     mgr._save(data)
-    ok(f"Adapter deleted: {args.name}")
+    ok(f"Adapter deleted: {name}")
     return 0
 
 
 def run_activate(args: argparse.Namespace) -> int:
     """Mark an adapter as active."""
+    name = _norm_name(args.name)
     mgr = LoRAManager()
     data = mgr._load()
-    if args.name not in data.get("adapters", {}):
-        from aictl.core.output import err
-        err(f"Adapter not found: {args.name}")
+    if name not in data.get("adapters", {}):
+        err(f"Adapter not found: {name}")
         return 1
-    data["adapters"][args.name]["active"] = True
+    data["adapters"][name]["active"] = True
     mgr._save(data)
-    ok(f"Adapter activated: {args.name}")
+    ok(f"Adapter activated: {name}")
     return 0
 
 
 def run_deactivate(args: argparse.Namespace) -> int:
     """Mark an adapter as inactive."""
+    name = _norm_name(args.name)
     mgr = LoRAManager()
     data = mgr._load()
-    if args.name not in data.get("adapters", {}):
-        from aictl.core.output import err
-        err(f"Adapter not found: {args.name}")
+    if name not in data.get("adapters", {}):
+        err(f"Adapter not found: {name}")
         return 1
-    data["adapters"][args.name]["active"] = False
+    data["adapters"][name]["active"] = False
     mgr._save(data)
-    ok(f"Adapter deactivated: {args.name}")
+    ok(f"Adapter deactivated: {name}")
     return 0
 
 
 def run_route(args: argparse.Namespace) -> int:
     """Set traffic weight for a LoRA adapter (proportional routing)."""
+    name = _norm_name(args.name)
     weight = max(0, min(100, getattr(args, "weight", 100)))
     mgr = LoRAManager()
     data = mgr._load()
-    if args.name not in data.get("adapters", {}):
-        from aictl.core.output import err
-        err(f"Adapter not found: {args.name}")
+    if name not in data.get("adapters", {}):
+        err(f"Adapter not found: {name}")
         return 1
-    data["adapters"][args.name]["traffic_weight"] = weight
+    data["adapters"][name]["traffic_weight"] = weight
     mgr._save(data)
 
     if getattr(args, "json", False):
-        print_json({"name": args.name, "traffic_weight": weight})
+        print_json({"name": name, "traffic_weight": weight})
         return 0
 
-    ok(f"Adapter {args.name} → weight {weight}")
+    ok(f"Adapter {name} → weight {weight}")
     # Show sibling weights for the same base model
-    adapter_data = data["adapters"][args.name]
+    adapter_data = data["adapters"][name]
     base = adapter_data.get("base_model", "")
     siblings = [(n, d["traffic_weight"])
                 for n, d in data["adapters"].items()
