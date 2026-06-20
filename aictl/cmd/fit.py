@@ -63,6 +63,16 @@ def run(args: argparse.Namespace) -> int:
         print("  Try: aictl fit qwen3:7b --gpu auto")
         return 1
 
+    # Context length and concurrency are physical quantities: a value < 1 is
+    # meaningless and (worse) yields a NEGATIVE KV-cache estimate that silently
+    # under-reports total VRAM, making a model falsely appear to fit.
+    if getattr(args, "context", 8192) < 1:
+        err(f"--context must be >= 1 (got {args.context}).")
+        return 1
+    if getattr(args, "concurrent", 1) < 1:
+        err(f"--concurrent must be >= 1 (got {args.concurrent}).")
+        return 1
+
     target = _find_model(args.model, MODELS)
     if target is None:
         err(f"Unknown model: {args.model}")
