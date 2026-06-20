@@ -554,6 +554,12 @@ def search(
     if not query.strip():
         return []
 
+    # Guard the final `[:k]` slice: a negative k turns it into `[:-3]`, which
+    # returns *all but the last 3* fused results — the inverse of "top-k" — and
+    # k == 0 should mean "no results", not the whole list via some other path.
+    if k <= 0:
+        return []
+
     chunks = [c for c in store.all_chunks_with_embeddings() if c.embedding is not None]
     if not chunks:
         return []

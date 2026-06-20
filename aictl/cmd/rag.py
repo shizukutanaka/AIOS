@@ -106,6 +106,12 @@ def run_ask(args: argparse.Namespace) -> int:
     from aictl.core.rag import RagStore, answer
     from aictl.core.empty_state import show as show_empty
 
+    # -k is a retrieval count: a value < 1 is meaningless and would otherwise
+    # hit the negative-slice trap (returning all-but-last-k fused results).
+    if args.k < 1:
+        err(f"-k must be >= 1 (got {args.k}).")
+        return 1
+
     store = RagStore()
     if store.stats()["embedded"] == 0:
         show_empty("rag_index")
@@ -157,6 +163,11 @@ def run_search(args: argparse.Namespace) -> int:
     """Search indexed documents."""
     from aictl.core.rag import RagStore, search
     from aictl.core.empty_state import show as show_empty
+
+    # -k is a retrieval count; reject < 1 before it hits the negative-slice trap.
+    if args.k < 1:
+        err(f"-k must be >= 1 (got {args.k}).")
+        return 1
 
     store = RagStore()
     if store.stats()["embedded"] == 0:
