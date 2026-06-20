@@ -246,9 +246,18 @@ def run_route(args: argparse.Namespace) -> int:
 
 def run_autotune(args: argparse.Namespace) -> int:
     """Recommend which adapters to keep loaded given the VRAM budget."""
+    # A VRAM budget is a physical quantity: a value < 1 GB is meaningless and
+    # (worse) a negative budget makes `used + overhead <= budget` always false,
+    # silently evicting every adapter while printing a nonsensical negative
+    # "X MB / -Y MB" line. Reject it up front (cf. `fit` --context/--concurrent,
+    # `cost forecast` --gpus).
+    vram_gb = getattr(args, "vram", 24)
+    if vram_gb < 1:
+        err(f"--vram must be >= 1 GB (got {vram_gb}).")
+        return 1
     mgr = LoRAManager()
     adapters = mgr.list_adapters(base_model=args.base)
-    vram_budget_mb = getattr(args, "vram", 24) * 1024
+    vram_budget_mb = vram_gb * 1024
 
     if not adapters:
         print(f"No adapters registered for base model: {args.base}")
