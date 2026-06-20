@@ -57,6 +57,12 @@ class WarmupManager:
 
     def get_warmup_candidates(self, top_n: int = 3) -> list[UsageRecord]:
         """Return the top N most-used models for preloading."""
+        # Guard the slice: `scored[:top_n]` with a negative top_n is the classic
+        # trap — `scored[:-3]` returns *all but the last 3*, so `--top -3` would
+        # warm up (library_size - 3) models, the inverse of limiting to a few.
+        # A non-positive request means "no candidates", never "almost all".
+        if top_n <= 0:
+            return []
         usage = self._load_usage()
         records: list[UsageRecord] = []
         for key, data in usage.items():

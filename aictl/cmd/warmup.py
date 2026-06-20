@@ -6,7 +6,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, print_json, print_table
+from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.state import StateStore
 from aictl.runtime.warmup import WarmupManager
 
@@ -41,9 +41,15 @@ def register(sub: Any) -> None:
 
 def run_warmup(args: argparse.Namespace) -> int:
     """Execute the warmup subcommand."""
+    # --top is a count of models to warm: a value < 1 is meaningless and would
+    # otherwise hit the negative-slice trap (warming library_size - N models).
+    top = getattr(args, "top", 3)
+    if top < 1:
+        err(f"--top must be >= 1 (got {top}).")
+        return 1
     store = StateStore(getattr(args, "state_dir", None))
     mgr = WarmupManager(store)
-    candidates = mgr.get_warmup_candidates(top_n=getattr(args, "top", 3))
+    candidates = mgr.get_warmup_candidates(top_n=top)
 
     if not candidates:
         if getattr(args, "json", False):
@@ -91,6 +97,10 @@ def run_schedule(args: argparse.Namespace) -> int:
 
     interval = getattr(args, "every", "1h")
     top = getattr(args, "top", 3)
+    # Don't persist a schedule that would later warm (library_size - N) models.
+    if top < 1:
+        err(f"--top must be >= 1 (got {top}).")
+        return 1
     secs = _parse_interval_secs(interval)
     next_run = _time.time() + secs
 
