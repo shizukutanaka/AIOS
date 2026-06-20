@@ -24,7 +24,7 @@ import os
 import time
 from pathlib import Path
 
-from aictl.core.output import ok, warn, print_kv, print_json
+from aictl.core.output import ok, warn, err, print_kv, print_json
 
 
 # ── Default configuration ──────────────────────────────────
@@ -107,6 +107,22 @@ def register(sub: Any) -> None:
     p.set_defaults(func=run_summary)
 
 
+def _check_period_days(args: argparse.Namespace) -> int | None:
+    """Reject a sub-1 --period-days; return an exit code if invalid, else None.
+
+    period_days is an analysis window. A value < 1 is meaningless and (worse) a
+    negative value drives `usage_fraction = min(1.0, period_days / 30)` negative,
+    yielding a NEGATIVE hardware-depreciation cost and an inverted total TCO
+    (e.g. --period-days -30 reported total_usd = -51.84). Reject it up front,
+    matching the established physical-quantity convention.
+    """
+    period_days = getattr(args, "period_days", 30)
+    if period_days < 1:
+        err(f"--period-days must be >= 1 (got {period_days}).")
+        return 1
+    return None
+
+
 def _compute_energy(cfg: dict, period_days: int, records: list) -> tuple[float, float]:
     """Return (estimated_gpu_hours, kwh) for the period."""
     active_seconds = sum(r.duration_ms / 1000 for r in records
@@ -120,6 +136,10 @@ def run_summary(args: argparse.Namespace) -> int:
     """Show this month's true cost breakdown."""
     from aictl.core.perf import read_recent
     from aictl.core.sem_cache import get_default_cache
+
+    rc = _check_period_days(args)
+    if rc is not None:
+        return rc
 
     cfg = _load_config()
     period_days = getattr(args, "period_days", 30)
@@ -213,6 +233,10 @@ def run_summary(args: argparse.Namespace) -> int:
 def run_carbon(args: argparse.Namespace) -> int:
     """Energy + carbon advisor with GPU power-cap recommendations."""
     from aictl.core.perf import read_recent
+
+    rc = _check_period_days(args)
+    if rc is not None:
+        return rc
 
     cfg = _load_config()
     region = getattr(args, "region", "global")
