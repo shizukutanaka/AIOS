@@ -68,7 +68,9 @@ def register(sub: Any) -> None:
 def run_list(args: argparse.Namespace) -> int:
     """Execute the list subcommand."""
     mgr = LoRAManager()
-    adapters = mgr.list_adapters(base_model=getattr(args, "base", ""))
+    # Strip the base filter for symmetry: `lora add` stores a stripped base
+    # (Pass 115), so a padded filter must still match (cf. Pass 122).
+    adapters = mgr.list_adapters(base_model=_norm_name(getattr(args, "base", "")))
 
     if getattr(args, "json", False):
         print_json([{"name": a.name, "base": a.base_model, "rank": a.rank,
@@ -114,14 +116,15 @@ def run_add(args: argparse.Namespace) -> int:
 
 def run_budget(args: argparse.Namespace) -> int:
     """Execute the budget subcommand."""
+    base = _norm_name(args.base)
     mgr = LoRAManager()
-    budget = mgr.vram_budget(args.base)
+    budget = mgr.vram_budget(base)
 
     if getattr(args, "json", False):
         print_json(budget)
         return 0
 
-    ok(f"VRAM Budget: {args.base}")
+    ok(f"VRAM Budget: {base}")
     print_kv([
         ("Base VRAM", f"{budget['base_vram_mb']} MB"),
         ("Adapter VRAM", f"{budget['adapter_vram_mb']} MB"),
@@ -265,12 +268,13 @@ def run_autotune(args: argparse.Namespace) -> int:
     if vram_gb < 1:
         err(f"--vram must be >= 1 GB (got {vram_gb}).")
         return 1
+    base = _norm_name(args.base)  # match the stripped storage key (Pass 115/122)
     mgr = LoRAManager()
-    adapters = mgr.list_adapters(base_model=args.base)
+    adapters = mgr.list_adapters(base_model=base)
     vram_budget_mb = vram_gb * 1024
 
     if not adapters:
-        print(f"No adapters registered for base model: {args.base}")
+        print(f"No adapters registered for base model: {base}")
         return 0
 
     # Sort by traffic_weight desc — keep highest-traffic adapters in VRAM
@@ -288,7 +292,7 @@ def run_autotune(args: argparse.Namespace) -> int:
 
     if getattr(args, "json", False):
         print_json({
-            "base_model": args.base,
+            "base_model": base,
             "vram_budget_mb": vram_budget_mb,
             "vram_used_mb": used_mb,
             "keep": [a.name for a in keep],
@@ -296,7 +300,7 @@ def run_autotune(args: argparse.Namespace) -> int:
         })
         return 0
 
-    ok(f"LoRA auto-tune for {args.base} ({getattr(args, 'vram', 24)} GB VRAM budget)")
+    ok(f"LoRA auto-tune for {base} ({getattr(args, 'vram', 24)} GB VRAM budget)")
     print(f"\n  Used: {used_mb} MB / {vram_budget_mb} MB")
     if keep:
         print("\n  Keep loaded (by traffic weight):")

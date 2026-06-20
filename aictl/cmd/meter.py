@@ -39,7 +39,7 @@ def run_usage(args: argparse.Namespace) -> int:
     meter = TokenMeter()
     buckets = meter.list_usage()
 
-    entity = getattr(args, "entity", "")
+    entity = getattr(args, "entity", "").strip()
     if entity:
         buckets = [b for b in buckets if b.entity_id == entity]
 
