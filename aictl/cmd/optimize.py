@@ -10,7 +10,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, print_json, print_table
+from aictl.core.output import ok, err, print_json, print_table
 from aictl.runtime.adapters import discover_engines, get_adapter
 
 
@@ -129,6 +129,13 @@ def _analyze_engine(engine: str, endpoint: str, slo: Any) -> list[dict[str, Any]
 
 def run(args: argparse.Namespace) -> int:
     """Analyze metrics and surface the top tuning recommendations."""
+    # --top is a result count; reject < 1 before it hits the negative-slice trap
+    # (`all_recs[:top]` with top=-3 returns all-but-last-3 recommendations).
+    top = getattr(args, "top", 5)
+    if top < 1:
+        err(f"--top must be >= 1 (got {top}).")
+        return 1
+
     from pathlib import Path
     from aictl.core.config import load_config
 

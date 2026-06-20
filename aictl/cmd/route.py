@@ -38,7 +38,7 @@ import re
 import time
 from pathlib import Path
 
-from aictl.core.output import ok, warn, print_json
+from aictl.core.output import ok, warn, err, print_json
 
 
 # ── Complexity heuristics ─────────────────────────────────
@@ -311,7 +311,13 @@ def run_test(args: argparse.Namespace) -> int:
         ("COMPLEX", "Design a distributed cache system that handles 1M requests/second."),
     ]
 
-    n = min(getattr(args, "n", 10), len(_TEST_CASES))
+    # --n is a count of test prompts; reject < 1 before the negative-slice trap
+    # (`_TEST_CASES[:n]` with n=-3 runs all-but-last-3 cases, more than asked).
+    raw_n = getattr(args, "n", 10)
+    if raw_n < 1:
+        err(f"--n must be >= 1 (got {raw_n}).")
+        return 1
+    n = min(raw_n, len(_TEST_CASES))
     cases = _TEST_CASES[:n]
     correct = 0
     results = []

@@ -168,6 +168,11 @@ def recommend(
         candidates.append((score, m))
 
     candidates.sort(key=lambda x: x[0], reverse=True)
+    # Guard the slice: a negative max_results turns `[:max_results]` into the
+    # inverted `[:-3]` (all but the last 3) — the opposite of "top N". A
+    # non-positive request means no recommendations.
+    if max_results <= 0:
+        return []
     return [m for _, m in candidates[:max_results]]
 
 
