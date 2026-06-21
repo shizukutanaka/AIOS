@@ -11,6 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 from aictl.core.output import print_json, print_table, err
 from aictl.core.audit import get_audit_log
+from aictl.core.argtypes import positive_int, nonneg_int
 
 
 def _parse_since(since: str) -> float:
@@ -37,7 +38,8 @@ def _parse_since(since: str) -> float:
 def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("audit", help="View audit log")
-    p.add_argument("-n", "--lines", type=int, default=20, help="Number of entries")
+    p.add_argument("-n", "--lines", type=positive_int, default=20,
+                   help="Number of entries (>= 1)")
     p.add_argument("--event", default="", help="Filter by event type")
     p.add_argument("--since", default="", help="Show entries since duration (e.g. 5m, 1h, 2d)")
     p.add_argument("--resource", default="", help="Filter by resource name (stack/model/node)")
@@ -50,12 +52,17 @@ def register(sub: Any) -> None:
     stats = asub.add_parser("stats", help="Summarize audit events by type/actor/outcome")
     stats.add_argument("--since", default="7d", dest="stats_since",
                        help="Time window (e.g. 7d, 24h). default: 7d")
-    stats.add_argument("--top", type=int, default=10, help="Top N event types to show")
+    stats.add_argument("--top", type=positive_int, default=10,
+                       help="Top N event types to show (>= 1)")
     stats.set_defaults(func=run_stats)
 
     purge = asub.add_parser("purge", help="Delete audit log files older than N days")
-    purge.add_argument("--max-age", type=int, default=30, dest="max_age",
-                       help="Delete audit files older than N days (default: 30)")
+    # nonneg, not positive: 0 = "purge everything older than today" is a
+    # legitimate request, but a *negative* max-age makes the cutoff a FUTURE
+    # timestamp so EVERY file (even one written this second) matches — silently
+    # wiping the entire audit history. Reject negatives at parse time.
+    purge.add_argument("--max-age", type=nonneg_int, default=30, dest="max_age",
+                       help="Delete audit files older than N days (default: 30, >= 0)")
     purge.add_argument("--dry-run", action="store_true",
                        help="Show what would be deleted without deleting")
     purge.set_defaults(func=run_purge)
@@ -76,7 +83,9 @@ def run_stats(args: argparse.Namespace) -> int:
     by_event: Counter = Counter(e.event for e in entries)
     by_actor: Counter = Counter(e.actor for e in entries)
     by_outcome: Counter = Counter(e.outcome for e in entries)
-    top = getattr(args, "top", 10)
+    # Defense-in-depth: Counter.most_common(n<1) silently returns [] (negative)
+    # or [] (zero) — "top -2" would show nothing instead of erroring. Floor at 1.
+    top = max(1, getattr(args, "top", 10))
     top_events = by_event.most_common(top)
 
     if getattr(args, "json", False):
@@ -112,7 +121,11 @@ def run_purge(args: argparse.Namespace) -> int:
     from pathlib import Path as _Path
     state_dir = _Path(args.state_dir) if getattr(args, "state_dir", None) else None
     log = get_audit_log(state_dir)
-    max_age_secs = getattr(args, "max_age", 30) * 86400
+    # Defense-in-depth (SDK callers may build a Namespace directly, bypassing
+    # the nonneg_int parser type): a negative max-age would make the cutoff a
+    # future time and match every file — never let purge wipe the whole history.
+    max_age_days = max(0, getattr(args, "max_age", 30))
+    max_age_secs = max_age_days * 86400
     dry_run = getattr(args, "dry_run", False)
     now = _time.time()
 
@@ -140,7 +153,7 @@ def run_purge(args: argparse.Namespace) -> int:
 
     from aictl.core.output import ok as _ok
     action = "Would delete" if dry_run else "Deleting"
-    _ok(f"{action} {len(to_delete)} audit file(s) (>{args.max_age} days old)")
+    _ok(f"{action} {len(to_delete)} audit file(s) (>{max_age_days} days old)")
     for p in to_delete:
         print(f"  - {p.name}")
     if not dry_run:
@@ -157,9 +170,14 @@ def run(args: argparse.Namespace) -> int:
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
     log = get_audit_log(state_dir)
 
+    # Defense-in-depth (SDK callers bypass the positive_int parser type): a
+    # negative --lines would turn `entries[:lines]` into the inverted-slice trap
+    # (`[:-3]` returns all-but-3, the opposite of "show 3"). Floor at 1.
+    lines = max(1, getattr(args, "lines", 20))
+
     # Read a generous pool then apply extra filters client-side
-    pool = args.lines * 10 if (getattr(args, "since", "") or getattr(args, "resource", "")
-                                or getattr(args, "actor", "")) else args.lines
+    pool = lines * 10 if (getattr(args, "since", "") or getattr(args, "resource", "")
+                          or getattr(args, "actor", "")) else lines
     entries = log.read(n=pool, event_filter=getattr(args, "event", ""))
 
     # Apply additional filters
@@ -175,7 +193,7 @@ def run(args: argparse.Namespace) -> int:
         entries = [e for e in entries if actor_filter in e.actor.lower()]
 
     # Trim to requested limit
-    entries = entries[:args.lines]
+    entries = entries[:lines]
 
     export_path = getattr(args, "export", "")
     if export_path:
