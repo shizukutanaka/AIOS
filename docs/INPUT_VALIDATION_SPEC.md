@@ -68,6 +68,20 @@ must **not** emit a partial/garbage JSON body on stdout (a consumer piping to
 a non-zero exit). The `--json` exit code must agree with the human-path exit
 code for the same input (no "always return 0 under --json").
 
+### V6 — No future-dated cutoff in time-threshold purges
+A retention/cleanup window of the form `cutoff = now - age * unit` (used by every
+`purge`/`gc`/`cleanup`/`find_stale` path) must never let `age` go negative. A
+negative age makes the cutoff a **future** timestamp, so the `created/accessed <
+cutoff` test matches **every** item — including ones written this second —
+silently deleting all data instead of only the stale tail. This is V1 applied to
+*destructive* age flags, and it is the highest-severity instance because the
+failure mode is irreversible data loss, not just wrong output. Enforce it on both
+edges: the CLI age flag uses `nonneg_int` (0 = "purge all up to now" is a
+legitimate request; only negatives are rejected, exit 2), **and** the data-layer
+function floors `age = max(0, age)` so an SDK caller constructing the call
+directly can never produce a future cutoff. Audited paths: `audit purge`,
+`context gc`, `snapshot purge`, `model cleanup`, `model cache`/`find_stale`.
+
 ## 3. 長所 (Strengths)
 
 - **Honest failure is now the default.** Across the validated surface, impossible
@@ -131,6 +145,11 @@ code for the same input (no "always return 0 under --json").
 - V4: `format_for_user(ValueError(...))` / `KeyError` yields "Invalid input"
   and never the "report a bug" fallback.
 - V5: a rejected `--json` invocation exits non-zero and prints no JSON body.
+- V6: the age flags of all five time-threshold purges (`audit purge`,
+  `context gc`, `snapshot purge`, `model cleanup`, `model cache`) reject a
+  negative value at parse time, and the data layer floors the age so a negative
+  can never produce a future cutoff that wipes fresh data
+  (`tests/test_new_features_{134,136,137}.py`).
 
 `tests/test_argtypes.py` verifies the shared `positive_int`/`nonneg_int` types
 (improvement #2) reject sub-minimum and non-integer input at parse time.
