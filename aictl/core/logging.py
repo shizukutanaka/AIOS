@@ -137,6 +137,12 @@ class StructuredLogger:
 
     def read_logs(self, n: int = 50, level: str = "") -> list[dict[str, Any]]:
         """Read recent log entries."""
+        # A limit of 0 (or negative) means "no entries", not "one". The loop's
+        # `len(entries) >= n` short-circuit returns after the FIRST append for any
+        # n <= 1 (1 >= 0 and 1 >= -2 are both True), so `read_logs(0)` wrongly
+        # yielded 1 row. Guard up front, matching EventBus.recent / rag.search.
+        if n <= 0:
+            return []
         entries: list[dict[str, Any]] = []
         for f in sorted(self.log_dir.glob("aictl-*.jsonl"), reverse=True):
             try:
