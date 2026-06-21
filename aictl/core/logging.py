@@ -61,12 +61,22 @@ class LogEntry:
 class StructuredLogger:
     """JSON Lines logger with file rotation."""
 
+    # Severity order. Class-level so it is available for level normalization.
+    _LEVELS = {"debug": 0, "info": 1, "warn": 2, "error": 3}
+    _DEFAULT_LEVEL = "info"
+
     def __init__(self, name: str, log_dir: Path | None = None,
                  level: str = "info"):
         """Initialize structured logger."""
         self.name = name
-        self.level = level
-        self._levels = {"debug": 0, "info": 1, "warn": 2, "error": 3}
+        self._levels = self._LEVELS
+        # Normalize + validate the level. An unknown value (e.g. AIOS_LOG_LEVEL=
+        # "warning" instead of "warn", or a typo) must NOT silently disable
+        # filtering: `_levels.get(bad, 0)` would make the threshold 0, logging
+        # *everything* including debug — the opposite of the user's intent to
+        # quiet the logs. Fall back to the documented default instead.
+        norm = (level or "").strip().lower()
+        self.level = norm if norm in self._LEVELS else self._DEFAULT_LEVEL
 
         if log_dir is None:
             from aictl.core.state import DEFAULT_STATE_DIR
