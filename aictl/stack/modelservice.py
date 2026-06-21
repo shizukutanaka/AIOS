@@ -44,6 +44,24 @@ class ModelServiceConfig:
     namespace: str = "default"
     image: str = VLLM_IMAGE
 
+    def __post_init__(self) -> None:
+        # Validate physical quantities (mirrors DisaggConfig). Without this a
+        # negative flag flowed straight into the Helm values as
+        # `replicaCount: -2` / `tensorParallelSize: -1` — a manifest that looks
+        # valid but is rejected cluster-side, surfacing as a confusing apply-time
+        # error far from the `aictl deploy modelservice` invocation that caused it.
+        # replicas/gpu_count allow 0 (replicas=0 is a legitimate scale-to-zero
+        # baseline the HPA block handles); tensor_parallel/max_model_len are
+        # divisor/length quantities that are meaningless below 1.
+        if self.replicas < 0:
+            raise ValueError(f"replicas must be >= 0, got {self.replicas}")
+        if self.gpu_count < 0:
+            raise ValueError(f"gpu_count must be >= 0, got {self.gpu_count}")
+        if self.tensor_parallel < 1:
+            raise ValueError(f"tensor_parallel must be >= 1, got {self.tensor_parallel}")
+        if self.max_model_len < 1:
+            raise ValueError(f"max_model_len must be >= 1, got {self.max_model_len}")
+
 
 # Preset configurations matching llm-d's BaseConfig patterns
 PRESETS: dict[str, dict[str, Any]] = {
