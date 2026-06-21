@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.argtypes import positive_int
 
 
 # GPU VRAM catalog (April 2026)
@@ -46,8 +47,8 @@ def register(sub: Any) -> None:
     )
     p.add_argument("model", help="Model name (e.g. llama3:70b, qwen3:7b)")
     p.add_argument("--gpu", default="auto", help="GPU type override")
-    p.add_argument("--context", type=int, default=8192, help="Context length")
-    p.add_argument("--concurrent", type=int, default=1, help="Concurrent requests")
+    p.add_argument("--context", type=positive_int, default=8192, help="Context length")
+    p.add_argument("--concurrent", type=positive_int, default=1, help="Concurrent requests")
     p.add_argument("--use-case", default="", help="chat | code | embedding")
     p.set_defaults(func=run)
 

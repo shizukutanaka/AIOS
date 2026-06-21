@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.argtypes import positive_int
 from aictl.core.state import StateStore
 from aictl.runtime.warmup import WarmupManager
 
@@ -17,7 +18,7 @@ def register(sub: Any) -> None:
     wsub = p.add_subparsers(dest="warmup_cmd")
 
     run_p = wsub.add_parser("run", help="Execute warmup")
-    run_p.add_argument("--top", type=int, default=3, help="Number of models to warm up")
+    run_p.add_argument("--top", type=positive_int, default=3, help="Number of models to warm up")
     run_p.set_defaults(func=run_warmup)
 
     stats = wsub.add_parser("stats", help="Show model usage statistics")
@@ -26,7 +27,7 @@ def register(sub: Any) -> None:
     schedule = wsub.add_parser("schedule", help="Set up a recurring warmup schedule")
     schedule.add_argument("--every", default="1h",
                           help="Interval (e.g. 30m, 1h, 6h)")
-    schedule.add_argument("--top", type=int, default=3,
+    schedule.add_argument("--top", type=positive_int, default=3,
                           help="Number of top models to warm")
     schedule.set_defaults(func=run_schedule)
 

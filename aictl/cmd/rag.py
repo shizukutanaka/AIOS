@@ -19,6 +19,7 @@ import argparse
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.argtypes import positive_int
 
 
 def register(sub: Any) -> None:
@@ -36,13 +37,13 @@ def register(sub: Any) -> None:
 
     p_ask = sp.add_parser("ask", help="Ask a question. Uses indexed docs as context.")
     p_ask.add_argument("question", help="Your question.")
-    p_ask.add_argument("-k", type=int, default=5,
+    p_ask.add_argument("-k", type=positive_int, default=5,
                        help="Number of chunks to retrieve (default: 5)")
     p_ask.set_defaults(func=run_ask)
 
     p_search = sp.add_parser("search", help="Show raw retrieval matches.")
     p_search.add_argument("query", help="Search query.")
-    p_search.add_argument("-k", type=int, default=5)
+    p_search.add_argument("-k", type=positive_int, default=5)
     p_search.set_defaults(func=run_search)
 
     p_status = sp.add_parser("status", help="Show index statistics.")

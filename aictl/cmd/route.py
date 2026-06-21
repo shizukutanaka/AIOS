@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.argtypes import positive_int
 
 
 # ── Complexity heuristics ─────────────────────────────────
@@ -156,7 +157,7 @@ def register(sub: Any) -> None:
 
     # test
     t = sp.add_parser("test", help="Run routing accuracy benchmark on built-in test set.")
-    t.add_argument("--n",    type=int, default=10, help="Number of test prompts")
+    t.add_argument("--n",    type=positive_int, default=10, help="Number of test prompts")
     t.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     t.set_defaults(func=run_test)
 

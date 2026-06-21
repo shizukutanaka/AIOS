@@ -103,10 +103,16 @@ code for the same input (no "always return 0 under --json").
 
 ## 5. 改善点 (Improvement points — prioritized)
 
-1. **[implemented this pass]** Add the V-invariants as a machine-checked
-   conformance suite so regressions fail `aictl gate`.
-2. A shared `argparse` helper (`positive_int`, `nonneg_int`) to make V1 a
-   *type*, eliminating per-handler boilerplate and the forget-to-validate risk.
+1. **[implemented]** Add the V-invariants as a machine-checked conformance
+   suite so regressions fail `aictl gate`.
+2. **[implemented]** A shared `argparse` helper (`aictl/core/argtypes.py`:
+   `positive_int`, `nonneg_int`) makes V1 a *type*, rejecting bad input at
+   **parse time** (argparse exit 2) before the handler runs — the idiomatic
+   pattern recommended across the Python community (Qiita/Zenn: "type引数で
+   変換関数を指定" / "入力時点で弾ける設計が理想的"). Wired into the count/size
+   flags (`recommend`/`optimize`/`route`/`warmup`/`fit`/`rag`/`lora`) and the
+   nonneg quota flags (`meter`). Handler-level guards are retained as
+   defense-in-depth for programmatic/SDK callers that bypass the parser.
 3. Extend identifier hygiene (V2) to engine-type flags with an explicit
    membership check (reject unknown engine names instead of silently ignoring).
 4. Mirror the V-invariants into the Go port and add a cross-language parity
@@ -125,3 +131,15 @@ code for the same input (no "always return 0 under --json").
 - V4: `format_for_user(ValueError(...))` / `KeyError` yields "Invalid input"
   and never the "report a bug" fallback.
 - V5: a rejected `--json` invocation exits non-zero and prints no JSON body.
+
+`tests/test_argtypes.py` verifies the shared `positive_int`/`nonneg_int` types
+(improvement #2) reject sub-minimum and non-integer input at parse time.
+
+## 7. References (調査)
+
+The parse-time validation approach (improvement #2) follows community best
+practice surveyed on Qiita and Zenn:
+- argparse `type=` is a *conversion function*, not a type annotation — raise
+  `argparse.ArgumentTypeError` to reject at parse time.
+- Constraints that `choices=` cannot express (numeric ranges) should be rejected
+  at input time ("入力時点で弾ける設計が理想的"), not deep in handler logic.

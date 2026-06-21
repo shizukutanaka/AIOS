@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.argtypes import nonneg_int
 from aictl.core.metering import TokenMeter
 
 
@@ -21,8 +22,8 @@ def register(sub: Any) -> None:
 
     quota = msub.add_parser("quota", help="Set token quota")
     quota.add_argument("entity", help="Entity ID (apikey or tenant)")
-    quota.add_argument("--per-day", type=int, default=None)
-    quota.add_argument("--per-month", type=int, default=None)
+    quota.add_argument("--per-day", type=nonneg_int, default=None)
+    quota.add_argument("--per-month", type=nonneg_int, default=None)
     quota.set_defaults(func=run_quota)
 
     report = msub.add_parser("report", help="Cost attribution report per entity")

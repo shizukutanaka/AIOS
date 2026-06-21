@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.argtypes import positive_int
 from aictl.runtime.broker import full_detect
 from aictl.runtime.recommend import recommend
 
@@ -16,7 +17,7 @@ def register(sub: Any) -> None:
     p = sub.add_parser("recommend", help="Recommend models for your hardware")
     p.add_argument("--use-case", default="", choices=["chat", "code", "embedding", "vision", "stt", ""],
                    help="Filter by use case")
-    p.add_argument("--top", type=int, default=5, help="Max results")
+    p.add_argument("--top", type=positive_int, default=5, help="Max results")
     p.set_defaults(func=run)
 
 

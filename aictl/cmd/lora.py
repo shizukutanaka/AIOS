@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_kv, print_table
+from aictl.core.argtypes import positive_int
 from aictl.runtime.lora import LoRAManager, LoRAAdapter
 
 
@@ -58,7 +59,7 @@ def register(sub: Any) -> None:
 
     autotune = lsub.add_parser("auto-tune", help="Recommend which adapters to keep loaded")
     autotune.add_argument("base", help="Base model name")
-    autotune.add_argument("--vram", type=int, default=24,
+    autotune.add_argument("--vram", type=positive_int, default=24,
                           help="Available VRAM in GB for adapter budget")
     autotune.set_defaults(func=run_autotune)
 
