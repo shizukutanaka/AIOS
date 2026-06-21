@@ -48,3 +48,45 @@ def nonneg_int(value: str) -> int:
     if n < 0:
         raise argparse.ArgumentTypeError(f"must be >= 0, got {n}")
     return n
+
+
+# Canonical inference engine identifiers (matches aictl/runtime/adapters.py).
+ENGINE_TYPES = ("ollama", "vllm", "sglang")
+
+
+class OptionalChoice:
+    """An argparse ``choices`` container that also accepts an empty sentinel.
+
+    argparse validates ``value in action.choices`` and formats the usage error
+    by *iterating* ``choices`` — and it accepts any object supporting the ``in``
+    operator (dict, set, custom container). We exploit that so a **filter** flag
+    can keep its ``default=""`` ("no filter" / "all") *and* reject a typo:
+
+        --engine ""      → accepted (no filter)
+        --engine vllm    → accepted
+        --engine vlim    → error: invalid choice: 'vlim' (choose from
+                           'ollama', 'vllm', 'sglang')
+
+    Without this, a misspelled filter value silently means "match nothing /
+    everything" instead of failing — the V2/improvement-#3 gap.
+    """
+
+    def __init__(self, options, *, allow_empty: bool = True):
+        self._options = tuple(options)
+        self._allow_empty = allow_empty
+
+    def __contains__(self, value: object) -> bool:
+        if self._allow_empty and value == "":
+            return True
+        return value in self._options
+
+    def __iter__(self):
+        # argparse renders the usage error / metavar from this iteration — list
+        # only the real options, not the empty sentinel.
+        return iter(self._options)
+
+
+def engine_filter_choices() -> OptionalChoice:
+    """`choices=` container for an optional engine-type *filter* (empty = all)."""
+    return OptionalChoice(ENGINE_TYPES)
+

@@ -11,7 +11,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
-from aictl.core.argtypes import positive_int
+from aictl.core.argtypes import positive_int, engine_filter_choices
 from aictl.runtime.adapters import discover_engines, get_adapter
 
 
@@ -24,7 +24,8 @@ def register(sub: Any) -> None:
         "optimize",
         help="Analyze inference metrics and recommend performance tuning",
     )
-    p.add_argument("--engine", default="", help="Target a specific engine (vllm/ollama/sglang)")
+    p.add_argument("--engine", default="", choices=engine_filter_choices(),
+                   help="Target a specific engine (vllm/ollama/sglang)")
     p.add_argument("--top", type=positive_int, default=5, help="Show top N recommendations (default 5)")
     p.set_defaults(func=run)
 

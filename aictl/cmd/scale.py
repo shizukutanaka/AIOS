@@ -11,6 +11,7 @@ import json
 from aictl.runtime.adapters import discover_engines
 from aictl.runtime.autoscaler import AutoScaler
 from aictl.core.output import print_json, print_table
+from aictl.core.argtypes import engine_filter_choices
 
 
 def register(sub: Any) -> None:
@@ -34,7 +35,8 @@ def register(sub: Any) -> None:
     hpa.set_defaults(func=run_hpa)
 
     status = ssub.add_parser("status", help="Show live autoscaling status for all engines")
-    status.add_argument("--engine", default="", help="Filter by engine type")
+    status.add_argument("--engine", default="", choices=engine_filter_choices(),
+                        help="Filter by engine type")
     status.add_argument("--json", action="store_true")
     status.set_defaults(func=run_status)
 

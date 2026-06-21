@@ -7,6 +7,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.argtypes import engine_filter_choices
 from aictl.runtime.adapters import discover_engines, EngineHealth
 
 
@@ -20,7 +21,8 @@ def register(sub: Any) -> None:
     ls.set_defaults(func=run_list)
 
     health = esub.add_parser("health", help="Show detailed engine health")
-    health.add_argument("--engine", default="", help="Filter by engine type (vllm/ollama/sglang)")
+    health.add_argument("--engine", default="", choices=engine_filter_choices(),
+                        help="Filter by engine type (vllm/ollama/sglang)")
     health.add_argument("--json", action="store_true")
     health.set_defaults(func=run_health)
 
