@@ -8,6 +8,7 @@ import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.state import StateStore
+from aictl.core.argtypes import nonneg_int
 
 
 def register(sub: Any) -> None:
@@ -27,7 +28,8 @@ def register(sub: Any) -> None:
 
     cache = msub.add_parser("cache", help="Model cache management")
     cache.add_argument("--clean", action="store_true", help="Remove stale entries")
-    cache.add_argument("--days", type=int, default=30, help="Stale threshold (days)")
+    cache.add_argument("--days", type=nonneg_int, default=30,
+                       help="Stale threshold in days (>= 0)")
     cache.set_defaults(func=run_cache)
 
     pull = msub.add_parser("pull", help="Pull model from OCI registry")
@@ -50,8 +52,11 @@ def register(sub: Any) -> None:
     inspect.set_defaults(func=run_inspect)
 
     cleanup = msub.add_parser("cleanup", help="Remove stale model registry entries")
-    cleanup.add_argument("--days", type=int, default=30,
-                         help="Remove models not updated in N days (default: 30)")
+    # nonneg, not positive: 0 = "remove all up to now" is legitimate, but a
+    # negative --days makes the cutoff a FUTURE time so every model (even one
+    # registered this second) is flagged stale — wiping the live registry.
+    cleanup.add_argument("--days", type=nonneg_int, default=30,
+                         help="Remove models not updated in N days (default: 30, >= 0)")
     cleanup.add_argument("--status", default="",
                          help="Only remove entries with this status (e.g. unavailable)")
     cleanup.add_argument("--dry-run", action="store_true",
@@ -251,7 +256,9 @@ def run_cleanup(args: argparse.Namespace) -> int:
     import time as _time
     store = StateStore(getattr(args, "state_dir", None))
     models = store.list_models()
-    days = getattr(args, "days", 30)
+    # Defense-in-depth (SDK callers bypass the nonneg_int parser type): a
+    # negative days makes the cutoff a future time and flags every model stale.
+    days = max(0, getattr(args, "days", 30))
     status_filter = getattr(args, "status", "")
     dry_run = getattr(args, "dry_run", False)
     cutoff = _time.time() - days * 86400

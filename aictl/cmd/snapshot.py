@@ -10,6 +10,7 @@ import argparse
 from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.state import StateStore
 from aictl.core.snapshots import SnapshotManager
+from aictl.core.argtypes import nonneg_int
 
 
 def register(sub: Any) -> None:
@@ -53,10 +54,13 @@ def register(sub: Any) -> None:
     validate_p.set_defaults(func=run_validate)
 
     purge_p = ssub.add_parser("purge", help="Delete snapshots older than N days")
-    purge_p.add_argument("--max-age", type=int, default=7, dest="max_age",
-                         help="Delete snapshots older than N days (default: 7)")
-    purge_p.add_argument("--keep", type=int, default=1,
-                         help="Minimum number of snapshots to keep (default: 1)")
+    # nonneg, not positive: 0 = "purge all older than now" is legitimate, but a
+    # negative max-age makes the threshold negative so `(now - created) > -N` is
+    # True for every snapshot — deleting all but --keep, the opposite of intent.
+    purge_p.add_argument("--max-age", type=nonneg_int, default=7, dest="max_age",
+                         help="Delete snapshots older than N days (default: 7, >= 0)")
+    purge_p.add_argument("--keep", type=nonneg_int, default=1,
+                         help="Minimum number of snapshots to keep (default: 1, >= 0)")
     purge_p.add_argument("--dry-run", action="store_true",
                          help="Show what would be deleted without deleting")
     purge_p.set_defaults(func=run_purge)
@@ -303,7 +307,10 @@ def run_purge(args: argparse.Namespace) -> int:
     mgr = SnapshotManager(store)
     snaps = mgr.list_snapshots()
 
-    max_age_secs = getattr(args, "max_age", 7) * 86400
+    # Defense-in-depth (SDK callers bypass the nonneg_int parser type): a
+    # negative max-age makes the threshold negative, matching every snapshot.
+    max_age_days = max(0, getattr(args, "max_age", 7))
+    max_age_secs = max_age_days * 86400
     keep = max(0, getattr(args, "keep", 1))
     dry_run = getattr(args, "dry_run", False)
     now = _time.time()
@@ -336,7 +343,7 @@ def run_purge(args: argparse.Namespace) -> int:
         return 0
 
     action = "Would delete" if dry_run else "Deleting"
-    ok(f"{action} {len(to_delete)} snapshots (>{args.max_age} days old)")
+    ok(f"{action} {len(to_delete)} snapshots (>{max_age_days} days old)")
     for s in to_delete:
         print(f"  - {s['id'][:40]}")
     if not dry_run:
