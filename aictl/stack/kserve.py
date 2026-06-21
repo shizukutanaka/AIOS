@@ -42,6 +42,29 @@ class LLMISvcConfig:
     speculative_model: str = ""
     speculative_tokens: int = 0
 
+    def __post_init__(self) -> None:
+        # Validate physical quantities (mirrors DisaggConfig / ModelServiceConfig).
+        # Without this an SDK caller's negative field flowed straight into the
+        # generated KServe LLMInferenceService as `replicas: -2` / a negative
+        # `parallelism.tensorParallel` — a manifest that looks valid but is
+        # rejected at apply time. replicas allows 0 (scale-to-zero); the
+        # parallelism factors are divisor/group sizes meaningless below 1;
+        # max_model_len/speculative_tokens use 0 as "auto/disabled".
+        if self.replicas < 0:
+            raise ValueError(f"replicas must be >= 0, got {self.replicas}")
+        if self.tensor_parallel < 1:
+            raise ValueError(f"tensor_parallel must be >= 1, got {self.tensor_parallel}")
+        if self.pipeline_parallel < 1:
+            raise ValueError(f"pipeline_parallel must be >= 1, got {self.pipeline_parallel}")
+        if self.max_model_len < 0:
+            raise ValueError(f"max_model_len must be >= 0, got {self.max_model_len}")
+        if self.speculative_tokens < 0:
+            raise ValueError(f"speculative_tokens must be >= 0, got {self.speculative_tokens}")
+        if not (0 < self.gpu_memory_utilization <= 1.0):
+            raise ValueError(
+                f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}"
+            )
+
 
 def stack_to_llmisvc(
     manifest: StackManifest,
