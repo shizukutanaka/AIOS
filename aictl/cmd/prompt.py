@@ -38,6 +38,15 @@ from pathlib import Path
 from aictl.core.output import ok, warn, err, print_json
 
 
+def _slugify(name: str) -> str:
+    """Canonical prompt key. A prompt is stored under a slug (spaces→'_',
+    lowercased), so the *same* transform must be applied on every lookup —
+    otherwise `prompt get "My Greeting"` can't find what `prompt save --name
+    "My Greeting"` stored as `my_greeting`. Canonicalize once, use everywhere
+    (leading/trailing whitespace is never part of the identity either)."""
+    return name.strip().replace(" ", "_").lower()
+
+
 def register(sub: Any) -> None:
     """Register CLI subcommand."""
     p = sub.add_parser(
@@ -97,7 +106,10 @@ def register(sub: Any) -> None:
 
 def run_save(args: argparse.Namespace) -> int:
     """Save or update a prompt."""
-    name = args.name.replace(" ", "_").lower()
+    name = _slugify(args.name)
+    if not name:
+        err("Prompt name is required (empty or whitespace-only is not allowed).")
+        return 1
 
     # Get text
     text = getattr(args, "text", "") or ""
@@ -188,7 +200,7 @@ def run_list(args: argparse.Namespace) -> int:
 def run_get(args: argparse.Namespace) -> int:
     """Get a prompt."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -234,7 +246,7 @@ def run_get(args: argparse.Namespace) -> int:
 def run_history(args: argparse.Namespace) -> int:
     """Show version history."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -257,7 +269,7 @@ def run_history(args: argparse.Namespace) -> int:
 def run_delete(args: argparse.Namespace) -> int:
     """Delete a prompt."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -277,7 +289,7 @@ def run_delete(args: argparse.Namespace) -> int:
 def run_export(args: argparse.Namespace) -> int:
     """Export to eval suite format."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -316,7 +328,7 @@ def run_export(args: argparse.Namespace) -> int:
 def run_run(args: argparse.Namespace) -> int:
     """Run a saved prompt with optional {input} substitution."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
