@@ -27,7 +27,11 @@ def run(args: argparse.Namespace) -> int:
     """Execute the watch command."""
     store = StateStore(getattr(args, "state_dir", None))
     config = load_config(store.dir)
-    interval = getattr(args, "interval", 5)
+    # Clamp the refresh interval: a negative value makes `time.sleep` raise
+    # ValueError ("sleep length must be non-negative") — crashing the monitor as
+    # a bogus "report a bug" — and 0 busy-loops at 100% CPU. Match the
+    # top/health/status convention of a >= 1s floor.
+    interval = max(1, getattr(args, "interval", 5))
 
     try:
         while True:
