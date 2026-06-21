@@ -94,6 +94,24 @@ def run_get(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_bool(value: str) -> bool:
+    """Parse a boolean config value with strtobool semantics.
+
+    The naive `value.lower() in ("true", "1", "yes")` silently maps *any*
+    unrecognized string (a typo like "treu", or "maybe", or "") to False — the
+    `bool("false")`-class pitfall — so a misspelled "true" silently stores the
+    opposite with no error. Recognize explicit true/false sets and reject
+    everything else (raises ValueError, handled like the int/float branches).
+    distutils.strtobool is gone in 3.12+ and we are stdlib-only, so inline it.
+    """
+    v = value.strip().lower()
+    if v in ("y", "yes", "t", "true", "on", "1"):
+        return True
+    if v in ("n", "no", "f", "false", "off", "0"):
+        return False
+    raise ValueError(f"invalid boolean: {value!r}")
+
+
 def run_set(args: argparse.Namespace) -> int:
     """Execute the set subcommand."""
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
@@ -120,7 +138,7 @@ def run_set(args: argparse.Namespace) -> int:
     old_val = obj[last]
     try:
         if isinstance(old_val, bool):
-            obj[last] = args.value.lower() in ("true", "1", "yes")
+            obj[last] = _parse_bool(args.value)
         elif isinstance(old_val, int):
             obj[last] = int(args.value)
         elif isinstance(old_val, float):
