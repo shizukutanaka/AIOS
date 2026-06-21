@@ -10,6 +10,7 @@ from aictl.core.output import ok, print_json, print_table
 from aictl.core.config import load_config
 from aictl.core.state import StateStore
 from aictl.runtime.continuity import ContextContinuityEngine, ContextSnapshot
+from aictl.core.argtypes import nonneg_int
 
 
 def register(sub: Any) -> None:
@@ -27,7 +28,11 @@ def register(sub: Any) -> None:
     ls.set_defaults(func=run_list)
 
     gc = csub.add_parser("gc", help="Garbage collect stale snapshots")
-    gc.add_argument("--max-age", type=int, default=24, help="Max age in hours")
+    # nonneg, not positive: 0 = "GC everything stale up to now" is legitimate,
+    # but a negative max-age makes the cutoff a future time and wipes ALL live
+    # snapshots (even fresh ones). Reject negatives at parse time.
+    gc.add_argument("--max-age", type=nonneg_int, default=24,
+                    help="Max age in hours (>= 0)")
     gc.set_defaults(func=run_gc)
 
     switch = csub.add_parser("switch", help="Restore a specific context snapshot by ID")

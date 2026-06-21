@@ -106,6 +106,11 @@ class ContextContinuityEngine:
     def gc(self, max_age_hours: int = 24) -> int:
         """Garbage collect stale snapshots. Returns number removed."""
         snapshots = self._load_index()
+        # A NEGATIVE max-age would make the cutoff a FUTURE timestamp, so
+        # `snap.created_at < cutoff` matches EVERY snapshot — even ones saved
+        # this second — silently wiping all live context. Floor at 0 ("GC
+        # everything stale up to now"), matching the audit-purge guard.
+        max_age_hours = max(0, max_age_hours)
         cutoff = time.time() - (max_age_hours * 3600)
         kept: list[ContextSnapshot] = []
         removed = 0
