@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_kv, print_json
+from aictl.core.argtypes import positive_int
 
 
 # ── Default configuration ──────────────────────────────────
@@ -91,8 +92,11 @@ def register(sub: Any) -> None:
 
     fc = sp.add_parser("forecast",
                        help="Project next 30-day cost based on recent trend.")
-    fc.add_argument("--days", type=int, default=14,
-                    help="Historical window for trend extrapolation (default: 14)")
+    # positive_int: the window feeds `sorted_dates[-days:]`. --days 0 makes
+    # `[-0:]` == `[:]` (silently "all history", not "0 days"), and a negative
+    # inverts the slice (`[2:]` for -2 — an arbitrary wrong subset). >= 1 only.
+    fc.add_argument("--days", type=positive_int, default=14,
+                    help="Historical window for trend extrapolation (default: 14, >= 1)")
     fc.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     fc.set_defaults(func=run_forecast)
 
@@ -403,7 +407,10 @@ def run_forecast(args: argparse.Namespace) -> int:
     from aictl.core.output import ok, warn, print_json
     from collections import defaultdict
 
-    window = getattr(args, "days", 14)
+    # Defense-in-depth (SDK callers bypass the positive_int parser type): floor
+    # the window at 1 so `sorted_dates[-window:]` can't degrade into the
+    # all-history (`[-0:]`) or inverted-slice (negative) trap.
+    window = max(1, getattr(args, "days", 14))
     records = read_recent(limit=5000)
 
     if not records:
