@@ -327,7 +327,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
         except (ValueError, TypeError):
             length = 0
-        if length == 0:
+        # Must be `<= 0`, not `== 0`: a NEGATIVE Content-Length survives the
+        # `min(length, _MAX_BODY_BYTES)` cap (min(-5, cap) == -5) and then
+        # `rfile.read(-5)` reads until EOF — defeating the 100 MB memory-
+        # exhaustion guard this cap exists to enforce. Treat any non-positive
+        # length as "no body" (matches aiosd._read_body).
+        if length <= 0:
             return {}
         length = min(length, _MAX_BODY_BYTES)
         return json.loads(self.rfile.read(length))
