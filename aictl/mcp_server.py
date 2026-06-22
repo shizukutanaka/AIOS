@@ -279,6 +279,44 @@ def _first_text(result: dict) -> str:
     return ""
 
 
+def _int_arg(args: dict[str, Any], key: str, default: Any) -> Any:
+    """Coerce an MCP tool argument to int, tolerating numeric JSON strings.
+
+    MCP tool calls are frequently LLM-generated, where a numeric field arrives as
+    a string (``"10"``) rather than a JSON number. Passing that straight through
+    made the underlying function raise an opaque ``TypeError`` (e.g.
+    ``'<=' not supported between 'str' and 'int'``) surfaced to the client as a
+    cryptic internal error. Coerce here at the boundary; reject genuinely
+    non-numeric input with a clear message (handle_tool turns it into isError).
+    A JSON bool is *not* a count, so it is rejected rather than silently 0/1.
+    """
+    if key not in args or args[key] is None:
+        return default
+    val = args[key]
+    if isinstance(val, bool):
+        raise ValueError(f"{key} must be an integer, got boolean {val!r}")
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got {val!r}")
+
+
+def _float_arg(args: dict[str, Any], key: str, default: Any) -> Any:
+    """Coerce an MCP tool argument to float, tolerating numeric JSON strings.
+
+    Same rationale as :func:`_int_arg` for real-valued fields (e.g. model size).
+    """
+    if key not in args or args[key] is None:
+        return default
+    val = args[key]
+    if isinstance(val, bool):
+        raise ValueError(f"{key} must be a number, got boolean {val!r}")
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, got {val!r}")
+
+
 def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Execute a tool, record an OTel ToolSpan, and return the MCP result.
 
@@ -386,7 +424,7 @@ def _tool_recommend(args: dict[str, Any]) -> dict[str, Any]:
         vram_mb=vram,
         ram_mb=hw.system.ram_total_mb,
         use_case=args.get("use_case", ""),
-        max_results=args.get("max_results", 5),
+        max_results=_int_arg(args, "max_results", 5),
     )
     return {"content": [{"type": "text", "text": json.dumps([
         {"name": r.name, "runtime": r.runtime, "vram_mb": r.vram_required_mb,
@@ -415,7 +453,7 @@ def _tool_optimize(args: dict[str, Any]) -> dict[str, Any]:
     gpu = args.get("gpu", "H100")
     profile = HardwareProfile(
         gpu_name=gpu,
-        gpu_count=args.get("gpu_count", 1),
+        gpu_count=_int_arg(args, "gpu_count", 1),
         vram_per_gpu_mb={
             "A100": 81920, "A100 80GB": 81920,
             "H100": 81920, "H100 SXM": 81920,
@@ -427,7 +465,7 @@ def _tool_optimize(args: dict[str, Any]) -> dict[str, Any]:
         compute_capability=GPU_CC.get(gpu, 90),
     )
     model = args.get("model")
-    model_size_b = args.get("model_size_b")
+    model_size_b = _float_arg(args, "model_size_b", None)
     if not model or model_size_b is None:
         return {"isError": True, "content": [{"type": "text",
                 "text": "model and model_size_b are required"}]}
@@ -700,7 +738,7 @@ def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
         args.get("region", "global"), 500)
     class _A:
         json = False
-        period_days = args.get("period_days", 30)
+        period_days = _int_arg(args, "period_days", 30)
         carbon_intensity = ci
         command = "tco"
     buf = _io.StringIO()
