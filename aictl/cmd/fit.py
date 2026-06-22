@@ -181,6 +181,33 @@ def _extract_param_billions(name: str) -> float:
     return float(m.group(1)) if m else 7.0
 
 
+# ── Shared VRAM/KV math (single source of truth for `fit` and `capacity`) ──
+# CUDA context / runtime overhead, and the fraction of VRAM we keep usable
+# (the rest is a safety margin against fragmentation / activation spikes).
+OVERHEAD_MB = 500
+VRAM_SAFETY = 0.90
+
+# Quantization table: name → (weight multiplier vs fp16, quality factor, notes).
+QUANT_CONFIGS: dict[str, tuple[float, float, str]] = {
+    "fp16": (1.00, 1.00, "Full precision"),
+    "fp8": (0.50, 0.99, "Hopper/Blackwell/Ada (CC≥89)"),
+    "q8_0": (0.55, 0.98, "GGUF Q8 (Ollama/llama.cpp)"),
+    "awq": (0.28, 0.95, "AWQ 4-bit (vLLM, best quality 4-bit)"),
+    "q4_K_M": (0.30, 0.92, "GGUF Q4 (recommended for Ollama)"),
+    "q3_K_M": (0.24, 0.88, "GGUF Q3 (aggressive)"),
+}
+
+
+def _fp16_weights_mb(model_b: float) -> int:
+    """fp16 weight footprint: params × 2 bytes/param (1024 MB per GB)."""
+    return int(model_b * 2 * 1024)
+
+
+def _kv_per_1k_mb(model_b: float) -> int:
+    """KV-cache MB per 1,000 tokens for a single sequence (scales with size)."""
+    return max(1, int(2 * (model_b / 7.0)))
+
+
 def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[str, Any]:
     """Calculate and return the numeric result."""
     model_b = _extract_param_billions(model.name)
@@ -191,19 +218,10 @@ def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[
     # fp16 base under-reported every row (an 8B model showed fp16 ≈ 6 GB instead
     # of ~16 GB). Deriving from the param count also matches the DB's own fp16
     # entries (e.g. Llama-3.2-8B fp16 = 16384 MB).
-    base_mb = int(model_b * 2 * 1024)
-    kv_per_1k = max(1, int(2 * (model_b / 7.0)))
+    base_mb = _fp16_weights_mb(model_b)
+    kv_per_1k = _kv_per_1k_mb(model_b)
     kv_total = int(kv_per_1k * (context / 1000) * concurrent)
-    overhead = 500  # CUDA context
-
-    configs = {
-        "fp16": (1.00, 1.00, "Full precision"),
-        "fp8": (0.50, 0.99, "Hopper/Blackwell/Ada (CC≥89)"),
-        "q8_0": (0.55, 0.98, "GGUF Q8 (Ollama/llama.cpp)"),
-        "awq": (0.28, 0.95, "AWQ 4-bit (vLLM, best quality 4-bit)"),
-        "q4_K_M": (0.30, 0.92, "GGUF Q4 (recommended for Ollama)"),
-        "q3_K_M": (0.24, 0.88, "GGUF Q3 (aggressive)"),
-    }
+    overhead = OVERHEAD_MB
 
     return {
         name: {
@@ -215,7 +233,7 @@ def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[
             "notes": notes_str,
             "fits": False,
         }
-        for name, (mult, quality, notes_str) in configs.items()
+        for name, (mult, quality, notes_str) in QUANT_CONFIGS.items()
     }
 
 
