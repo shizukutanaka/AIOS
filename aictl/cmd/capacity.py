@@ -71,8 +71,24 @@ class CapacityResult:
     arch_max_context: int   # the model's trained context window (hard ceiling)
     at_concurrent: int
     at_context: int
+    recommended: str        # highest-quality quant that loads with usable context
     rows: list[dict[str, Any]]
     notes: list[str]
+
+
+# A quant is only "recommended" if it leaves room for a genuinely usable context
+# at the requested concurrency, not a few hundred tokens.
+_MIN_USABLE_CONTEXT = 4096
+
+
+def _pick_recommended(rows: list["QuantCapacity"], arch_max: int) -> str:
+    """First (= highest-quality, QUANT_CONFIGS is quality-ordered) quant that
+    loads with a usable context. Returns "" if nothing qualifies."""
+    threshold = min(_MIN_USABLE_CONTEXT, arch_max) if arch_max > 0 else _MIN_USABLE_CONTEXT
+    for r in rows:
+        if r.loads and r.max_context >= threshold:
+            return r.quant
+    return ""
 
 
 def register(sub: Any) -> None:
@@ -198,6 +214,7 @@ def run(args: argparse.Namespace) -> int:
         model=args.model, gpu=gpu_name, vram_mb_available=vram_mb,
         usable_mb=usable_mb, arch_max_context=arch_max,
         at_concurrent=args.concurrent, at_context=args.context,
+        recommended=_pick_recommended(rows, arch_max),
         rows=[asdict(r) for r in rows], notes=notes,
     )
 
@@ -240,8 +257,9 @@ def _display(r: CapacityResult, kv_per_1k: int) -> None:
             # Mark contexts pinned to the model's architectural ceiling with '*'.
             max_ctx = _fmt_ctx(row["max_context"]) + ("*" if row["context_capped"] else "")
             max_conc = str(row["max_concurrent"])
+        marker = "  ← best" if row["quant"] == r.recommended else ""
         print(f"  {row['quant']:<8} {row['weights_mb'] / 1024:>6.1f}GB  "
-              f"{row['kv_budget_mb'] / 1024:>8.1f}GB  {max_ctx:>9}  {max_conc:>9}")
+              f"{row['kv_budget_mb'] / 1024:>8.1f}GB  {max_ctx:>9}  {max_conc:>9}{marker}")
     print()
     print(f"  MAX CTX  = longest context at {r.at_concurrent} concurrent "
           f"sequence(s)")

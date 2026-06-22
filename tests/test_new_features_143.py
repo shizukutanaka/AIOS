@@ -110,6 +110,21 @@ class TestCapacityCommand(unittest.TestCase):
         from aictl.cmd.fit import QUANT_CONFIGS
         self.assertEqual(len(out["rows"]), len(QUANT_CONFIGS))
 
+    def test_recommended_is_highest_quality_that_loads_usably(self):
+        # 8B on a 24GB card: even fp16 loads with a usable (>4k) context, so the
+        # highest-quality quant is recommended.
+        code, out = _run_json(["capacity", "llama3.1:8b", "--gpu", "RTX 4090",
+                               "--json"])
+        self.assertEqual(out["recommended"], "fp16")
+        rec_row = next(r for r in out["rows"] if r["quant"] == out["recommended"])
+        self.assertTrue(rec_row["loads"])
+        self.assertGreaterEqual(rec_row["max_context"], 4096)
+
+    def test_no_recommendation_when_nothing_loads(self):
+        code, out = _run_json(["capacity", "llama3.1:70b", "--gpu", "RTX 4090",
+                               "--json"])
+        self.assertEqual(out["recommended"], "")
+
 
 class TestCapacityValidation(unittest.TestCase):
     def _expect_exit2(self, argv):
