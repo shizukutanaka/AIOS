@@ -23,6 +23,30 @@ def register(sub: Any) -> None:
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
+_DEFAULT_VRAM_GB = 16
+
+
+def _parse_model_specs(specs: list[str] | None) -> list[ModelRequirement]:
+    """Parse `model:vram_gb` pairs into ModelRequirements.
+
+    A missing, non-numeric, or non-positive VRAM falls back to a sensible
+    default: a value <= 0 (e.g. "llama3:-16" or "llama3:0") is meaningless and
+    would "fit" every MIG partition, mis-planning the layout.
+    """
+    models: list[ModelRequirement] = []
+    for spec in (specs or ["llama3:16", "embedding:2"]):
+        parts = spec.split(":")
+        name = parts[0]
+        try:
+            vram = int(parts[1]) if len(parts) > 1 else _DEFAULT_VRAM_GB
+        except ValueError:
+            vram = _DEFAULT_VRAM_GB
+        if vram <= 0:
+            vram = _DEFAULT_VRAM_GB
+        models.append(ModelRequirement(name=name, vram_gb=vram))
+    return models
+
+
 def run_plan(args: argparse.Namespace) -> int:
     """Execute the plan subcommand."""
     report = full_detect()
@@ -37,15 +61,7 @@ def run_plan(args: argparse.Namespace) -> int:
         return 1
 
     # Parse model requirements
-    models = []
-    for spec in (getattr(args, "models", None) or ["llama3:16", "embedding:2"]):
-        parts = spec.split(":")
-        name = parts[0]
-        try:
-            vram = int(parts[1]) if len(parts) > 1 else 16
-        except ValueError:
-            vram = 16  # non-numeric VRAM spec → sensible default
-        models.append(ModelRequirement(name=name, vram_gb=vram))
+    models = _parse_model_specs(getattr(args, "models", None))
 
     if getattr(args, "json", False):
         plans = []
