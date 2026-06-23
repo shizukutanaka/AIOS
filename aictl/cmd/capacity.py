@@ -103,6 +103,9 @@ def register(sub: Any) -> None:
     p.add_argument("--compare", default="",
                    help="Comma-separated GPUs to compare (e.g. "
                         "'RTX 4090,A100,H100'); shows the recommended quant for each.")
+    p.add_argument("--pack", default="",
+                   help="Comma-separated extra models to co-locate on one GPU "
+                        "(e.g. 'nomic-embed,qwen2.5:7b'); checks if they all fit together.")
     p.add_argument("--quant", default="all",
                    help="Quantization to focus on, or 'all' (default).")
     p.add_argument("--context", type=positive_int, default=8192,
@@ -175,6 +178,20 @@ def _compute_rows(target: Any, model_b: float, kv_per_1k: int, vram_mb: int,
     return rows, arch_max, usable_mb
 
 
+def _resolve_gpu(args: argparse.Namespace) -> tuple[str, int, str]:
+    """Resolve (gpu_name, vram_mb, error). error != "" means resolution failed."""
+    if args.gpu == "auto":
+        from aictl.runtime.broker import full_detect
+        hw = full_detect()
+        if not hw.gpus:
+            return "", 0, "No GPU detected. Pass --gpu explicitly (e.g. --gpu 'RTX 4090')."
+        return hw.gpus[0].name, hw.gpus[0].vram_mb, ""
+    vram = _resolve_vram(args.gpu)
+    if vram == 0:
+        return args.gpu, 0, f"Unknown GPU: {args.gpu}"
+    return args.gpu, vram, ""
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the command and return an exit code."""
     from aictl.runtime.broker import full_detect
@@ -197,23 +214,16 @@ def run(args: argparse.Namespace) -> int:
         return _run_compare(args, target)
 
     # Resolve GPU + VRAM (same resolution `fit` uses).
-    if args.gpu == "auto":
-        hw = full_detect()
-        if not hw.gpus:
-            err("No GPU detected. Pass --gpu explicitly (e.g. --gpu 'RTX 4090').")
-            return 1
-        gpu_name = hw.gpus[0].name
-        vram_mb = hw.gpus[0].vram_mb
-    else:
-        gpu_name = args.gpu
-        vram_mb = _lookup_gpu_vram(gpu_name)
-        if vram_mb == 0:
-            from aictl.runtime.broker import lookup_apple_silicon_vram
-            vram_mb = lookup_apple_silicon_vram(gpu_name)
-        if vram_mb == 0:
-            err(f"Unknown GPU: {gpu_name}")
+    gpu_name, vram_mb, gerr = _resolve_gpu(args)
+    if gerr:
+        err(gerr)
+        if "Unknown GPU" in gerr:
             print("  Known GPUs: " + ", ".join(sorted(GPU_VRAM_MB.keys())[:6]) + " ...")
-            return 1
+        return 1
+
+    # New viewpoint: co-location packing — do several models fit TOGETHER here?
+    if args.pack.strip():
+        return _run_pack(args, target, gpu_name, vram_mb)
 
     quant = _resolve_quant(args.quant)
     if quant is None:
@@ -336,6 +346,92 @@ def _display_compare(out: dict[str, Any], kv_per_1k: int) -> None:
     if out["unknown"]:
         print()
         warn("Unknown GPU(s) skipped: " + ", ".join(out["unknown"]))
+
+
+def _run_pack(args: argparse.Namespace, target: Any, gpu_name: str, vram_mb: int) -> int:
+    """Co-location: do the positional model + --pack models fit ONE GPU together?"""
+    from aictl.runtime.recommend import MODELS
+
+    quant_sel = _resolve_quant(args.quant)
+    if quant_sel is None:
+        err(f"Unknown quant: {args.quant}")
+        print("  Choices: all, " + ", ".join(QUANT_CONFIGS.keys()))
+        return 1
+
+    names = [args.model] + [m.strip() for m in args.pack.split(",") if m.strip()]
+    resolved: list[tuple[str, Any]] = []
+    unknown: list[str] = []
+    for name in names:
+        m = _find_model(name, MODELS)
+        (resolved.append((name, m)) if m is not None else unknown.append(name))
+    if not resolved:
+        err("No known models to pack: " + ", ".join(unknown))
+        print("  Try: aictl recommend  # see available models")
+        return 1
+
+    usable_mb = int(vram_mb * VRAM_SAFETY)
+    entries: list[dict[str, Any]] = []
+    total = 0
+    for name, m in resolved:
+        model_b = _extract_param_billions(m.name)
+        kv_per_1k = _kv_per_1k_mb(model_b)
+        if quant_sel != "all":
+            q = quant_sel
+        else:
+            rows, arch_max, _ = _compute_rows(
+                m, model_b, kv_per_1k, vram_mb, "all", args.concurrent, args.context)
+            # Each co-located model gets only a share of VRAM, so prefer its
+            # recommended standalone quant, falling back to the smallest weight.
+            q = _pick_recommended(rows, arch_max) or list(QUANT_CONFIGS)[-1]
+        weights_mb = int(_fp16_weights_mb(model_b) * QUANT_CONFIGS[q][0])
+        kv_mb = int(kv_per_1k * (args.context / 1000) * args.concurrent)
+        footprint = weights_mb + kv_mb + OVERHEAD_MB
+        total += footprint
+        entries.append({
+            "model": name, "quant": q, "weights_mb": weights_mb,
+            "kv_mb": kv_mb, "footprint_mb": footprint,
+        })
+
+    fits = total <= usable_mb
+    out = {
+        "gpu": gpu_name, "vram_mb": vram_mb, "usable_mb": usable_mb,
+        "at_context": args.context, "at_concurrent": args.concurrent,
+        "total_mb": total, "headroom_mb": usable_mb - total, "fits": fits,
+        "models": entries, "unknown": unknown,
+    }
+    if args.json:
+        print_json(out)
+        return 0 if fits else 2
+
+    _display_pack(out)
+    return 0 if fits else 2
+
+
+def _display_pack(out: dict[str, Any]) -> None:
+    """Render the multi-model co-location table."""
+    print()
+    print(f"  Co-locating {len(out['models'])} model(s) on {out['gpu']} "
+          f"({out['vram_mb'] // 1024}GB, {out['usable_mb'] // 1024}GB usable)")
+    print(f"  at {out['at_context']}-token context × {out['at_concurrent']} "
+          f"concurrent sequence(s)")
+    print()
+    print(f"  {'MODEL':<22} {'QUANT':<8} {'WEIGHTS':>8} {'KV':>7} {'TOTAL':>8}")
+    print(f"  {'-' * 22} {'-' * 8} {'-' * 8} {'-' * 7} {'-' * 8}")
+    for e in out["models"]:
+        print(f"  {e['model']:<22} {e['quant']:<8} {e['weights_mb'] / 1024:>6.1f}GB "
+              f"{e['kv_mb'] / 1024:>5.1f}GB {e['footprint_mb'] / 1024:>6.1f}GB")
+    print(f"  {'-' * 22} {'-' * 8} {'-' * 8} {'-' * 7} {'-' * 8}")
+    print(f"  {'TOTAL':<22} {'':<8} {'':>8} {'':>7} {out['total_mb'] / 1024:>6.1f}GB")
+    print()
+    if out["fits"]:
+        ok(f"Fits — {out['headroom_mb'] / 1024:.1f}GB headroom remaining.")
+    else:
+        over = -out["headroom_mb"] / 1024
+        err(f"Does NOT fit — over by {over:.1f}GB. Try fewer models, a smaller "
+            f"quant (--quant q4_K_M), or a shorter --context.")
+    if out["unknown"]:
+        print()
+        warn("Unknown model(s) skipped: " + ", ".join(out["unknown"]))
 
 
 def _fmt_ctx(tokens: int) -> str:
