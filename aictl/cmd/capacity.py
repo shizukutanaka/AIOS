@@ -100,6 +100,9 @@ def register(sub: Any) -> None:
     p.add_argument("model", help="Model name (e.g. llama3.1:8b)")
     p.add_argument("--gpu", default="auto",
                    help="GPU name (e.g. 'RTX 4090', 'H100') or 'auto' to detect.")
+    p.add_argument("--compare", default="",
+                   help="Comma-separated GPUs to compare (e.g. "
+                        "'RTX 4090,A100,H100'); shows the recommended quant for each.")
     p.add_argument("--quant", default="all",
                    help="Quantization to focus on, or 'all' (default).")
     p.add_argument("--context", type=positive_int, default=8192,
@@ -128,6 +131,50 @@ def _max_concurrent(kv_budget_mb: int, kv_per_1k: int, context: int) -> int:
     return int(kv_budget_mb / per_seq_mb)
 
 
+def _resolve_quant(raw: str) -> str | None:
+    """Canonicalize a --quant value case-insensitively. 'all' passes through;
+    an unknown value returns None."""
+    q = (raw or "").strip()
+    if q.lower() == "all":
+        return "all"
+    return next((k for k in QUANT_CONFIGS if k.lower() == q.lower()), None)
+
+
+def _resolve_vram(gpu_name: str) -> int:
+    """VRAM (MB) for a named GPU, via the catalog then Apple-silicon. 0 = unknown."""
+    vram_mb = _lookup_gpu_vram(gpu_name)
+    if vram_mb == 0:
+        from aictl.runtime.broker import lookup_apple_silicon_vram
+        vram_mb = lookup_apple_silicon_vram(gpu_name)
+    return vram_mb
+
+
+def _compute_rows(target: Any, model_b: float, kv_per_1k: int, vram_mb: int,
+                  quant_sel: str, concurrent: int, context: int
+                  ) -> tuple[list[QuantCapacity], int, int]:
+    """Per-quant capacity rows for one GPU. Returns (rows, arch_max, usable_mb)."""
+    usable_mb = int(vram_mb * VRAM_SAFETY)
+    arch_max = int(getattr(target, "context_length", 0)) or 0
+    selected = QUANT_CONFIGS if quant_sel == "all" else {quant_sel: QUANT_CONFIGS[quant_sel]}
+    rows: list[QuantCapacity] = []
+    for name, (mult, _quality, _notes) in selected.items():
+        weights_mb = int(_fp16_weights_mb(model_b) * mult)
+        kv_budget = usable_mb - weights_mb - OVERHEAD_MB
+        vram_max_ctx = _max_context_tokens(kv_budget, kv_per_1k, concurrent)
+        capped = arch_max > 0 and vram_max_ctx > arch_max
+        eff_max_ctx = min(vram_max_ctx, arch_max) if arch_max > 0 else vram_max_ctx
+        rows.append(QuantCapacity(
+            quant=name,
+            weights_mb=weights_mb,
+            kv_budget_mb=max(0, kv_budget),
+            max_context=eff_max_ctx,
+            max_concurrent=_max_concurrent(kv_budget, kv_per_1k, context),
+            loads=kv_budget > 0,
+            context_capped=capped,
+        ))
+    return rows, arch_max, usable_mb
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the command and return an exit code."""
     from aictl.runtime.broker import full_detect
@@ -143,6 +190,11 @@ def run(args: argparse.Namespace) -> int:
         err(f"Unknown model: {args.model}")
         print("  Try: aictl recommend  # see available models")
         return 1
+
+    # New viewpoint: compare capacity ACROSS GPUs (hardware-selection question)
+    # rather than within one GPU. Delegates to the same per-GPU math.
+    if args.compare.strip():
+        return _run_compare(args, target)
 
     # Resolve GPU + VRAM (same resolution `fit` uses).
     if args.gpu == "auto":
@@ -163,43 +215,18 @@ def run(args: argparse.Namespace) -> int:
             print("  Known GPUs: " + ", ".join(sorted(GPU_VRAM_MB.keys())[:6]) + " ...")
             return 1
 
-    # Case-insensitive quant match against the canonical keys (e.g. "q4_k_m"
-    # should resolve to "q4_K_M").
-    quant = args.quant.strip()
-    if quant.lower() != "all":
-        match = next((k for k in QUANT_CONFIGS if k.lower() == quant.lower()), None)
-        if match is None:
-            err(f"Unknown quant: {args.quant}")
-            print("  Choices: all, " + ", ".join(QUANT_CONFIGS.keys()))
-            return 1
-        quant = match
-    else:
-        quant = "all"
+    quant = _resolve_quant(args.quant)
+    if quant is None:
+        err(f"Unknown quant: {args.quant}")
+        print("  Choices: all, " + ", ".join(QUANT_CONFIGS.keys()))
+        return 1
 
     model_b = _extract_param_billions(target.name)
     kv_per_1k = _kv_per_1k_mb(model_b)
-    usable_mb = int(vram_mb * VRAM_SAFETY)
     # The model's trained context window is a hard ceiling: no amount of VRAM lets
     # you exceed it. Capacity = min(what VRAM allows, what the model supports).
-    arch_max = int(getattr(target, "context_length", 0)) or 0
-
-    selected = QUANT_CONFIGS if quant == "all" else {quant: QUANT_CONFIGS[quant]}
-    rows: list[QuantCapacity] = []
-    for name, (mult, _quality, _notes) in selected.items():
-        weights_mb = int(_fp16_weights_mb(model_b) * mult)
-        kv_budget = usable_mb - weights_mb - OVERHEAD_MB
-        vram_max_ctx = _max_context_tokens(kv_budget, kv_per_1k, args.concurrent)
-        capped = arch_max > 0 and vram_max_ctx > arch_max
-        eff_max_ctx = min(vram_max_ctx, arch_max) if arch_max > 0 else vram_max_ctx
-        rows.append(QuantCapacity(
-            quant=name,
-            weights_mb=weights_mb,
-            kv_budget_mb=max(0, kv_budget),
-            max_context=eff_max_ctx,
-            max_concurrent=_max_concurrent(kv_budget, kv_per_1k, args.context),
-            loads=kv_budget > 0,
-            context_capped=capped,
-        ))
+    rows, arch_max, usable_mb = _compute_rows(
+        target, model_b, kv_per_1k, vram_mb, quant, args.concurrent, args.context)
 
     notes: list[str] = []
     if not any(r.loads for r in rows):
@@ -224,6 +251,91 @@ def run(args: argparse.Namespace) -> int:
 
     _display(result, kv_per_1k)
     return 0 if any(r.loads for r in rows) else 2
+
+
+def _run_compare(args: argparse.Namespace, target: Any) -> int:
+    """Compare capacity across several GPUs (the hardware-selection viewpoint)."""
+    quant = _resolve_quant(args.quant)
+    if quant is None:
+        err(f"Unknown quant: {args.quant}")
+        print("  Choices: all, " + ", ".join(QUANT_CONFIGS.keys()))
+        return 1
+
+    gpu_names = [g.strip() for g in args.compare.split(",") if g.strip()]
+    if not gpu_names:
+        err("--compare needs at least one GPU (e.g. --compare 'RTX 4090,H100').")
+        return 1
+
+    model_b = _extract_param_billions(target.name)
+    kv_per_1k = _kv_per_1k_mb(model_b)
+
+    entries: list[dict[str, Any]] = []
+    unknown: list[str] = []
+    for name in gpu_names:
+        vram_mb = _resolve_vram(name)
+        if vram_mb == 0:
+            unknown.append(name)
+            continue
+        rows, arch_max, usable_mb = _compute_rows(
+            target, model_b, kv_per_1k, vram_mb, quant, args.concurrent, args.context)
+        rec = _pick_recommended(rows, arch_max)
+        # The summary row: the recommended quant when scanning all, else the one
+        # the user pinned. Fall back to the first row so output is never empty.
+        pick = next((r for r in rows if r.quant == rec), None) or rows[0]
+        entries.append({
+            "gpu": name, "vram_mb": vram_mb, "usable_mb": usable_mb,
+            "quant": pick.quant, "loads": pick.loads,
+            "max_context": pick.max_context, "max_concurrent": pick.max_concurrent,
+        })
+
+    if not entries:
+        err("None of the requested GPUs are known: " + ", ".join(unknown))
+        print("  Known GPUs: " + ", ".join(sorted(GPU_VRAM_MB.keys())[:6]) + " ...")
+        return 1
+
+    out = {
+        "model": args.model, "at_concurrent": args.concurrent,
+        "at_context": args.context, "quant": quant,
+        "gpus": entries, "unknown": unknown,
+    }
+    if args.json:
+        print_json(out)
+        return 0 if any(e["loads"] for e in entries) else 2
+
+    _display_compare(out, kv_per_1k)
+    return 0 if any(e["loads"] for e in entries) else 2
+
+
+def _display_compare(out: dict[str, Any], kv_per_1k: int) -> None:
+    """Render the cross-GPU comparison table."""
+    qlabel = "recommended" if out["quant"] == "all" else out["quant"]
+    print()
+    print(f"  Model: {out['model']}   ·   quant: {qlabel}   ·   "
+          f"KV ~{kv_per_1k}MB/1k tok")
+    print()
+    print(f"  {'GPU':<14} {'VRAM':>6}  {'QUANT':<8} {'MAX CTX':>9}  {'MAX CONC':>9}")
+    print(f"  {'-' * 14} {'-' * 6}  {'-' * 8} {'-' * 9}  {'-' * 9}")
+    # Rank by what you can actually run: max context, then concurrency.
+    ordered = sorted(out["gpus"],
+                     key=lambda e: (e["loads"], e["max_context"], e["max_concurrent"]),
+                     reverse=True)
+    best = ordered[0] if ordered and ordered[0]["loads"] else None
+    for e in ordered:
+        if e["loads"]:
+            ctx, conc = _fmt_ctx(e["max_context"]), str(e["max_concurrent"])
+            qa = e["quant"]
+        else:
+            ctx, conc, qa = "won't load", "—", "—"
+        marker = "  ← best" if best and e["gpu"] == best["gpu"] else ""
+        print(f"  {e['gpu']:<14} {e['vram_mb'] // 1024:>4}GB  {qa:<8} "
+              f"{ctx:>9}  {conc:>9}{marker}")
+    print()
+    print(f"  MAX CTX  = longest context at {out['at_concurrent']} concurrent "
+          f"sequence(s)")
+    print(f"  MAX CONC = concurrent sequences at {out['at_context']}-token context")
+    if out["unknown"]:
+        print()
+        warn("Unknown GPU(s) skipped: " + ", ".join(out["unknown"]))
 
 
 def _fmt_ctx(tokens: int) -> str:
