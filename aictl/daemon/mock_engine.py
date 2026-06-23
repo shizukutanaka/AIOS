@@ -49,9 +49,33 @@ _lock = threading.Lock()
 class MockEngineHandler(BaseHTTPRequestHandler):
     """OpenAI-compatible mock inference handler."""
 
+    # Cap the request body the mock will read (it only ever needs a small JSON
+    # payload). Matches the hardening in aiosd / proxy.
+    _MAX_BODY_BYTES = 10 * 1024 * 1024
+
     def log_message(self, format: Any, *args: Any) -> None:
         """Log message."""
         pass  # Silence request logs
+
+    def _read_json_body(self) -> dict[str, Any]:
+        """Read and JSON-decode the request body, robust to bad headers.
+
+        A malformed Content-Length must not crash the handler thread (a bare
+        `int(...)` would raise), and a NEGATIVE length must be treated as "no
+        body" — otherwise `rfile.read(-1)` reads until EOF, defeating the size
+        cap (the same trap fixed in proxy._read_body). Returns {} on any
+        non-positive/unparseable length or malformed JSON.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            return {}
+        if length <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(min(length, self._MAX_BODY_BYTES)))
+        except (ValueError, OSError):
+            return {}
 
     def do_GET(self) -> None:
         """Do get."""
@@ -86,8 +110,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
     def _chat_completions(self) -> None:
         """Handle POST /v1/chat/completions requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(content_length)) if content_length else {}
+        body = self._read_json_body()
 
         model = body.get("model", "mock-llama3-8b")
         messages = body.get("messages", [])
@@ -191,8 +214,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
     def _ollama_generate(self) -> None:
         """Handle POST /api/generate (Ollama format) requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(content_length)) if content_length else {}
+        body = self._read_json_body()
         prompt = body.get("prompt", "")
         response_text = _generate_response(prompt, 100)
 
