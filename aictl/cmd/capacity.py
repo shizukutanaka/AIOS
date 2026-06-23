@@ -202,6 +202,14 @@ def run(args: argparse.Namespace) -> int:
         print("  Try: aictl capacity llama3.1:8b --gpu 'RTX 4090'")
         return 1
 
+    # --compare (one model across many GPUs) and --pack (many models on one GPU)
+    # are mutually-exclusive viewpoints; running one and silently dropping the
+    # other would mislead. Reject the combination explicitly.
+    if args.compare.strip() and args.pack.strip():
+        err("--compare and --pack cannot be combined "
+            "(compare = one model across GPUs; pack = many models on one GPU).")
+        return 1
+
     target = _find_model(args.model, MODELS)
     if target is None:
         err(f"Unknown model: {args.model}")

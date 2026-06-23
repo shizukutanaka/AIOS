@@ -89,6 +89,21 @@ class TestPackViewpoint(unittest.TestCase):
         self.assertIn("rows", out)
         self.assertNotIn("models", out)
 
+    def test_compare_and_pack_are_mutually_exclusive(self):
+        # 長所短所改善点 fix: combining the two viewpoints silently dropped --pack.
+        from aictl.cmd import capacity
+        p = argparse.ArgumentParser(prog="aictl")
+        sub = p.add_subparsers()
+        capacity.register(sub)
+        ns = p.parse_args(["capacity", "llama3.1:8b",
+                           "--compare", "RTX 4090,H100", "--pack", "qwen2.5:7b"])
+        out, errbuf = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with contextlib.redirect_stderr(errbuf):
+                code = ns.func(ns)
+        self.assertEqual(code, 1)
+        self.assertIn("cannot be combined", out.getvalue() + errbuf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
