@@ -10,6 +10,19 @@ import json
 from aictl.core.output import ok, err, warn, print_json
 from aictl.core.state import StateStore, StackEntry
 
+# Highest bundle schema this importer fully understands. A bundle declaring a
+# newer MAJOR version may carry fields/sections this code silently skips, so we
+# warn rather than imply a complete import.
+SUPPORTED_EXPORT_VERSION = 1
+
+
+def _major_version(version: Any) -> int:
+    """Major version as an int; unparseable values are treated as v1."""
+    try:
+        return int(str(version).split(".")[0])
+    except (ValueError, TypeError):
+        return SUPPORTED_EXPORT_VERSION
+
 
 def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
@@ -55,6 +68,16 @@ def run(args: argparse.Namespace) -> int:
     stacks_imported = 0
     models_imported = 0
     warnings: list[str] = []
+
+    # Forward-compatibility guard: a bundle from a newer aictl may use a schema
+    # this version doesn't fully understand. Best-effort import still runs (the
+    # v1-compatible subset), but the user must be told it may be incomplete.
+    if _major_version(version) > SUPPORTED_EXPORT_VERSION:
+        warnings.append(
+            f"bundle export_version {version} is newer than supported "
+            f"(v{SUPPORTED_EXPORT_VERSION}); fields this version doesn't "
+            f"understand were skipped — upgrade aictl to import it fully."
+        )
 
     store = StateStore(getattr(args, "state_dir", None))
 
