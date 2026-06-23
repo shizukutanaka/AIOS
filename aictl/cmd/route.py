@@ -620,8 +620,17 @@ def _load_config() -> dict[str, Any]:
     if path.exists():
         try:
             cfg = json.loads(path.read_text())
+            # Backfill not just a missing tier but a tier dict missing required
+            # sub-keys. `setdefault(tier, defaults)` alone left a hand-edited
+            # `{"medium": {"max_score": 60}}` without a "model", so the later
+            # `cfg[tier]["model"]` raised KeyError — surfaced as a bogus
+            # "Invalid input: model" for a perfectly valid prompt.
             for tier, defaults in _DEFAULT_TIERS.items():
-                cfg.setdefault(tier, defaults)
+                if not isinstance(cfg.get(tier), dict):
+                    cfg[tier] = dict(defaults)
+                else:
+                    for k, v in defaults.items():
+                        cfg[tier].setdefault(k, v)
             return cfg
         except Exception:
             pass  # best-effort; failure is non-critical
