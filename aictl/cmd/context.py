@@ -225,7 +225,12 @@ def run_import(args: argparse.Namespace) -> int:
         err(f"Invalid JSON: {exc}")
         return 1
 
-    # Validate required fields
+    # Validate required fields. The root must be an object first: a scalar root
+    # (e.g. `42`) would make `"snapshot_id" not in data` raise TypeError ("not
+    # iterable"), surfaced as a bug report for a bad input file.
+    if not isinstance(data, dict):
+        err("Invalid snapshot file: expected a JSON object")
+        return 1
     if "snapshot_id" not in data or "engine" not in data:
         err("Invalid snapshot file: missing snapshot_id or engine")
         return 1

@@ -152,6 +152,12 @@ def run_recovery_policy(args: argparse.Namespace) -> int:
     else:
         policy = {}
 
+    # A non-object policy file (a JSON list/scalar) parses cleanly but then
+    # `{**defaults, **policy}` raises "is not a mapping" — surfaced as a bug
+    # report for a corrupt local file. Degrade to the defaults instead.
+    if not isinstance(policy, dict):
+        policy = {}
+
     defaults = {"max_retries": 3, "restart_delay_s": 30, "backoff_multiplier": 2,
                 "circuit_breaker_threshold": 5, "recovery_window_s": 300}
     policy = {**defaults, **policy}
