@@ -205,7 +205,10 @@ def _load() -> dict[str, Any]:
     path = _db_path()
     if path.exists():
         try:
-            return json.loads(path.read_text())
+            data = json.loads(path.read_text())
+            # A list/scalar-rooted file parses but then `db["teams"]` would raise.
+            if isinstance(data, dict):
+                return data
         except Exception:
             pass  # best-effort; failure is non-critical
     return {"teams": {}, "updated_at": time.time()}
