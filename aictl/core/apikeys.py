@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.atomicio import atomic_write_text
 
 
 def key_id_for(raw_key: str) -> str:
@@ -178,5 +179,7 @@ class KeyManager:
 
     def _save_keys(self, keys: dict[str, dict[str, Any]]) -> None:
         """Persist data to storage."""
-        self._keys_path.parent.mkdir(parents=True, exist_ok=True)
-        self._keys_path.write_text(json.dumps(keys, indent=2))
+        # Atomic (crash-safe) AND 0o600: the API-keys file is a secret — a plain
+        # write_text left it world-readable (0o644, the umask default), so any
+        # local user could read every key's hash and metadata.
+        atomic_write_text(self._keys_path, json.dumps(keys, indent=2), mode=0o600)

@@ -189,5 +189,8 @@ class TokenMeter:
 
     def _save_buckets(self, buckets: dict[str, TokenBucket]) -> None:
         """Persist data to storage."""
+        from aictl.core.atomicio import atomic_write_text
         data = {k: asdict(v) for k, v in buckets.items()}
-        self._buckets_path.write_text(json.dumps(data, indent=2))
+        # Atomic: token buckets are billing state — a crash mid-write must not
+        # corrupt them.
+        atomic_write_text(self._buckets_path, json.dumps(data, indent=2))

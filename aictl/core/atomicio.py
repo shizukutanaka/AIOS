@@ -19,8 +19,16 @@ from pathlib import Path
 from typing import Union
 
 
-def atomic_write_text(path: Union[str, Path], text: str, encoding: str = "utf-8") -> None:
-    """Atomically write ``text`` to ``path`` (crash-safe; leaves original on failure)."""
+def atomic_write_text(path: Union[str, Path], text: str, encoding: str = "utf-8",
+                      mode: int | None = None) -> None:
+    """Atomically write ``text`` to ``path`` (crash-safe; leaves original on failure).
+
+    ``mode`` (e.g. ``0o600``) sets the final file's permission bits explicitly.
+    Secret files (API keys) must be owner-only — a plain ``write_text`` leaves the
+    file at the process umask (commonly world-readable ``0o644``). ``mkstemp``
+    already creates the temp file ``0o600``, but passing ``mode`` makes the intent
+    explicit and independent of umask.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Temp file in the same directory guarantees os.replace stays on one
@@ -31,6 +39,8 @@ def atomic_write_text(path: Union[str, Path], text: str, encoding: str = "utf-8"
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
+        if mode is not None:
+            os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:
         try:
