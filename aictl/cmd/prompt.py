@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.atomicio import atomic_write_text
 
 
 def _slugify(name: str) -> str:
@@ -409,4 +410,5 @@ def _save(db: dict[str, Any]) -> None:
     """Persist data to storage."""
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(db, indent=2, ensure_ascii=False))
+    # Atomic write: a crash mid-save must not corrupt the prompt store.
+    atomic_write_text(path, json.dumps(db, indent=2, ensure_ascii=False))

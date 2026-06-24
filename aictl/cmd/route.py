@@ -40,6 +40,7 @@ from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
 from aictl.core.argtypes import positive_int
+from aictl.core.atomicio import atomic_write_text
 
 
 # ── Complexity heuristics ─────────────────────────────────
@@ -641,4 +642,5 @@ def _save_config(cfg: dict[str, Any]) -> None:
     """Persist data to storage."""
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    # Atomic write: a crash mid-save must not corrupt the tier config.
+    atomic_write_text(path, json.dumps(cfg, indent=2, ensure_ascii=False))

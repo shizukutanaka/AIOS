@@ -82,6 +82,25 @@ function floors `age = max(0, age)` so an SDK caller constructing the call
 directly can never produce a future cutoff. Audited paths: `audit purge`,
 `context gc`, `snapshot purge`, `model cleanup`, `model cache`/`find_stale`.
 
+### V7 — Persisted-state integrity (load defensively, save atomically)
+Local state files (config, stores, imported bundles) are untrusted input the same
+way CLI args are: they can be hand-edited, half-written by a crash, or produced by
+a different version. Two symmetric rules:
+- **On load**, a JSON file must be validated before its shape is assumed. A bare
+  `json.loads` followed by `data["key"]` / `data.get(...)` crashes on a malformed
+  file (uncaught `JSONDecodeError`) or a non-object root (`[…]`/scalar →
+  `AttributeError`/`TypeError`), surfacing as "report a bug" for what is really a
+  bad *file* (a V4 violation). Guard with `isinstance(data, dict)` (stdlib idiom;
+  the project forbids `jsonschema`) and either degrade to the default structure
+  (stores) or return a clean input error (imports). Partial objects must backfill
+  missing keys, not assume them.
+- **On save**, writes must be atomic: temp file in the same dir → `flush` →
+  `os.fsync` → `os.replace` (via `aictl.core.atomicio.atomic_write_text`), so a
+  crash mid-write can never leave a truncated/corrupt store. The two rules are
+  complements — atomic save *prevents* the corruption that defensive load
+  *tolerates*. Audited: `import`(151), `route`(152,156), `eval`(153),
+  `batch`/`prompt`/`quota`(154,156), `cluster`/`context`(155).
+
 ## 3. 長所 (Strengths)
 
 - **Honest failure is now the default.** Across the validated surface, impossible

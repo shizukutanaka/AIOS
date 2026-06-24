@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json, print_table
+from aictl.core.atomicio import atomic_write_text
 
 
 def register(sub: Any) -> None:
@@ -284,4 +285,6 @@ def _save(db: dict[str, Any]) -> None:
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     db["updated_at"] = time.time()
-    path.write_text(json.dumps(db, indent=2, ensure_ascii=False))
+    # Atomic write: a crash mid-save must not leave a truncated/corrupt store
+    # (which _load would then have to discard). Matches quota._save.
+    atomic_write_text(path, json.dumps(db, indent=2, ensure_ascii=False))
