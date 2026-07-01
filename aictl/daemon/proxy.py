@@ -92,6 +92,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._error(429, msg)
             return False
 
+        # Tenant-class rate limit (additional ceiling on top of the per-key
+        # limit above) — only applies if this key was explicitly linked to a
+        # tenant via `aictl tenant link-key`. An unlinked key behaves exactly
+        # as before (per-key limiting only); TenantRateLimiter previously had
+        # no caller anywhere in the codebase, so tenant classes were cosmetic.
+        from aictl.core.tenant import find_tenant_by_key_id, get_rate_limiter
+        tenant = find_tenant_by_key_id(self.store.dir if self.store else None, key.key_id)
+        if tenant is not None:
+            tenant_class = tenant.get("tenant_class", "standard")
+            if not get_rate_limiter().check(tenant["id"], tenant_class):
+                self._error(429, f"Tenant '{tenant['id']}' rate limit exceeded "
+                                 f"(class: {tenant_class})")
+                return False
+
         # Record usage
         mgr.record_usage(key.key_id)
 
@@ -259,6 +273,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
             from aictl.core.metering import TokenMeter
             meter = TokenMeter(self.store.dir if self.store else None)
             meter.record(entity_id, model, prompt_tokens, completion_tokens)
+
+            # Feed the actual token count back to the tenant-class limiter
+            # (checked pre-flight in _check_auth; recorded here once the real
+            # count is known — one check()+record() pair per request, matching
+            # TenantRateLimiter's own documented two-phase contract).
+            from aictl.core.tenant import find_tenant_by_key_id, get_rate_limiter
+            tenant = find_tenant_by_key_id(self.store.dir if self.store else None, entity_id)
+            if tenant is not None:
+                get_rate_limiter().record(tenant["id"], prompt_tokens + completion_tokens)
         except Exception:
             pass  # Metering failures must not affect requests
 

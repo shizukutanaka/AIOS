@@ -14,6 +14,7 @@ from aictl.core.filelock import file_lock
 from aictl.core.tenant import (
     TENANT_CLASSES, Tenant,
     generate_k8s_namespace, generate_cgroup_limits,
+    registry_path as _core_registry_path, load_registry as _core_load_registry,
 )
 
 
@@ -52,6 +53,18 @@ def register(sub: Any) -> None:
     inspect = tsub.add_parser("inspect", help="Show full metadata for a tenant")
     inspect.add_argument("tenant_id", help="Tenant ID")
     inspect.set_defaults(func=run_inspect)
+
+    link = tsub.add_parser(
+        "link-key", help="Associate an API key with a tenant "
+                         "(enables tenant-class rate limiting in `aictl proxy`).")
+    link.add_argument("tenant_id", help="Tenant ID")
+    link.add_argument("key_id", help="API key ID (from `aictl apikey list`)")
+    link.set_defaults(func=run_link_key)
+
+    unlink = tsub.add_parser("unlink-key", help="Remove an API key -> tenant association.")
+    unlink.add_argument("tenant_id", help="Tenant ID")
+    unlink.add_argument("key_id", help="API key ID to unlink")
+    unlink.set_defaults(func=run_unlink_key)
 
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
@@ -108,22 +121,17 @@ def run_cgroup(args: argparse.Namespace) -> int:
 
 
 # ── persistent tenant registry helpers ───────────────────────────────────────
+# Thin wrappers over aictl.core.tenant's registry_path/load_registry — the
+# single source of truth shared with daemon/proxy.py's tenant-by-API-key
+# lookup, so the CLI and the live proxy always agree on where tenants live and
+# never diverge in how a corrupt/non-dict registry file degrades.
 
 def _registry_path(args: argparse.Namespace) -> Path:
-    state_dir = getattr(args, "state_dir", None)
-    if state_dir:
-        return Path(state_dir) / "tenants.json"
-    from aictl.core.state import DEFAULT_STATE_DIR
-    return DEFAULT_STATE_DIR / "tenants.json"
+    return _core_registry_path(getattr(args, "state_dir", None))
 
 
 def _load_registry(path: Path) -> dict:
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    return _core_load_registry(path)
 
 
 def _save_registry(path: Path, data: dict) -> None:
@@ -213,6 +221,60 @@ def run_delete(args: argparse.Namespace) -> int:
         print_json({"deleted": True, "tenant_id": tenant_id})
         return 0
     ok(f"Tenant deleted: {tenant_id}")
+    return 0
+
+
+def run_link_key(args: argparse.Namespace) -> int:
+    """Associate an API key with a tenant so the proxy can rate-limit by
+    tenant class, not just per-key. Without this link, `tenant create` and
+    the class-based rate limiter (TenantRateLimiter) never actually connect
+    to any real request — a tenant record with no linked keys is inert."""
+    tenant_id = _norm_id(args.tenant_id)
+    key_id = _norm_id(args.key_id)
+    if not key_id:
+        err("Key ID is required (empty or whitespace-only is not allowed).")
+        return 1
+    path = _registry_path(args)
+    with file_lock(path):
+        reg = _load_registry(path)
+        if tenant_id not in reg:
+            err(f"Tenant not found: {tenant_id}")
+            return 1
+        record = reg[tenant_id]
+        key_ids = record.setdefault("api_key_ids", [])
+        if key_id not in key_ids:
+            key_ids.append(key_id)
+        _save_registry(path, reg)
+
+    if getattr(args, "json", False):
+        print_json({"tenant_id": tenant_id, "linked": key_id,
+                    "api_key_ids": reg[tenant_id]["api_key_ids"]})
+        return 0
+    ok(f"Linked key {key_id} to tenant {tenant_id}")
+    return 0
+
+
+def run_unlink_key(args: argparse.Namespace) -> int:
+    """Remove an API key -> tenant association."""
+    tenant_id = _norm_id(args.tenant_id)
+    key_id = _norm_id(args.key_id)
+    path = _registry_path(args)
+    with file_lock(path):
+        reg = _load_registry(path)
+        if tenant_id not in reg:
+            err(f"Tenant not found: {tenant_id}")
+            return 1
+        record = reg[tenant_id]
+        key_ids = record.setdefault("api_key_ids", [])
+        if key_id in key_ids:
+            key_ids.remove(key_id)
+        _save_registry(path, reg)
+
+    if getattr(args, "json", False):
+        print_json({"tenant_id": tenant_id, "unlinked": key_id,
+                    "api_key_ids": reg[tenant_id]["api_key_ids"]})
+        return 0
+    ok(f"Unlinked key {key_id} from tenant {tenant_id}")
     return 0
 
 

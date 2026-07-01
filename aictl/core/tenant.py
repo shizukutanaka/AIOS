@@ -13,9 +13,11 @@ Based on enterprise spec section 5 (tenant-class.regulated.yaml).
 from __future__ import annotations
 
 import collections
+import json
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -143,7 +145,9 @@ class TenantRateLimiter:
             window.append((now, tokens_used))
 
 
-# Module-level singleton — used by proxy and daemon for enforcement
+# Module-level singleton, consulted by the proxy's _check_auth/_meter_tokens
+# (see registry_path/load_registry/find_tenant_by_key_id below for how a
+# request's API key resolves to a tenant in the first place).
 _default_limiter: TenantRateLimiter | None = None
 
 
@@ -153,6 +157,49 @@ def get_rate_limiter() -> TenantRateLimiter:
     if _default_limiter is None:
         _default_limiter = TenantRateLimiter()
     return _default_limiter
+
+
+def registry_path(state_dir: Path | None = None) -> Path:
+    """Path to the tenant registry JSON. Single source of truth for both the
+    `aictl tenant` CLI and the proxy's tenant-lookup-by-API-key path — they
+    must agree on where tenants live."""
+    if state_dir:
+        return Path(state_dir) / "tenants.json"
+    from aictl.core.state import DEFAULT_STATE_DIR
+    return DEFAULT_STATE_DIR / "tenants.json"
+
+
+def load_registry(path: Path) -> dict[str, Any]:
+    """Load the tenant registry, degrading to {} on any corruption.
+
+    Guards a non-object root (list/scalar): a corrupt or hand-edited registry
+    must never crash a live request in the proxy's hot path — the same V7
+    "persisted-state must load defensively" invariant applied everywhere else.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def find_tenant_by_key_id(state_dir: Path | None, key_id: str) -> dict[str, Any] | None:
+    """Find the tenant record (if any) that has `key_id` in its api_key_ids.
+
+    Returns None when the key isn't linked to any tenant — the proxy then
+    falls back to per-API-key limiting only (unchanged pre-existing behavior),
+    since tenant-class limiting is an additional, opt-in layer on top.
+    """
+    if not key_id:
+        return None
+    for record in load_registry(registry_path(state_dir)).values():
+        if not isinstance(record, dict):
+            continue
+        if key_id in record.get("api_key_ids", []):
+            return record
+    return None
 
 
 def generate_k8s_namespace(tenant: Tenant) -> dict[str, Any]:
