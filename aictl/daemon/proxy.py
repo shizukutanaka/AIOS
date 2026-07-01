@@ -285,9 +285,45 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception:
             pass  # Metering failures must not affect requests
 
+    def _tenant_disallows_internet(self) -> bool:
+        """True if the requesting key's linked tenant class has
+        allow_internet=False. Unlinked keys are unaffected (opt-in layer,
+        matching the tenant rate-limit enforcement added in Pass 164)."""
+        auth = self.headers.get("Authorization", "")
+        if not (auth.startswith("Bearer ") and auth[7:].startswith("aios-")):
+            return False
+        from aictl.core.apikeys import key_id_for
+        from aictl.core.tenant import find_tenant_by_key_id, get_tenant_class
+        tenant = find_tenant_by_key_id(self.store.dir if self.store else None,
+                                      key_id_for(auth[7:]))
+        if tenant is None:
+            return False
+        tc = get_tenant_class(tenant.get("tenant_class", "standard"))
+        if tc.allow_internet:
+            return False
+
+        from aictl.core.audit import AuditLog, AuditEntry
+        log = AuditLog(self.store.dir if self.store else None)
+        log.write(AuditEntry(
+            event="proxy.cloud_fallback_blocked", resource=tenant["id"],
+            action="deny", outcome="blocked",
+            details={"tenant_class": tenant.get("tenant_class", "standard")},
+        ))
+        return True
+
     def _try_cloud_fallback(self, body: dict[str, Any]) -> bool:
         """Attempt cloud provider fallback. Returns True if successful."""
         try:
+            # A tenant whose class disallows internet egress must NEVER be
+            # routed to an external cloud API — even when local engines are
+            # down and fallback is globally enabled. `allow_internet` (like
+            # max_requests_per_min before Pass 164) had no runtime consumer
+            # anywhere in the codebase; a regulated/air-gapped tenant would
+            # otherwise silently leak its request to a cloud provider the
+            # moment local engines became unreachable.
+            if self._tenant_disallows_internet():
+                return False
+
             from aictl.runtime.fallback import load_fallback_config, cloud_completion
             config = load_fallback_config(self.store.dir if self.store else None)
             if not config.enabled:
