@@ -7,6 +7,13 @@ local model bytes changed since I trusted them (tampering / bit-rot / bad sync)?
   aictl trust baseline ./models/llama3-8b     # record digests now (first use)
   aictl trust check    ./models/llama3-8b     # re-hash and report any drift
   aictl trust list                            # show everything baselined
+
+A plain baseline is blind trust-on-first-use: it hashes whatever bytes happen to
+be on disk right now, with no claim about how they got there. `--source` tags
+*why* this baseline should be trusted (`aictl model pull --baseline` tags it
+`pull:<reference>` automatically); `check`/`list` surface it so you can tell a
+freshly-pulled, registry-attested baseline apart from an untagged one recorded
+at some arbitrary later point.
 """
 
 from __future__ import annotations
@@ -29,6 +36,10 @@ def register(sub: Any) -> None:
 
     base = tsub.add_parser("baseline", help="Record the SHA-256 baseline of a model.")
     base.add_argument("path", help="Model file or directory to baseline.")
+    base.add_argument("--source", default="",
+                      help="Provenance note for why this baseline should be "
+                           "trusted (e.g. 'reviewed-by-secteam'). Blank = plain "
+                           "trust-on-first-use, no provenance claim.")
     base.add_argument("--json", action="store_true")
     base.set_defaults(func=run_baseline)
 
@@ -57,7 +68,7 @@ def _store(args: argparse.Namespace) -> BaselineStore:
 def run_baseline(args: argparse.Namespace) -> int:
     """Record the digest baseline for a model path."""
     store = _store(args)
-    recorded = store.record(args.path)
+    recorded = store.record(args.path, source=getattr(args, "source", ""))
     if not recorded:
         err(f"No model files found at: {args.path}")
         print("  Expected a model file or a directory containing weight files "
@@ -70,7 +81,8 @@ def run_baseline(args: argparse.Namespace) -> int:
 
     ok(f"Baselined {len(recorded)} file(s) from {args.path}")
     for r in recorded:
-        print(f"  {r['digest']}  {r['path']}")
+        tag = f"  [{r['source']}]" if r.get("source") else ""
+        print(f"  {r['digest']}  {r['path']}{tag}")
     return 0
 
 
@@ -91,11 +103,16 @@ def run_check(args: argparse.Namespace) -> int:
     icon = {"ok": "✓", "changed": "✗", "missing": "✗", "new": "○"}
     rows = []
     for r in results:
+        if r["status"] == "new":
+            source_display = "—"           # not baselined at all yet
+        else:
+            source_display = r.get("source", "") or "(untagged)"
         rows.append({
             "status": f"{icon.get(r['status'], '?')} {r['status']}",
             "file": _short(r["path"]),
+            "source": source_display,
         })
-    print_table(rows, ["status", "file"])
+    print_table(rows, ["status", "file", "source"])
     print()
 
     n_changed = sum(1 for r in results if r["status"] == "changed")
@@ -122,9 +139,10 @@ def run_list(args: argparse.Namespace) -> int:
     if not data:
         print("No baselines recorded yet. Run: aictl trust baseline <model-path>")
         return 0
-    rows = [{"digest": v["digest"][:23] + "…", "file": _short(k)}
+    rows = [{"digest": v["digest"][:23] + "…", "file": _short(k),
+            "source": v.get("source", "") or "(untagged)"}
             for k, v in sorted(data.items())]
-    print_table(rows, ["digest", "file"])
+    print_table(rows, ["digest", "file", "source"])
     return 0
 
 

@@ -35,6 +35,11 @@ def register(sub: Any) -> None:
     pull = msub.add_parser("pull", help="Pull model from OCI registry")
     pull.add_argument("reference", help="OCI reference (e.g. ghcr.io/org/model:tag)")
     pull.add_argument("--output", default="", help="Output directory")
+    pull.add_argument("--baseline", action="store_true",
+                      help="Record an `aictl trust` integrity baseline for the "
+                           "pulled files, tagged with this registry reference — "
+                           "so a later `trust check` can tell 'freshly pulled, "
+                           "registry-attested' apart from an untagged baseline.")
     pull.set_defaults(func=run_pull)
 
     verify = msub.add_parser("verify", help="Verify model/image signature")
@@ -158,15 +163,29 @@ def run_pull(args: argparse.Namespace) -> int:
     ok(f"Pulling {args.reference}...")
     result = pull_model(args.reference, output_dir=getattr(args, "output", ""))
 
+    baseline_count = 0
+    if result.success and getattr(args, "baseline", False):
+        from aictl.trust.baseline import BaselineStore
+        from aictl.core.state import StateStore
+        store = BaselineStore(StateStore(getattr(args, "state_dir", None)).dir)
+        recorded = store.record(result.local_path, source=f"pull:{args.reference}")
+        baseline_count = len(recorded)
+
     if getattr(args, "json", False):
         print_json({"success": result.success, "path": result.local_path,
-                     "digest": result.digest, "error": result.error})
+                     "digest": result.digest, "error": result.error,
+                     "baselined": baseline_count})
         return 0 if result.success else 1
 
     if result.success:
         ok(f"Model pulled to {result.local_path}")
         if result.digest:
             print(f"  Digest: {result.digest}")
+        if getattr(args, "baseline", False):
+            if baseline_count:
+                ok(f"Baselined {baseline_count} file(s) — source: pull:{args.reference}")
+            else:
+                warn("No model weight files found to baseline at the pulled path.")
     else:
         err(f"Pull failed: {result.error}")
     return 0 if result.success else 1

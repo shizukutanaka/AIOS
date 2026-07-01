@@ -9,6 +9,16 @@ changed them since?".
 It records a SHA-256 baseline for a model file or directory on first use, then
 re-hashes on demand and reports per-file drift: ok / changed / missing / new.
 Pure stdlib; the baseline is a JSON sidecar in the state dir.
+
+Socratic follow-on: trust-on-first-use is only as good as the "first use". A
+bare `aictl trust baseline ./models/llama3-8b` blindly hashes whatever bytes are
+on disk *right now* — it can't tell "freshly pulled from a registry, digest
+attested" apart from "sitting there for six months, possibly already tampered
+before anyone thought to baseline it". `record()` therefore accepts an optional
+`source` string so callers with real provenance (`model pull`, a manual security
+review) can tag it — and `trust check`/`trust list` can then answer "how much do
+I actually trust *this specific baseline's origin*", not just "does it still
+match itself".
 """
 
 from __future__ import annotations
@@ -60,8 +70,15 @@ class BaselineStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, indent=2, sort_keys=True))
 
-    def record(self, target: str | Path) -> list[dict[str, Any]]:
-        """Baseline every model file under `target`. Returns the recorded rows."""
+    def record(self, target: str | Path, source: str = "") -> list[dict[str, Any]]:
+        """Baseline every model file under `target`. Returns the recorded rows.
+
+        `source` is optional provenance for *why* this baseline should be
+        trusted (e.g. ``"pull:ghcr.io/org/model:tag"`` right after a registry
+        pull, or a note like ``"reviewed-by-secteam"``). Left empty ("") for
+        plain trust-on-first-use — a manual re-hash of whatever is on disk,
+        with no claim about how it got there.
+        """
         files = model_files(Path(target))
         data = self._load()
         recorded: list[dict[str, Any]] = []
@@ -72,6 +89,7 @@ class BaselineStore:
                 "digest": sha256_file(f),
                 "size": f.stat().st_size,
                 "recorded_at": now,
+                "source": source,
             }
             data[key] = entry
             recorded.append({"path": key, **entry})
@@ -103,6 +121,9 @@ class BaselineStore:
             results.append({
                 "path": key, "status": status,
                 "expected": base["digest"], "actual": actual,
+                # Baselines recorded before this field existed have no "source"
+                # key; treat them as plain (unattributed) trust-on-first-use.
+                "source": base.get("source", ""),
             })
 
         # A baselined file that lives under `target` but is gone from disk.
@@ -112,7 +133,8 @@ class BaselineStore:
                 continue
             if key == target_prefix or key.startswith(target_prefix.rstrip("/") + "/"):
                 results.append({"path": key, "status": "missing",
-                                "expected": base["digest"]})
+                                "expected": base["digest"],
+                                "source": base.get("source", "")})
 
         return sorted(results, key=lambda r: r["path"])
 
