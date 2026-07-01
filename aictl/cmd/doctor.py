@@ -64,6 +64,44 @@ def build_remediations(report: Any, store: Any) -> list[dict]:
         if not any(f["issue"] == issue for f in fixes):
             fixes.append({"issue": issue, "command": "", "auto": False})
 
+    fixes.extend(_trust_baseline_remediations(store))
+
+    return fixes
+
+
+# Cap individually-listed drifted files so a large baseline set doesn't spam
+# the remediation plan; the remainder is folded into one summary entry.
+_MAX_DRIFT_REMEDIATIONS = 5
+
+
+def _trust_baseline_remediations(store: Any) -> list[dict]:
+    """Remediation entries for trust-baseline drift (Pass 162 `doctor --deep`
+    integration exists to REPORT drift; `--fix` must also surface it, but must
+    NEVER auto-remediate it — silently re-baselining a changed file is exactly
+    the "just trust the new hash" mistake that defeats drift detection. Every
+    entry here points at manual investigation, auto=False always.
+    """
+    from aictl.trust.baseline import BaselineStore
+    results = BaselineStore(store.dir).check_all()
+    drifted = [r for r in results if r["status"] in ("changed", "missing")]
+    if not drifted:
+        return []
+
+    fixes = []
+    for r in drifted[:_MAX_DRIFT_REMEDIATIONS]:
+        fixes.append({
+            "issue": f"Trust baseline {r['status']}: {r['path']}",
+            "command": (f"aictl trust check {r['path']}  # investigate; if the "
+                       f"change is legitimate, re-baseline: aictl trust baseline {r['path']}"),
+            "auto": False,
+        })
+    remaining = len(drifted) - _MAX_DRIFT_REMEDIATIONS
+    if remaining > 0:
+        fixes.append({
+            "issue": f"...and {remaining} more drifted baseline(s)",
+            "command": "aictl trust check  # see all",
+            "auto": False,
+        })
     return fixes
 
 
