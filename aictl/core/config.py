@@ -70,6 +70,15 @@ def load_config(state_dir: Path | None = None) -> Config:
 
     try:
         data = json.loads(path.read_text())
+        # A list/scalar-rooted config.json parses cleanly, but `"engines" in
+        # data` silently passes (False) for a list while the very next
+        # `data.get("trust_policy", ...)` raises AttributeError ('list' object
+        # has no attribute 'get') — uncaught, surfaced as "report a bug" for
+        # nearly every command (almost all of them call load_config). Guard the
+        # root type up front and degrade to defaults, matching the V7 pattern
+        # used by every other persisted-state loader in the project.
+        if not isinstance(data, dict):
+            return Config()
         c = Config()
 
         if "engines" in data:
@@ -93,7 +102,7 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.log_level = data.get("log_level", c.log_level)
 
         return c
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, OSError, AttributeError, TypeError):
         return Config()
 
 

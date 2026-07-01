@@ -177,14 +177,20 @@ class TokenMeter:
             return {}
         try:
             data = json.loads(self._buckets_path.read_text())
+            # A list/scalar-rooted file parses cleanly but `data.items()` (or a
+            # non-dict per-entity value's `v.items()`) raises AttributeError —
+            # uncaught, surfaced as "report a bug" for a corrupt store. Same V7
+            # class as config.py/batch.py/etc.
+            if not isinstance(data, dict):
+                return {}
             return {
                 k: TokenBucket(**{
                     key: val for key, val in v.items()
                     if key in TokenBucket.__dataclass_fields__
                 })
-                for k, v in data.items()
+                for k, v in data.items() if isinstance(v, dict)
             }
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, AttributeError, TypeError):
             return {}
 
     def _save_buckets(self, buckets: dict[str, TokenBucket]) -> None:
