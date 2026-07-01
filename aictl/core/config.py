@@ -7,6 +7,7 @@ Stored in ~/.aios/config.json. Covers:
   - Daemon settings (host, port)
   - Quadlet mode (rootless/root)
   - Default recipe
+  - Cloud fallback (provider, model, api_key)
 """
 
 from __future__ import annotations
@@ -51,10 +52,29 @@ class DaemonConfig:
 
 
 @dataclass
+class FallbackSettings:
+    """Cloud-fallback settings (aictl.runtime.fallback).
+
+    `api_key` is a secret: `save_config` writes it via `atomic_write_text`
+    (0o600-by-construction, since the temp file `mkstemp` creates is owner-only
+    and no wider mode is ever applied on replace) but `aictl config show` MUST
+    redact it — see cmd/config.py's run_show — so it never lands in terminal
+    scrollback, screen recordings, or a pasted support-ticket transcript.
+    """
+    enabled: bool = False
+    provider: str = ""
+    api_key: str = ""
+    model: str = ""
+    max_tokens: int = 1000
+    timeout_s: int = 30
+
+
+@dataclass
 class Config:
     engines: EngineEndpoints = field(default_factory=EngineEndpoints)
     slo: SLOConfig = field(default_factory=SLOConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
+    fallback: FallbackSettings = field(default_factory=FallbackSettings)
     trust_policy: str = "warn"        # enforce | warn | disabled
     quadlet_rootless: bool = True
     default_recipe: str = "local-chat"
@@ -94,6 +114,10 @@ def load_config(state_dir: Path | None = None) -> Config:
         if "daemon" in data:
             d = data["daemon"]
             c.daemon = DaemonConfig(**{k: d[k] for k in DaemonConfig.__dataclass_fields__ if k in d})
+        if "fallback" in data:
+            fb = data["fallback"]
+            c.fallback = FallbackSettings(
+                **{k: fb[k] for k in FallbackSettings.__dataclass_fields__ if k in fb})
 
         c.trust_policy = data.get("trust_policy", c.trust_policy)
         c.quadlet_rootless = data.get("quadlet_rootless", c.quadlet_rootless)

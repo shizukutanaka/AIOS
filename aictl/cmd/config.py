@@ -8,7 +8,7 @@ import argparse
 
 from pathlib import Path
 
-from aictl.core.output import ok, err, print_json
+from aictl.core.output import ok, err, warn, print_json
 from aictl.core.config import Config, load_config, save_config
 
 
@@ -52,16 +52,32 @@ def register(sub: Any) -> None:
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
+def _redact_secrets(d: dict[str, Any]) -> dict[str, Any]:
+    """Mask secret fields before a bulk config dump (show/diff).
+
+    `fallback.api_key` is a cloud-provider credential. A bulk dump is exactly
+    the kind of routine "let me check my config" output that ends up in
+    terminal scrollback, a screen recording, or a pasted support-ticket
+    transcript — so it must never appear in plaintext here. `config get
+    fallback.api_key` (an explicit, single-key request) is intentionally left
+    unredacted, matching the `aws configure get` convention.
+    """
+    fb = d.get("fallback")
+    if isinstance(fb, dict) and fb.get("api_key"):
+        d = {**d, "fallback": {**fb, "api_key": "***REDACTED***"}}
+    return d
+
+
 def run_show(args: argparse.Namespace) -> int:
     """Execute the show subcommand."""
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
     config = load_config(state_dir)
     from dataclasses import asdict
+    d = _redact_secrets(asdict(config))
     if getattr(args, "json", False):
-        print_json(asdict(config))
+        print_json(d)
         return 0
 
-    d = asdict(config)
     _print_nested(d)
     return 0
 
@@ -279,7 +295,9 @@ def run_diff(args: argparse.Namespace) -> int:
     defaults = _flatten_dict(asdict(Config()))
 
     diffs = [
-        {"key": k, "current": current.get(k), "default": defaults.get(k)}
+        {"key": k,
+         "current": "***REDACTED***" if k == "fallback.api_key" and current.get(k) else current.get(k),
+         "default": defaults.get(k)}
         for k in current
         if current.get(k) != defaults.get(k)
     ]
@@ -304,19 +322,30 @@ def run_export(args: argparse.Namespace) -> int:
     """Export current config to a portable JSON file."""
     import json as _json
     from dataclasses import asdict
+    from aictl.core.atomicio import atomic_write_text
     state_dir = Path(args.state_dir) if getattr(args, "state_dir", None) else None
     config = load_config(state_dir)
     data = asdict(config)
+    has_secret = bool(data.get("fallback", {}).get("api_key"))
     output = getattr(args, "output", "") or "aios-config.json"
     try:
-        Path(output).write_text(_json.dumps(data, indent=2))
+        # Unredacted (unlike show/diff): this file feeds `config import` on
+        # another machine, so stripping the secret would silently break that
+        # round-trip. Written atomically with 0o600 instead — the same
+        # protection api_keys.json got in Pass 157 — since this arbitrary,
+        # user-chosen output path can carry the same cloud-provider credential.
+        atomic_write_text(Path(output), _json.dumps(data, indent=2), mode=0o600)
     except OSError as exc:
         err(f"Failed to write: {exc}")
         return 1
     if getattr(args, "json", False):
-        print_json({"exported": True, "output": output})
+        print_json({"exported": True, "output": output, "contains_secret": has_secret})
         return 0
     ok(f"Config exported: {output}")
+    if has_secret:
+        warn(f"{output} contains your fallback.api_key in plaintext — "
+             f"handle it like a credential (don't commit it, don't paste it "
+             f"into a support ticket).")
     return 0
 
 
@@ -363,11 +392,13 @@ def run_import(args: argparse.Namespace) -> int:
 
 def _dict_to_config(d: dict[str, Any]) -> Config:
     """Convert a nested dict to a flat config object."""
-    from aictl.core.config import EngineEndpoints, SLOConfig, DaemonConfig
+    from aictl.core.config import EngineEndpoints, SLOConfig, DaemonConfig, FallbackSettings
     return Config(
         engines=EngineEndpoints(**d.get("engines", {})),
         slo=SLOConfig(**{k: v for k, v in d.get("slo", {}).items() if k in SLOConfig.__dataclass_fields__}),
         daemon=DaemonConfig(**d.get("daemon", {})),
+        fallback=FallbackSettings(**{k: v for k, v in d.get("fallback", {}).items()
+                                     if k in FallbackSettings.__dataclass_fields__}),
         trust_policy=d.get("trust_policy", "warn"),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),
