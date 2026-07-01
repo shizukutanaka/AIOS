@@ -6,7 +6,7 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.output import ok, err, warn, print_json, print_table
 from aictl.core.state import StateStore
 from aictl.core.argtypes import nonneg_int
 
@@ -40,6 +40,14 @@ def register(sub: Any) -> None:
     verify = msub.add_parser("verify", help="Verify model/image signature")
     verify.add_argument("reference", help="Image or model reference")
     verify.add_argument("--key", default="", help="Public key file for verification")
+    verify.add_argument("--identity", default="",
+                        help="Expected signer identity for keyless verification "
+                             "(e.g. https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main). "
+                             "Without this + --oidc-issuer, verification only "
+                             "confirms SOME signature exists, not who signed it.")
+    verify.add_argument("--oidc-issuer", default="",
+                        help="Expected OIDC issuer for keyless verification "
+                             "(e.g. https://token.actions.githubusercontent.com)")
     verify.set_defaults(func=run_verify)
 
     ps = msub.add_parser("ps", help="Show models currently loaded in GPU memory")
@@ -173,17 +181,27 @@ def run_verify(args: argparse.Namespace) -> int:
         return 1
 
     ok(f"Verifying {args.reference}...")
-    result = verify_image(args.reference, public_key=getattr(args, "key", ""))
+    result = verify_image(
+        args.reference, public_key=getattr(args, "key", ""),
+        certificate_identity=getattr(args, "identity", ""),
+        certificate_oidc_issuer=getattr(args, "oidc_issuer", ""),
+    )
 
     if getattr(args, "json", False):
         print_json({"verified": result.verified, "method": result.method,
-                     "signer": result.signer, "error": result.error})
+                     "signer": result.signer, "error": result.error,
+                     "warning": result.warning})
         return 0 if result.verified else 1
 
     if result.verified:
         ok(f"Signature verified ({result.method})")
         if result.signer:
             print(f"  Signer: {result.signer}")
+        # A bare "✓ verified" from unpinned keyless verification is misleading —
+        # it means "signed by someone", not "signed by a trusted publisher".
+        # Never let that caveat get lost in scrollback below the checkmark.
+        if result.warning:
+            warn(result.warning)
     else:
         err(f"Verification failed: {result.error}")
     return 0 if result.verified else 1
