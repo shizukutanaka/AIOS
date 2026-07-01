@@ -142,6 +142,33 @@ class BaselineStore:
         """Every recorded baseline entry."""
         return self._load()
 
+    def check_all(self) -> list[dict[str, Any]]:
+        """Re-check EVERY baselined file system-wide, no target path needed.
+
+        `check(target)` requires the caller to already know which model
+        directory to look at. Routine operational surfaces (`aictl doctor
+        --deep`) don't have a specific path in mind — they just want to know
+        "has anything I've ever promised to watch drifted?". This iterates the
+        whole baseline store directly; only "ok" / "changed" / "missing" are
+        possible (there is no "new" here — nothing to discover outside of what
+        was already recorded).
+        """
+        data = self._load()
+        results: list[dict[str, Any]] = []
+        for key, base in data.items():
+            path = Path(key)
+            source = base.get("source", "")
+            if not path.exists():
+                results.append({"path": key, "status": "missing",
+                                "expected": base["digest"], "source": source})
+                continue
+            actual = sha256_file(path)
+            status = "ok" if actual == base["digest"] else "changed"
+            results.append({"path": key, "status": status,
+                            "expected": base["digest"], "actual": actual,
+                            "source": source})
+        return sorted(results, key=lambda r: r["path"])
+
 
 def worst_status(results: list[dict[str, Any]]) -> str:
     """The most severe status across results (drives the exit code)."""

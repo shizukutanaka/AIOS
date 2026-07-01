@@ -44,7 +44,10 @@ def register(sub: Any) -> None:
     base.set_defaults(func=run_baseline)
 
     chk = tsub.add_parser("check", help="Check a model against its recorded baseline.")
-    chk.add_argument("path", help="Model file or directory to check.")
+    chk.add_argument("path", nargs="?", default="",
+                     help="Model file or directory to check. Omit to audit EVERY "
+                          "baselined file system-wide (what `aictl doctor --deep` "
+                          "runs internally).")
     chk.add_argument("--json", action="store_true")
     chk.set_defaults(func=run_check)
 
@@ -87,12 +90,24 @@ def run_baseline(args: argparse.Namespace) -> int:
 
 
 def run_check(args: argparse.Namespace) -> int:
-    """Check a model path against its recorded baseline."""
+    """Check a model path against its recorded baseline.
+
+    No path -> audit EVERY baselined file system-wide (what `aictl doctor
+    --deep` calls internally): "has anything I've ever promised to watch
+    drifted?", without the caller having to already know a specific target.
+    """
     store = _store(args)
-    results = store.check(args.path)
-    if not results:
-        err(f"No model files found at: {args.path}")
-        return 1
+    path = getattr(args, "path", "")
+    if path:
+        results = store.check(path)
+        if not results:
+            err(f"No model files found at: {path}")
+            return 1
+    else:
+        results = store.check_all()
+        if not results:
+            err("No baselines recorded yet. Run: aictl trust baseline <model-path>")
+            return 1
 
     status = worst_status(results)
     if getattr(args, "json", False):
@@ -123,7 +138,7 @@ def run_check(args: argparse.Namespace) -> int:
             f"These model files differ from their trusted baseline.")
         return 2
     if n_new:
-        warn(f"{n_new} file(s) not yet baselined. Run: aictl trust baseline {args.path}")
+        warn(f"{n_new} file(s) not yet baselined. Run: aictl trust baseline {path}")
         return 0
     ok("All files match their trusted baseline.")
     return 0

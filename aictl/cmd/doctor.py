@@ -137,9 +137,15 @@ def run(args: argparse.Namespace) -> int:
         if deep:
             from aictl.core.security import scan
             from aictl.runtime.fabric import detect_memory_fabric
+            from aictl.trust.baseline import BaselineStore, worst_status
             from dataclasses import asdict
             result["security"] = asdict(scan(store.dir))
             result["fabric"] = asdict(detect_memory_fabric())
+            trust_results = BaselineStore(store.dir).check_all()
+            result["trust_baseline"] = {
+                "status": worst_status(trust_results) if trust_results else "ok",
+                "results": trust_results,
+            }
         print_json(result)
         return 0
 
@@ -274,6 +280,34 @@ def run(args: argparse.Namespace) -> int:
             checks_pass += 1
         except Exception as e:
             print(f"  \u2717 RAG error: {e}")
+        checks_total += 1
+
+        # Trust baseline drift \u2014 routine surfacing of `aictl trust check`, so an
+        # operator doesn't have to remember to run it separately per model.
+        # Baselining is opt-in (CLAUDE.md: "verification is optional by
+        # default"), so having none recorded is informational, not a failure.
+        print("\nTrust Baseline")
+        try:
+            from aictl.trust.baseline import BaselineStore, worst_status
+            results = BaselineStore(store.dir).check_all()
+            drifted = bool(results) and worst_status(results) in ("changed", "missing")
+            if not results:
+                print("  \u25cb No baselines recorded "
+                      "(run: aictl trust baseline <model-path>)")
+            elif drifted:
+                n_bad = sum(1 for r in results if r["status"] in ("changed", "missing"))
+                print(f"  \u2717 Integrity drift: {n_bad}/{len(results)} "
+                      f"file(s) differ from their trusted baseline")
+                for r in results:
+                    if r["status"] in ("changed", "missing"):
+                        print(f"      {r['status']:8s} {r['path']}")
+            else:
+                print(f"  \u2713 {len(results)} baselined file(s), all match "
+                      f"(run: aictl trust check for details)")
+            if not drifted:
+                checks_pass += 1
+        except Exception as e:
+            print(f"  \u2717 Trust baseline check error: {e}")
         checks_total += 1
 
     # ── Summary ───────────────────────────────────────
