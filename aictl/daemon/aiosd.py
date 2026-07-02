@@ -102,6 +102,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "/v1/upgrade/plan": self._upgrade_plan,
             "/v1/broker/engines": self._broker_engines,
             "/v1/broker/governor": self._broker_governor,
+            "/v1/scheduler": self._scheduler_status,
             "/v1/cluster": self._cluster_status,
             "/metrics": self._prometheus_metrics,
             "/v1/events": self._events,
@@ -438,6 +439,21 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "timestamp": action.timestamp,
         })
 
+    def _scheduler_status(self) -> None:
+        """Return the background scheduler's status: whether it's running,
+        how many ticks it has done, and the result of its last tick (which
+        batch jobs / warmup ran)."""
+        sched = getattr(self.__class__, '_scheduler', None)
+        if sched:
+            self._json_response(sched.get_status())
+            return
+
+        # Not running as a daemon (or scheduler never started) — do a
+        # one-shot tick so the endpoint is still useful standalone.
+        from aictl.core.scheduler import run_due_all
+        result = run_due_all(self.store.dir)
+        self._json_response({"running": False, "last_result": result})
+
     # ── Cluster handlers ────────────────────────────────
 
     def _cluster_status(self) -> None:
@@ -587,10 +603,19 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     AIOSHandler._governor = governor  # type: ignore
     governor.start()
 
+    # Start the scheduler daemon: fires due `batch add --schedule` jobs and
+    # `warmup schedule` on their own timing (docs/FEATURE_GAP_AUDIT.md
+    # P3/P4/M3) — previously nothing executed a persisted schedule at all.
+    from aictl.daemon.scheduler_daemon import SchedulerDaemon
+    scheduler = SchedulerDaemon(store, interval_s=60.0)
+    AIOSHandler._scheduler = scheduler  # type: ignore
+    scheduler.start()
+
     def shutdown(sig: Any, frame: Any) -> None:
         """Shutdown."""
         print("\naiosd shutting down...")
         governor.stop()
+        scheduler.stop()
         threading.Thread(target=server.shutdown).start()
 
     signal.signal(signal.SIGINT, shutdown)
@@ -599,6 +624,7 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     print(f"aiosd listening on http://{host}:{port}")
     print(f"State dir: {store.dir}")
     print("SLO Governor: active (15s interval)")
+    print("Scheduler: active (60s interval, batch jobs + warmup schedules)")
     server.serve_forever()
 
 

@@ -22,11 +22,12 @@ the condensed, model-to-model version of the same findings).
 3. Tenant-class allow_internet flag. File: proxy.py _try_cloud_fallback calls
    _tenant_disallows_internet. A tenant with allow_internet=False cannot be
    routed to an external cloud API even if cloud fallback is globally enabled.
-4. Tenant-class require_signed_models flag AND global trust_policy=enforce.
-   File: proxy.py _proxy_completion calls _model_trust_ok before routing.
-   Strictest-wins: tenant requirement overrides a looser global policy.
-   Unsigned/unregistered models are blocked when strict; default config
-   (trust_policy=warn, no tenant requiring signing) blocks nothing.
+4. Tenant-class require_signed_models flag AND global trust_policy=enforce
+   (model-trust gate). File: proxy.py _proxy_completion calls
+   _model_trust_ok before routing. Strictest-wins: tenant requirement
+   overrides a looser global policy. Unsigned/unregistered models are
+   blocked when strict; default config (trust_policy=warn, no tenant
+   requiring signing) blocks nothing.
 5. API-key file confidentiality. File: core/apikeys.py _save_keys. Writes with
    mode 0o600 via atomic_write_text, not the default 0o644.
 6. Digest verification is case/prefix insensitive (bare hex, uppercase,
@@ -57,18 +58,27 @@ the condensed, model-to-model version of the same findings).
     (never auto-applies a fix for drift — always points at manual
     investigation, since silently re-baselining a changed file would defeat
     the point of drift detection).
+14. Background scheduler for batch jobs and warmup. "aictl batch add
+    --schedule '0 2 * * *'" and "aictl warmup schedule --every 1h" are now
+    actually executed, not just persisted. File: aictl/core/scheduler.py
+    (cron matching + due-check + execution, reusing the same job/warmup
+    execution code paths the manual "batch run"/"warmup run" commands use)
+    plus aictl/daemon/scheduler_daemon.py (SchedulerDaemon, a background
+    thread wired into "aictl serve" the same way the pre-existing SLO
+    governor thread is, 60s interval). Manual trigger: "aictl scheduler
+    tick". Daemon status: GET /v1/scheduler.
+15. Fixed alongside item 14: aictl/cmd/batch.py's _db_path() previously
+    ignored the --state-dir CLI flag entirely (it only read the
+    AIOS_STATE_DIR environment variable) — every "aictl batch" command
+    silently wrote to the default state directory regardless of --state-dir,
+    unlike every other command in the project. Now respects --state-dir
+    consistently with the rest of the CLI.
 
 ## STATUS = PAPER-ONLY (documented/configurable, ZERO runtime consumer found)
 
 Severity: HIGH = a security/compliance control that silently does nothing.
 MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
 
-14. [MED] "aictl batch add --schedule '0 2 * * *'" persists a scheduled job
-    record to batch.json. Nothing in the codebase ever executes a job on
-    schedule. There is no background scheduler/worker process. Only
-    "aictl batch run <job>" (manual, on-demand) actually runs anything.
-15. [MED] "aictl warmup schedule --every 1h" persists a next_run timestamp.
-    Nothing in the codebase ever fires a warmup on that schedule.
 16. [MED] Tenant-class resource caps max_gpu_slices, max_memory_gb,
     max_vram_gb, max_models (core/tenant.py TenantClass fields). Zero
     references outside the dataclass and the K8s-namespace/cgroup YAML
@@ -123,36 +133,36 @@ MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
 
 22. No reverse lookup: "aictl apikey inspect <id>" does not show which
     tenant (if any) that key is linked to, even though
-    "aictl tenant link-key" (added this session) creates that link.
-23. No proxy-level enforcement point existed for model trust before this
-    session; item 4 above is the fix. (Listed here for history; this gap is
-    now CLOSED.)
-24. No single background scheduler/worker process in the daemon. This is the
-    prerequisite for making items 14 and 15 real instead of paper-only.
+    "aictl tenant link-key" creates that link.
 
 ## STATUS = EXCESS (reviewed for redundancy, no action taken)
 
-25. Monitoring commands status / watch / dash / top / health: five commands
+23. Monitoring commands status / watch / dash / top / health: five commands
     that could look redundant. Reviewed individually; each has a genuinely
     distinct purpose (one-shot unified status snapshot / continuous refresh
     loop / one-screen aggregate dashboard / htop-style GPU+model monitor /
     pass-fail scored health check). Conclusion: not redundant, no merge
     recommended.
-26. "aictl deploy" has 9 subcommands (plan, manifest, dynamo, kvbm, disagg,
+24. "aictl deploy" has 9 subcommands (plan, manifest, dynamo, kvbm, disagg,
     optimize, strategy, modelservice, dry-run). Reviewed: "deploy strategy"
     is a front-door recommender that tells the user which of the other 8 to
     run next; the rest each produce a genuinely different output format
     (Helm values, K8s manifests, vLLM flags, Dynamo config). Conclusion: not
     redundant, no merge recommended.
 
+## Resolved this session (kept for history, no longer open)
+
+- Model-trust gate (was item: proxy has no model-level trust hook) — now
+  item 4 above.
+- Background scheduler (was item: no scheduler/worker daemon) — now item 14
+  above.
+
 ## Recommended next action, in priority order
 
 1. Item 20/21 (Go port apply/down false success) — highest priority. Fix is
    simple (stop claiming success, exit non-zero, point at the Python CLI)
    but requires an environment where "go build ./..." succeeds to verify.
-2. Items 14+15+24 together — one background scheduler/worker that executes
-   persisted batch jobs and warmup schedules on their recorded timing.
-3. Item 16 — either enforce tenant resource caps locally, or update the CLI
+2. Item 16 — either enforce tenant resource caps locally, or update the CLI
    help text to state they are K8s-only (generated-manifest) limits, to stop
    implying local enforcement that does not exist.
-4. Item 22 — small, cheap addition (show tenant on "apikey inspect").
+3. Item 22 — small, cheap addition (show tenant on "apikey inspect").

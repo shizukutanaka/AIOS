@@ -64,7 +64,8 @@ def register(sub: Any) -> None:
 
 def run_add(args: argparse.Namespace) -> int:
     """Add a new entry."""
-    db = _load()
+    state_dir = getattr(args, "state_dir", None)
+    db = _load(state_dir)
     db["jobs"][args.name] = {
         "schedule": args.schedule,
         "input": args.input,
@@ -76,7 +77,7 @@ def run_add(args: argparse.Namespace) -> int:
         "last_status": "pending",
         "runs": 0,
     }
-    _save(db)
+    _save(db, state_dir)
     ok(f"Job '{args.name}' scheduled: {args.schedule}")
     print(f"  Task: {args.task}  Model: {args.model}")
     if args.input:
@@ -93,7 +94,7 @@ def run_add(args: argparse.Namespace) -> int:
 
 def run_list(args: argparse.Namespace) -> int:
     """List all entries."""
-    db = _load()
+    db = _load(getattr(args, "state_dir", None))
     if not db["jobs"]:
         warn("No batch jobs scheduled.")
         print("  Add one: aictl batch add myjob --schedule '0 2 * * *' --input ./docs")
@@ -123,7 +124,8 @@ def run_list(args: argparse.Namespace) -> int:
 
 def run_now(args: argparse.Namespace) -> int:
     """Run a job immediately, with PSI-based interrupt support."""
-    db = _load()
+    state_dir = getattr(args, "state_dir", None)
+    db = _load(state_dir)
     if args.name not in db["jobs"]:
         err(f"Unknown job: {args.name}")
         return 1
@@ -141,11 +143,11 @@ def run_now(args: argparse.Namespace) -> int:
         job["last_run"] = time.time()
         job["last_status"] = "success"
         job["runs"] = job.get("runs", 0) + 1
-        _save(db)
+        _save(db, state_dir)
         ok(f"Job completed in {elapsed:.1f}s")
     else:
         job["last_status"] = "failed"
-        _save(db)
+        _save(db, state_dir)
         warn(f"Job failed or was interrupted after {elapsed:.1f}s")
 
     print()
@@ -154,19 +156,20 @@ def run_now(args: argparse.Namespace) -> int:
 
 def run_remove(args: argparse.Namespace) -> int:
     """Remove an entry."""
-    db = _load()
+    state_dir = getattr(args, "state_dir", None)
+    db = _load(state_dir)
     if args.name not in db["jobs"]:
         err(f"Unknown job: {args.name}")
         return 1
     del db["jobs"][args.name]
-    _save(db)
+    _save(db, state_dir)
     ok(f"Job '{args.name}' removed.")
     return 0
 
 
 def run_status(args: argparse.Namespace) -> int:
     """Show current status."""
-    db = _load()
+    db = _load(getattr(args, "state_dir", None))
     running = [n for n, j in db["jobs"].items() if j["last_status"] == "running"]
     if running:
         print(f"\n  Running: {', '.join(running)}\n")
@@ -259,15 +262,24 @@ def _task_classify(input_path: str, model: str) -> bool:
     return True
 
 
-def _db_path() -> Path:
-    """Execute db path."""
+def _db_path(state_dir: Any = None) -> Path:
+    """Execute db path.
+
+    `state_dir` (from args.state_dir) takes priority over AIOS_STATE_DIR: every
+    other command in the project resolves its state dir this way (see
+    cmd/tenant.py's _registry_path), but batch.py previously only checked the
+    env var — `aictl batch add --state-dir /tmp/x ...` silently wrote to
+    ~/.aios/batch.json instead, ignoring the flag entirely.
+    """
+    if state_dir:
+        return Path(state_dir) / "batch.json"
     base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
     return Path(base) / "batch.json"
 
 
-def _load() -> dict[str, Any]:
+def _load(state_dir: Any = None) -> dict[str, Any]:
     """Load and return data from storage."""
-    path = _db_path()
+    path = _db_path(state_dir)
     if path.exists():
         try:
             data = json.loads(path.read_text())
@@ -280,9 +292,9 @@ def _load() -> dict[str, Any]:
     return {"jobs": {}, "updated_at": time.time()}
 
 
-def _save(db: dict[str, Any]) -> None:
+def _save(db: dict[str, Any], state_dir: Any = None) -> None:
     """Persist data to storage."""
-    path = _db_path()
+    path = _db_path(state_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     db["updated_at"] = time.time()
     # Atomic write: a crash mid-save must not leave a truncated/corrupt store

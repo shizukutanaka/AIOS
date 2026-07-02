@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         gate, spec,
     )
     from aictl.cmd import log as log_cmd
-    from aictl.cmd import fit, quant, troubleshoot, capacity, trust
+    from aictl.cmd import fit, quant, troubleshoot, capacity, trust, scheduler
     from aictl.cmd import perf, rag, guard, cache_cmd, dash, update
     from aictl.cmd import tco, quota, batch, diff
     from aictl.cmd import prompt as prompt_cmd
@@ -122,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     fit.register(sub)
     capacity.register(sub)
     trust.register(sub)
+    scheduler.register(sub)
     quant.register(sub)
     troubleshoot.register(sub)
 
