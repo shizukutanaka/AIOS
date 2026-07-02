@@ -42,7 +42,7 @@ Ranked by severity (impact if a user relied on the documented behavior).
 | ~~P2~~ | ~~**`require_signed_models`** (tenant class)~~ | — | ✅ **FIXED (Pass 166)** — a regulated tenant (require_signed_models=True) blocks unsigned models even under a loose global policy (strictest wins). | ~~HIGH~~ done |
 | ~~P3~~ | ~~**`batch` job scheduling**~~ | — | ✅ **FIXED (Pass 167)** — `aictl.core.scheduler.run_due_batch_jobs` + `SchedulerDaemon` background thread in `aictl serve` (60s interval) actually execute due jobs; `aictl scheduler tick` triggers manually. | ~~MED~~ done |
 | ~~P4~~ | ~~**`warmup schedule`**~~ | — | ✅ **FIXED (Pass 167)** — same scheduler daemon fires the persisted warmup schedule when `next_run` passes. | ~~MED~~ done |
-| P5 | **Tenant resource caps** (`max_gpu_slices` / `max_memory_gb` / `max_vram_gb` / `max_models`) | `TenantClass` fields | 0 external references. Only materialize into generated K8s YAML — never enforced in local/proxy mode. | **MED** (K8s path OK; local path unguarded) |
+| ~~P5~~ | ~~Tenant resource caps~~ (`max_gpu_slices` / `max_memory_gb` / `max_vram_gb` / `max_models`) | — | ✅ **CLARIFIED (Pass 168)** — rather than inventing fake local enforcement for hardware-allocation concepts a request-routing proxy can't meaningfully check per-request, `tenant classes` now explicitly marks these as generation-only (`*` + legend in human output, `enforcement.generation_only` list in `--json`), distinct from the fields the proxy actually enforces live (`enforcement.proxy_enforced`). No false promise remains either way. | ~~MED~~ done |
 | P6 | **`audit_level`** (minimal/standard/detailed per tenant) | `TenantClass.audit_level` | 0 external references. Audit verbosity is uniform regardless of class. | **LOW** |
 | P7 | **Integration hooks** (`on_slo_violation`, `on_stack_applied`, …) | `core/hooks.py`, `aictl hooks` | Emitters exist and are called, but they only write to a log/no-op sink; not wired to run user scripts or webhooks. `aictl hooks` inspects, doesn't dispatch. | **LOW** (partially real) |
 | P8 | **`aictl gate`** ships without a security check | gate.py checks compile/import/version/tests/demo/docs/mcp/ruff/mypy | `core/security.scan()` exists with scored findings but `gate` never calls it — the project's own "safe to ship" bar doesn't include its own security scanner. | **LOW** |
@@ -59,7 +59,7 @@ Ranked by severity (impact if a user relied on the documented behavior).
 
 | # | Gap | Why expected |
 |---|---|---|
-| M1 | No `apikey`↔`tenant` reverse view | `tenant link-key` exists (Pass 164) but `apikey inspect` doesn't show which tenant a key belongs to. |
+| ~~M1~~ | ~~No `apikey`↔`tenant` reverse view~~ | ✅ **FIXED (Pass 168)** — `apikey inspect` now shows the linked tenant + class (human and `--json`), reusing `find_tenant_by_key_id`. |
 | ~~M2~~ | ~~No proxy model-level trust hook~~ | ✅ **FIXED (Pass 166)** — `proxy._model_trust_ok` is the interception point, called in `_proxy_completion` before routing. |
 | ~~M3~~ | ~~No scheduler/worker daemon surface~~ | ✅ **FIXED (Pass 167)** — `aictl.daemon.scheduler_daemon.SchedulerDaemon`, wired into `aictl serve` the same way GovernorDaemon already is; also exposed manually as `aictl scheduler tick`. |
 
@@ -88,15 +88,18 @@ Ranked by severity (impact if a user relied on the documented behavior).
    gaps closed. Side discovery while building this: `cmd/batch.py`'s
    `_db_path()` ignored `--state-dir` entirely (only read AIOS_STATE_DIR) —
    fixed alongside, since it directly blocked testing the scheduler.
-3. **P9 — highest priority remaining.** Go port `apply`/`down` must stop
-   reporting success for a no-op: either implement them for real, or fail loudly
+3. ✅ **M1 + P5 — DONE (Pass 168).** `apikey inspect` now shows the linked
+   tenant; `tenant classes` explicitly marks which fields the proxy actually
+   enforces live vs which are generation-only (K8s/cgroup), removing the
+   false-promise ambiguity without inventing enforcement the architecture
+   can't honestly provide.
+4. **P9 — only remaining item.** Go port `apply`/`down` must stop reporting
+   success for a no-op: either implement them for real, or fail loudly
    (non-zero exit, clear stderr message, no leading "✓") until they are. False
    success is worse than a missing feature — it's actively misleading. Blocked
    in THIS session by a `go build` module-checksum failure in the sandbox (see
    docs/FEATURE_GAP_LIST.md item 21) — needs an environment with working Go
    module access to compile-verify.
-4. **P5** — enforce local-mode tenant resource caps (or clearly document them as
-   K8s-only to avoid a false promise).
 
-Each is a self-contained pass in the same style as 164/165/167 (wire an existing,
+Each is a self-contained pass in the same style as 164/165/167/168 (wire an existing,
 documented-but-inert capability to a real runtime consumer, with regression tests).

@@ -111,6 +111,15 @@ def run_inspect(args: argparse.Namespace) -> int:
             print_json({"found": False, "key_id": args.key_id})
         return 1
 
+    # Reverse of `aictl tenant link-key <tenant> <key_id>`: without this, a key
+    # linked to a tenant (and therefore subject to that tenant's rate limits,
+    # allow_internet, require_signed_models — see proxy.py) looked identical to
+    # an unlinked key when inspected, with no way to tell which policy applies.
+    from aictl.core.tenant import find_tenant_by_key_id
+    tenant = find_tenant_by_key_id(state_dir, match["key_id"])
+    match = {**match, "tenant_id": tenant["id"] if tenant else None,
+             "tenant_class": tenant.get("tenant_class") if tenant else None}
+
     if getattr(args, "json", False):
         print_json(match)
         return 0
@@ -127,6 +136,11 @@ def run_inspect(args: argparse.Namespace) -> int:
     print(f"  created     : {_fmt_ts(match.get('created_at', 0))}")
     expires = match.get("expires_at", 0)
     print(f"  expires     : {_fmt_ts(expires) if expires else 'never'}")
+    if tenant:
+        print(f"  tenant      : {tenant['id']} (class: {match['tenant_class']})")
+    else:
+        print("  tenant      : (not linked — aictl tenant link-key <tenant> "
+              f"{match['key_id']})")
     return 0
 
 

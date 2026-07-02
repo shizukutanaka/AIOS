@@ -69,25 +69,60 @@ def register(sub: Any) -> None:
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
 
+# Fields the local proxy (aictl serve) actually enforces live, once a key is
+# linked to a tenant via `tenant link-key`: see proxy.py _check_auth (rpm/tpm),
+# _tenant_disallows_internet, and _model_trust_ok (require_signed_models).
+# gpu/ram/vram/max_models/audit_level are NOT enforced by aictl at all in local
+# mode \u2014 they only get materialized into generated K8s ResourceQuota
+# (`tenant namespace`) or cgroup limits (`tenant cgroup`), which something
+# else (a real cluster, systemd) has to actually apply. Naming them explicitly
+# here avoids a user assuming every column in `tenant classes` carries the
+# same live guarantee.
+_PROXY_ENFORCED_FIELDS = frozenset({
+    "max_requests_per_min", "max_tokens_per_min", "allow_internet",
+    "require_signed_models",
+})
+_GENERATION_ONLY_FIELDS = frozenset({
+    "max_gpu_slices", "max_memory_gb", "max_vram_gb", "max_models", "audit_level",
+})
+
+
 def run_classes(args: argparse.Namespace) -> int:
     """Execute the classes subcommand."""
     if getattr(args, "json", False):
         from dataclasses import asdict
-        print_json({k: asdict(v) for k, v in TENANT_CLASSES.items()})
+        print_json({
+            "classes": {k: asdict(v) for k, v in TENANT_CLASSES.items()},
+            "enforcement": {
+                "proxy_enforced": sorted(_PROXY_ENFORCED_FIELDS),
+                "generation_only": sorted(_GENERATION_ONLY_FIELDS),
+                "note": "proxy_enforced fields are checked live by `aictl serve` "
+                        "for a key linked via `tenant link-key`. generation_only "
+                        "fields are NOT enforced by aictl in local mode \u2014 they "
+                        "only materialize into `tenant namespace`/`tenant cgroup` "
+                        "output, which a real cluster or systemd has to apply.",
+            },
+        })
         return 0
 
     rows = []
     for name, tc in TENANT_CLASSES.items():
         rows.append({
             "class": name,
-            "gpu": tc.max_gpu_slices,
-            "ram": f"{tc.max_memory_gb}GB",
-            "vram": f"{tc.max_vram_gb}GB",
+            "gpu*": tc.max_gpu_slices,
+            "ram*": f"{tc.max_memory_gb}GB",
+            "vram*": f"{tc.max_vram_gb}GB",
             "rpm": tc.max_requests_per_min,
             "signed": "\u2713" if tc.require_signed_models else "",
-            "audit": tc.audit_level,
+            "audit*": tc.audit_level,
         })
-    print_table(rows, ["class", "gpu", "ram", "vram", "rpm", "signed", "audit"])
+    print_table(rows, ["class", "gpu*", "ram*", "vram*", "rpm", "signed", "audit*"])
+    print()
+    print("  rpm/signed are enforced live by `aictl serve` for a key linked via")
+    print("  `aictl tenant link-key` (see also: allow_internet, not shown above).")
+    print("  * gpu/ram/vram/audit are NOT enforced locally \u2014 they only generate")
+    print("    K8s/cgroup config (`tenant namespace` / `tenant cgroup`) that a")
+    print("    real cluster or systemd has to apply.")
     return 0
 
 

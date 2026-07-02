@@ -79,12 +79,19 @@ the condensed, model-to-model version of the same findings).
 Severity: HIGH = a security/compliance control that silently does nothing.
 MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
 
-16. [MED] Tenant-class resource caps max_gpu_slices, max_memory_gb,
-    max_vram_gb, max_models (core/tenant.py TenantClass fields). Zero
-    references outside the dataclass and the K8s-namespace/cgroup YAML
-    generators (generate_k8s_namespace, generate_cgroup_limits). Only take
-    effect if the user manually applies that generated YAML to a real
-    cluster/systemd; nothing enforces them in local/proxy mode.
+16. [RESOLVED, Pass 168, reclassified not fixed] Tenant-class resource caps
+    max_gpu_slices, max_memory_gb, max_vram_gb, max_models (core/tenant.py
+    TenantClass fields). Zero references outside the dataclass and the
+    K8s-namespace/cgroup YAML generators (generate_k8s_namespace,
+    generate_cgroup_limits) — this is architectural, not a bug: hardware
+    allocation belongs to a real cluster/systemd, not a request-routing
+    proxy, so no fake local enforcement was invented. Instead,
+    "aictl tenant classes" now explicitly marks these fields as
+    generation-only (asterisk + legend in human output; the
+    "enforcement.generation_only" list in --json), distinct from the fields
+    the proxy DOES enforce live ("enforcement.proxy_enforced": rpm, tpm,
+    allow_internet, require_signed_models). No caller can mistake one for
+    the other anymore.
 17. [LOW] Tenant-class audit_level field (minimal/standard/detailed). Zero
     references outside its own dataclass. Audit verbosity is uniform
     regardless of tenant class.
@@ -131,9 +138,8 @@ MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
 
 ## STATUS = MISSING (expected capability, does not exist)
 
-22. No reverse lookup: "aictl apikey inspect <id>" does not show which
-    tenant (if any) that key is linked to, even though
-    "aictl tenant link-key" creates that link.
+(none currently open — item 22, the apikey<->tenant reverse lookup, was
+fixed in Pass 168; see the Resolved section below.)
 
 ## STATUS = EXCESS (reviewed for redundancy, no action taken)
 
@@ -156,13 +162,16 @@ MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
   item 4 above.
 - Background scheduler (was item: no scheduler/worker daemon) — now item 14
   above.
+- Tenant resource caps false-promise ambiguity — now item 16 above
+  (reclassified: architecturally correct to leave unenforced locally, so the
+  fix was making the distinction explicit rather than inventing enforcement).
+- apikey<->tenant reverse lookup — "aictl apikey inspect <id>" now shows the
+  linked tenant + class (was item 22, MISSING section is now empty).
 
 ## Recommended next action, in priority order
 
-1. Item 20/21 (Go port apply/down false success) — highest priority. Fix is
-   simple (stop claiming success, exit non-zero, point at the Python CLI)
-   but requires an environment where "go build ./..." succeeds to verify.
-2. Item 16 — either enforce tenant resource caps locally, or update the CLI
-   help text to state they are K8s-only (generated-manifest) limits, to stop
-   implying local enforcement that does not exist.
-3. Item 22 — small, cheap addition (show tenant on "apikey inspect").
+1. Item 20/21 (Go port apply/down false success) — the only remaining item.
+   Fix is simple (stop claiming success, exit non-zero, point at the Python
+   CLI) but requires an environment where "go build ./..." succeeds to
+   verify — currently blocked in this sandbox by a module checksum mismatch
+   for github.com/spf13/cobra (a security-relevant failure not bypassed).
