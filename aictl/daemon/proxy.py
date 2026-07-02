@@ -131,6 +131,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         model = body.get("model", "")
         start_ns = time.time_ns()
 
+        # Model-trust gate: enforce signature policy BEFORE routing/serving.
+        allowed, reason = self._model_trust_ok(model)
+        if not allowed:
+            self._error(403, reason)
+            return
+
         # Route
         router = self._get_router()
         decision = router.route(RouteRequest(model=model, objective="balanced"))
@@ -285,31 +291,100 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception:
             pass  # Metering failures must not affect requests
 
+    def _current_tenant(self) -> dict[str, Any] | None:
+        """Resolve the requesting API key's linked tenant record, or None.
+
+        Shared by the internet-egress gate and the model-trust gate — both need
+        'which tenant is this request', and neither should duplicate the
+        bearer-parse + key_id + registry-lookup dance."""
+        auth = self.headers.get("Authorization", "")
+        if not (auth.startswith("Bearer ") and auth[7:].startswith("aios-")):
+            return None
+        from aictl.core.apikeys import key_id_for
+        from aictl.core.tenant import find_tenant_by_key_id
+        return find_tenant_by_key_id(self.store.dir if self.store else None,
+                                     key_id_for(auth[7:]))
+
+    def _audit(self, event: str, resource: str, *, action: str = "deny",
+               outcome: str = "blocked", **details: Any) -> None:
+        """Best-effort audit write (never raises into the request path)."""
+        try:
+            from aictl.core.audit import AuditLog, AuditEntry
+            AuditLog(self.store.dir if self.store else None).write(AuditEntry(
+                event=event, resource=resource, action=action,
+                outcome=outcome, details=details))
+        except Exception:
+            pass
+
     def _tenant_disallows_internet(self) -> bool:
         """True if the requesting key's linked tenant class has
         allow_internet=False. Unlinked keys are unaffected (opt-in layer,
         matching the tenant rate-limit enforcement added in Pass 164)."""
-        auth = self.headers.get("Authorization", "")
-        if not (auth.startswith("Bearer ") and auth[7:].startswith("aios-")):
-            return False
-        from aictl.core.apikeys import key_id_for
-        from aictl.core.tenant import find_tenant_by_key_id, get_tenant_class
-        tenant = find_tenant_by_key_id(self.store.dir if self.store else None,
-                                      key_id_for(auth[7:]))
+        from aictl.core.tenant import get_tenant_class
+        tenant = self._current_tenant()
         if tenant is None:
             return False
         tc = get_tenant_class(tenant.get("tenant_class", "standard"))
         if tc.allow_internet:
             return False
-
-        from aictl.core.audit import AuditLog, AuditEntry
-        log = AuditLog(self.store.dir if self.store else None)
-        log.write(AuditEntry(
-            event="proxy.cloud_fallback_blocked", resource=tenant["id"],
-            action="deny", outcome="blocked",
-            details={"tenant_class": tenant.get("tenant_class", "standard")},
-        ))
+        self._audit("proxy.cloud_fallback_blocked", tenant["id"],
+                    tenant_class=tenant.get("tenant_class", "standard"))
         return True
+
+    def _model_is_signed(self, model: str) -> bool:
+        """True if `model` is present in the local registry AND marked signed.
+
+        An unknown model (never registered) is treated as unsigned — unknown
+        provenance is not trusted provenance."""
+        if not model or not self.store:
+            return False
+        try:
+            for m in self.store.list_models():
+                if m.get("name") == model and m.get("signed"):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _model_trust_ok(self, model: str) -> tuple[bool, str]:
+        """Model-trust gate (P1 global trust_policy + P2 tenant
+        require_signed_models). Returns (allowed, reason).
+
+        Strictness resolution (strictest wins):
+          - tenant.require_signed_models True  -> STRICT (block unsigned)
+          - global trust_policy == 'enforce'   -> STRICT
+          - global trust_policy == 'disabled'  -> allow, no check
+          - otherwise ('warn', default)        -> allow, audit an unsigned warning
+
+        A signed model always passes. Enforcement is opt-in: default config is
+        'warn' and no tenant requires signing, so out-of-the-box behavior is
+        unchanged — nothing is ever blocked until an operator asks for it."""
+        from aictl.core.config import load_config
+        from aictl.core.tenant import get_tenant_class
+
+        policy = load_config(self.store.dir if self.store else None).trust_policy
+        tenant = self._current_tenant()
+        tenant_requires = (
+            tenant is not None
+            and get_tenant_class(tenant.get("tenant_class", "standard")).require_signed_models
+        )
+
+        strict = tenant_requires or policy == "enforce"
+        if not strict and policy == "disabled":
+            return True, ""
+        if self._model_is_signed(model):
+            return True, ""
+        if strict:
+            who = f"tenant '{tenant['id']}'" if tenant_requires else "trust_policy=enforce"
+            self._audit("proxy.unsigned_model_blocked", model or "(none)",
+                        reason=who)
+            return False, (f"Model '{model}' is not a signed/verified model and "
+                           f"{who} requires signed models. Register + verify it "
+                           f"(aictl model verify {model}) or relax the policy.")
+        # warn mode: allow, but leave an audit trail of the unsigned serve
+        self._audit("proxy.unsigned_model_served", model or "(none)",
+                    action="allow", outcome="warning")
+        return True, ""
 
     def _try_cloud_fallback(self, body: dict[str, Any]) -> bool:
         """Attempt cloud provider fallback. Returns True if successful."""

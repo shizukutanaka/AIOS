@@ -42,6 +42,8 @@ class _ProxyStub:
 
     from aictl.daemon.proxy import ProxyHandler as _H
     _tenant_disallows_internet = _H._tenant_disallows_internet
+    _current_tenant = _H._current_tenant   # extracted helper (Pass 166 refactor)
+    _audit = _H._audit
     _try_cloud_fallback = _H._try_cloud_fallback
     _meter_tokens = _H._meter_tokens
     _error = _H._error

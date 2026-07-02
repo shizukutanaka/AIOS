@@ -38,8 +38,8 @@ Ranked by severity (impact if a user relied on the documented behavior).
 
 | # | Capability | Where it's promised | Reality | Severity |
 |---|---|---|---|---|
-| P1 | **`trust_policy: enforce`** blocks unsigned model loads | `config.trust_policy`, `stack manifest`, trust/CLAUDE.md ("regulated tenants MUST be enforce") | Never consulted at model-load / `apply` / serve time. `security.scan` only *reports* if it's `disabled`; nothing ever **blocks** a load. `TrustPolicy.check()` has zero callers outside trust/. | **HIGH** — a compliance control that does nothing |
-| P2 | **`require_signed_models`** (tenant class) | `TenantClass.require_signed_models`, `regulated` sets it True | 0 external references. A regulated tenant can serve unsigned models. | **HIGH** |
+| ~~P1~~ | ~~**`trust_policy: enforce`** blocks unsigned model loads~~ | — | ✅ **FIXED (Pass 166)** — `proxy._model_trust_ok` now blocks unsigned/unknown models at request time when `trust_policy=enforce`. | ~~HIGH~~ done |
+| ~~P2~~ | ~~**`require_signed_models`** (tenant class)~~ | — | ✅ **FIXED (Pass 166)** — a regulated tenant (require_signed_models=True) blocks unsigned models even under a loose global policy (strictest wins). | ~~HIGH~~ done |
 | P3 | **`batch` job scheduling** ("run during GPU idle") | `aictl batch add --schedule '0 2 * * *'` | Jobs are persisted to `batch.json`; **nothing ever executes them**. No scheduler worker in daemon. `batch run` is manual-only. | **MED** — feature looks automatic, is manual |
 | P4 | **`warmup schedule`** (recurring preload) | `aictl warmup schedule --every 1h` | Persists `next_run`; no daemon loop fires it. | **MED** |
 | P5 | **Tenant resource caps** (`max_gpu_slices` / `max_memory_gb` / `max_vram_gb` / `max_models`) | `TenantClass` fields | 0 external references. Only materialize into generated K8s YAML — never enforced in local/proxy mode. | **MED** (K8s path OK; local path unguarded) |
@@ -53,7 +53,7 @@ Ranked by severity (impact if a user relied on the documented behavior).
 | # | Gap | Why expected |
 |---|---|---|
 | M1 | No `apikey`↔`tenant` reverse view | `tenant link-key` exists (Pass 164) but `apikey inspect` doesn't show which tenant a key belongs to. |
-| M2 | No proxy model-level trust hook | Even for a `require_signed_models` tenant there's no interception point at request time to verify the served model. Prereq for P1/P2. |
+| ~~M2~~ | ~~No proxy model-level trust hook~~ | ✅ **FIXED (Pass 166)** — `proxy._model_trust_ok` is the interception point, called in `_proxy_completion` before routing. |
 | M3 | No scheduler/worker daemon surface | Prereq for P3/P4 — batch + warmup schedules need a single background executor. |
 
 ---
@@ -71,10 +71,10 @@ Ranked by severity (impact if a user relied on the documented behavior).
 
 ## Recommended next order of work
 
-1. **P1 + P2 + M2 together** — the single highest-value fix: give the proxy a
-   model-trust interception point, then have `trust_policy: enforce` and
-   `require_signed_models` actually block. Turns two compliance controls from
-   decorative into real.
+1. ✅ **P1 + P2 + M2 — DONE (Pass 166).** The proxy now has a model-trust gate
+   (`_model_trust_ok`); `trust_policy: enforce` and tenant
+   `require_signed_models` actually block unsigned/unknown models at request
+   time. Two compliance controls turned from decorative into real.
 2. **P3 + P4 + M3 together** — one background scheduler that executes persisted
    batch jobs and warmup schedules; closes both "looks automatic, is manual" gaps.
 3. **P5** — enforce local-mode tenant resource caps (or clearly document them as
