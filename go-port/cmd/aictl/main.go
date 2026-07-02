@@ -455,21 +455,24 @@ func cmdApply() *cobra.Command {
 			if file == "" {
 				return fmt.Errorf("--file/-f required")
 			}
+			// Not yet ported from Python aictl/cmd/apply.py. This used to
+			// print a leading "✓ Applying stack..." and return exit 0 here —
+			// reporting a FALSE SUCCESS for an operation that applied
+			// nothing (docs/FEATURE_GAP_AUDIT.md P9). Fail loudly instead of
+			// silently claiming success: no leading checkmark, non-zero
+			// exit, and point at the Python CLI, which can actually do this.
+			delegate := fmt.Sprintf("python3 -m aictl apply -f %s", file)
 			if jsonFlag {
-				return printJSON(map[string]interface{}{
-					"file":   file,
-					"quadlet": quadlet,
-					"status": "stub",
-				})
+				if err := printJSON(map[string]interface{}{
+					"file":     file,
+					"quadlet":  quadlet,
+					"status":   "not_implemented",
+					"delegate": delegate,
+				}); err != nil {
+					return err
+				}
 			}
-			fmt.Printf("✓ Applying stack from %s", file)
-			if quadlet {
-				fmt.Printf(" (quadlet mode)")
-			}
-			fmt.Println()
-			// TODO: port from Python aictl/cmd/apply.py
-			fmt.Println("  (Go port — apply stub)")
-			return nil
+			return fmt.Errorf("apply is not implemented in the Go port yet — use: %s", delegate)
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Stack manifest file")
@@ -486,15 +489,21 @@ func cmdDown() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			// Not yet ported from Python. This used to print a leading
+			// "✓ Stopping stack..." and return exit 0 here — reporting a
+			// FALSE SUCCESS for an operation that stopped nothing
+			// (docs/FEATURE_GAP_AUDIT.md P9). Fail loudly instead.
+			delegate := fmt.Sprintf("python3 -m aictl down %s", name)
 			if jsonFlag {
-				return printJSON(map[string]interface{}{
-					"stack":  name,
-					"status": "stopping",
-				})
+				if err := printJSON(map[string]interface{}{
+					"stack":    name,
+					"status":   "not_implemented",
+					"delegate": delegate,
+				}); err != nil {
+					return err
+				}
 			}
-			fmt.Printf("✓ Stopping stack: %s\n", name)
-			// TODO: port from Python
-			return nil
+			return fmt.Errorf("down is not implemented in the Go port yet — use: %s", delegate)
 		},
 	}
 }
