@@ -104,3 +104,19 @@ the same style (Passes 164/165/167/168/169): wire an existing, documented-but-
 inert capability to a real runtime consumer, with regression tests. A future
 audit pass should re-run the same methodology (grep every capability field for
 a real call site) to catch any new gaps introduced since.
+
+### Self-audit finding (Pass 170) — bug introduced earlier in this same session
+
+Applying the audit's own V1-V7 discipline to the scheduler feature this
+session added in Pass 167 (not pre-existing code) turned up one gap: `aictl
+warmup schedule --every` accepted a non-positive interval with no validation
+(unlike its sibling `--top` flag, which already rejected `< 1`). A
+non-positive `interval_secs` persisted into `warmup_schedule.json` would make
+`aictl.core.scheduler.run_due_warmup`'s `next_run = now + interval_secs`
+compute a timestamp `<= now`, causing the warmup to busy-fire on every
+scheduler tick (every 60s) forever instead of respecting `--every`. Fixed
+with the session's standard dual guard: CLI-level rejection in
+`aictl/cmd/warmup.py`'s `run_schedule` (new `MIN_SCHEDULE_INTERVAL_SECS`
+constant), plus a floor at the `run_due_warmup` library chokepoint so a
+hand-edited or legacy schedule file can't reproduce the same failure by
+bypassing the CLI. See `tests/test_new_features_170.py`.

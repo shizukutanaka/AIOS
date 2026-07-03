@@ -8,6 +8,7 @@ import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.argtypes import positive_int
+from aictl.core.constants import MIN_SCHEDULE_INTERVAL_SECS
 from aictl.core.state import StateStore
 from aictl.runtime.warmup import WarmupManager
 
@@ -106,6 +107,12 @@ def run_schedule(args: argparse.Namespace) -> int:
         err(f"--top must be >= 1 (got {top}).")
         return 1
     secs = _parse_interval_secs(interval)
+    # A non-positive (or too-small) interval never advances next_run past
+    # "now" by more than one tick, so the scheduler daemon would re-run the
+    # warmup on every single tick forever instead of respecting --every.
+    if secs < MIN_SCHEDULE_INTERVAL_SECS:
+        err(f"--every must resolve to at least {MIN_SCHEDULE_INTERVAL_SECS}s (got {interval} = {secs}s).")
+        return 1
     next_run = _time.time() + secs
 
     schedule = {

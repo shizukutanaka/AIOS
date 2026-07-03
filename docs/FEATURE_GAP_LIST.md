@@ -167,9 +167,25 @@ fixed in Pass 168; see the Resolved section below.)
   CLI) instead of claiming a false success. Verified via gofmt (no network
   needed) since go build/go test remain blocked in this sandbox.
 
+## Self-audit finding (Pass 170)
+
+25. [RESOLVED, Pass 170] "aictl warmup schedule --every" accepted a
+    non-positive interval (e.g. "-1h", "0h") with no validation — this bug
+    was self-introduced in this session's own Pass 167 scheduler feature,
+    not pre-existing code. A non-positive interval_secs persisted into
+    warmup_schedule.json made core/scheduler.py's run_due_warmup compute
+    next_run <= now forever, busy-firing the warmup on every scheduler tick
+    (60s) instead of respecting --every. Fixed with the session's standard
+    dual guard: CLI rejection in cmd/warmup.py's run_schedule (mirrors the
+    pre-existing "--top < 1" guard) plus a floor at the run_due_warmup
+    library chokepoint (new core/constants.py MIN_SCHEDULE_INTERVAL_SECS =
+    60) so a hand-edited/legacy schedule file can't reproduce it either.
+
 ## Recommended next action
 
-None — every item in this list has been resolved. A future pass should
+None — every item in this list has been resolved, including one bug this
+session introduced in itself (item 25, caught by re-applying the audit's own
+methodology to this session's own earlier additions). A future pass should
 re-run the same methodology (grep every documented capability field for a
 real runtime call site outside its own definition and tests) to catch any
 new gaps introduced since this audit.

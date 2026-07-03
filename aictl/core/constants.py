@@ -34,6 +34,12 @@ SLO_TTFT_MS = 500           # Time-to-first-token target
 SLO_TPS = 50                # Tokens-per-second target
 SLO_CHECK_INTERVAL = 15     # Governor check interval (seconds)
 
+# ── Scheduler ─────────────────────────────────────────
+# A persisted schedule interval below this floor can busy-fire on every
+# scheduler tick instead of respecting a real cadence (worst case: a
+# non-positive interval never advances next_run past "now" at all).
+MIN_SCHEDULE_INTERVAL_SECS = 60
+
 # ── Security ──────────────────────────────────────────
 API_KEY_PREFIX = "aios-"
 API_KEY_LENGTH = 32          # Characters after prefix

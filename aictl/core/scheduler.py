@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from aictl.core.constants import MIN_SCHEDULE_INTERVAL_SECS
+
 
 def _field_matches(field: str, value: int) -> bool:
     """True if a single cron field ('*', '5', '1,3,5', '1-5', '*/15') matches
@@ -193,7 +195,14 @@ def run_due_warmup(state_dir: Path | None = None,
     candidates = mgr.get_warmup_candidates(top_n=top)
     warmed = mgr.warmup(candidates) if candidates else []
 
+    # Defense-in-depth: a corrupted/hand-edited/legacy schedule file could
+    # still carry a non-positive interval_secs even though the CLI now
+    # rejects one at creation time (aictl/cmd/warmup.py's run_schedule). A
+    # non-positive value would make next_run <= now forever, busy-firing the
+    # warmup on every scheduler tick instead of respecting any interval.
     interval_secs = schedule.get("interval_secs", 3600)
+    if not isinstance(interval_secs, (int, float)) or interval_secs < MIN_SCHEDULE_INTERVAL_SECS:
+        interval_secs = MIN_SCHEDULE_INTERVAL_SECS
     schedule["next_run"] = now + interval_secs
     schedule["last_run"] = now
     atomic_write_text(path, json.dumps(schedule, indent=2))
