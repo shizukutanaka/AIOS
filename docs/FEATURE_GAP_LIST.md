@@ -79,6 +79,8 @@ the condensed, model-to-model version of the same findings).
 Severity: HIGH = a security/compliance control that silently does nothing.
 MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
 
+Remaining open: item 17 (audit_level) and item 18 (hooks dispatch), both LOW.
+
 16. [RESOLVED, Pass 168, reclassified not fixed] Tenant-class resource caps
     max_gpu_slices, max_memory_gb, max_vram_gb, max_models (core/tenant.py
     TenantClass fields). Zero references outside the dataclass and the
@@ -100,13 +102,17 @@ MED = feature looks automatic, is actually manual/inert. LOW = cosmetic gap.
     from their respective code paths, but they only write to a log/no-op
     sink. They do not run user scripts or call webhooks. "aictl hooks"
     inspects configuration; it does not dispatch anything.
-19. [LOW] "aictl gate" (the project's own pre-ship quality check: compile,
-    import, version, tests, demo, docs, mcp tool count, ruff, mypy) never
-    calls core/security.py scan(). The project's own security scanner exists
-    with scored findings but is not part of its own "safe to ship" bar.
-    ("aictl doctor --deep" does call it separately, so this is a
-    completeness gap in gate specifically, not a total absence of the
-    scanner.)
+19. [RESOLVED, Pass 171] "aictl gate" now calls core/security.py scan() as a
+    new "Security" step. Deliberately a smoke test, not a score gate: the
+    scanner's findings (root vs rootless, cgroup v2 availability, container
+    runtime presence) describe the *host environment*, not the code being
+    shipped, so hard-failing on the live score would make gate exactly as
+    flaky as the pre-fix ruff/mypy steps (fails in any rootless-less
+    CI/sandbox). Gate instead verifies scan() completes all checks without
+    raising (using an isolated tmp state dir, independent of the caller's
+    real state) and reports the score/findings as informational detail only
+    — mirroring "aictl doctor --deep"'s existing score-is-informational
+    convention. A scanner that itself raises now fails the gate.
 
 ## STATUS = FALSE-SUCCESS (worse than paper-only: reports success, does nothing)
 
@@ -166,6 +172,9 @@ fixed in Pass 168; see the Resolved section below.)
   (non-zero exit, honest "not_implemented" status, delegates to the Python
   CLI) instead of claiming a false success. Verified via gofmt (no network
   needed) since go build/go test remain blocked in this sandbox.
+- Gate never invoked the security scanner (item 19) — "aictl gate" now runs
+  core/security.py scan() as a smoke test (not a score gate, to avoid
+  environment-dependent flakiness). See Pass 171 below.
 
 ## Self-audit finding (Pass 170)
 
@@ -181,11 +190,24 @@ fixed in Pass 168; see the Resolved section below.)
     library chokepoint (new core/constants.py MIN_SCHEDULE_INTERVAL_SECS =
     60) so a hand-edited/legacy schedule file can't reproduce it either.
 
+## Pass 171
+
+26. [RESOLVED, Pass 171] Item 19 fixed: "aictl gate" now has a "Security"
+    step calling core/security.py scan(). Deliberately a smoke test (scanner
+    completes all checks without raising, using an isolated tmp state dir),
+    not a score/finding threshold — the scanner's checks describe host
+    environment posture (root vs rootless, cgroup v2, container runtime),
+    which would make gate flaky across CI/sandbox environments if hard-gated
+    on, the same class of problem already fixed for ruff/mypy not-installed.
+    Score/findings are surfaced as informational detail only, matching
+    "aictl doctor --deep"'s existing convention.
+
 ## Recommended next action
 
-None — every item in this list has been resolved, including one bug this
-session introduced in itself (item 25, caught by re-applying the audit's own
-methodology to this session's own earlier additions). A future pass should
-re-run the same methodology (grep every documented capability field for a
-real runtime call site outside its own definition and tests) to catch any
-new gaps introduced since this audit.
+Two LOW-severity paper-only items remain open by deliberate choice, not
+oversight: item 17 (tenant audit_level has no effect on log verbosity) and
+item 18 (integration hooks log/no-op instead of running user
+scripts/webhooks). Both are cosmetic/nice-to-have, not silent security or
+correctness failures. A future pass should re-run the same methodology (grep
+every documented capability field for a real runtime call site outside its
+own definition and tests) to catch any new gaps introduced since this audit.

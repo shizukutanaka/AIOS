@@ -45,7 +45,7 @@ Ranked by severity (impact if a user relied on the documented behavior).
 | ~~P5~~ | ~~Tenant resource caps~~ (`max_gpu_slices` / `max_memory_gb` / `max_vram_gb` / `max_models`) | — | ✅ **CLARIFIED (Pass 168)** — rather than inventing fake local enforcement for hardware-allocation concepts a request-routing proxy can't meaningfully check per-request, `tenant classes` now explicitly marks these as generation-only (`*` + legend in human output, `enforcement.generation_only` list in `--json`), distinct from the fields the proxy actually enforces live (`enforcement.proxy_enforced`). No false promise remains either way. | ~~MED~~ done |
 | P6 | **`audit_level`** (minimal/standard/detailed per tenant) | `TenantClass.audit_level` | 0 external references. Audit verbosity is uniform regardless of class. | **LOW** |
 | P7 | **Integration hooks** (`on_slo_violation`, `on_stack_applied`, …) | `core/hooks.py`, `aictl hooks` | Emitters exist and are called, but they only write to a log/no-op sink; not wired to run user scripts or webhooks. `aictl hooks` inspects, doesn't dispatch. | **LOW** (partially real) |
-| P8 | **`aictl gate`** ships without a security check | gate.py checks compile/import/version/tests/demo/docs/mcp/ruff/mypy | `core/security.scan()` exists with scored findings but `gate` never calls it — the project's own "safe to ship" bar doesn't include its own security scanner. | **LOW** |
+| ~~P8~~ | ~~**`aictl gate`** ships without a security check~~ | — | ✅ **FIXED (Pass 171)** — `gate` now runs `core/security.scan()` as a new "Security" step. Deliberately a smoke test (scanner completes all checks without raising, on an isolated tmp state dir), not a score/finding gate — the checks describe host-environment posture (root/rootless, cgroup v2, container runtime), so hard-gating on them would make `gate` flaky across CI/sandbox environments, the same class of problem already fixed for ruff/mypy not-installed. Score is reported as informational detail only (mirrors `doctor --deep`'s convention). | ~~LOW~~ done |
 
 ### 🚨 New this pass — worse than paper-only: false success
 
@@ -98,12 +98,19 @@ Ranked by severity (impact if a user relied on the documented behavior).
    exit via cobra's default handling), and the message points at the Python
    CLI. Verified via `gofmt` (no network needed) since `go build`/`go test`
    remain blocked in this sandbox.
+5. ✅ **P8 — DONE (Pass 171).** `gate` now runs the project's own security
+   scanner as a smoke test (not a score gate, to avoid the exact
+   environment-dependent flakiness the ruff/mypy not-installed fix already
+   solved once). The remaining two paper-only items (P6 `audit_level`, P7
+   hooks dispatch) are both LOW severity and left open by deliberate choice.
 
-**All items in this audit are now resolved.** Each was a self-contained pass in
-the same style (Passes 164/165/167/168/169): wire an existing, documented-but-
-inert capability to a real runtime consumer, with regression tests. A future
-audit pass should re-run the same methodology (grep every capability field for
-a real call site) to catch any new gaps introduced since.
+**All items in this audit are now resolved except two deliberately-deferred
+LOW-severity paper-only items (P6, P7).** Each fix was a self-contained pass
+in the same style (Passes 164/165/167/168/169/171): wire an existing,
+documented-but-inert capability to a real runtime consumer, with regression
+tests. A future audit pass should re-run the same methodology (grep every
+capability field for a real call site) to catch any new gaps introduced
+since.
 
 ### Self-audit finding (Pass 170) — bug introduced earlier in this same session
 

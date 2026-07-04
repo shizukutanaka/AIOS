@@ -176,7 +176,34 @@ def run(args: argparse.Namespace) -> int:
     except Exception as e:
         results.append(("MCP", False, str(e)[:40]))
 
-    # 8. ruff lint (must be zero — CLAUDE.md 6.2)
+    # 8. Security scanner smoke test (audit item P8/#19: gate never invoked
+    # core/security.py's own scanner, so a broken scanner could ship
+    # undetected). This does NOT gate on the live score/findings — those
+    # depend on the *host* environment (root vs rootless, cgroup v2
+    # availability, container runtime presence), so hard-failing on them
+    # would make the gate flaky exactly like the pre-fix ruff/mypy steps
+    # (CLAUDE.md 6.2). Instead it verifies the scanner itself completes all
+    # checks without raising, using an isolated tmp state dir so the result
+    # never depends on (or pollutes) the caller's real state.
+    try:
+        from aictl.core.security import scan as _security_scan
+        import tempfile as _tempfile
+        sec_dir = Path(_tempfile.mkdtemp())
+        sec_report = _security_scan(sec_dir)
+        check_errors = [f for f in sec_report.findings
+                        if f.title.startswith("Security check error")]
+        ok_security = sec_report.checks_total > 0 and not check_errors
+        if ok_security:
+            results.append(("Security", True,
+                            f"scanner ran {sec_report.checks_total} checks cleanly "
+                            f"(score {sec_report.score}/100)"))
+        else:
+            results.append(("Security", False,
+                            f"{len(check_errors)} check(s) raised an exception"))
+    except Exception as e:
+        results.append(("Security", False, str(e)[:60]))
+
+    # 9. ruff lint (must be zero — CLAUDE.md 6.2)
     try:
         import subprocess
         proc = subprocess.run(
@@ -198,7 +225,7 @@ def run(args: argparse.Namespace) -> int:
     except Exception as e:
         results.append(("Ruff", True, f"skipped: {str(e)[:30]}"))
 
-    # 9. mypy --strict ratchet (count must not exceed baseline — CLAUDE.md 6.2)
+    # 10. mypy --strict ratchet (count must not exceed baseline — CLAUDE.md 6.2)
     # Baseline tracked in .mypy_baseline; ratchets down only.
     try:
         import subprocess
