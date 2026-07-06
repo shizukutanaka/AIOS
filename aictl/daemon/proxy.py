@@ -216,6 +216,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
         body = self._read_body()
         model = body.get("model", "")
 
+        # Same model-trust gate as _proxy_completion (Pass 166): an
+        # unsigned-model bypass on /v1/embeddings would undercut
+        # trust_policy=enforce / tenant require_signed_models entirely —
+        # embeddings requests carry the same document content a regulated
+        # tenant is trying to keep off untrusted models.
+        allowed, reason = self._model_trust_ok(model)
+        if not allowed:
+            self._error(403, reason)
+            return
+
         router = self._get_router()
         decision = router.route(RouteRequest(model=model, objective="throughput"))
 

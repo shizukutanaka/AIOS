@@ -202,6 +202,19 @@ fixed in Pass 168; see the Resolved section below.)
     Score/findings are surfaced as informational detail only, matching
     "aictl doctor --deep"'s existing convention.
 
+## Pass 172
+
+27. [RESOLVED, Pass 172] Self-audit of Pass 166's model-trust gate found a
+    bypass: _model_trust_ok was wired into _proxy_completion only —
+    _proxy_embedding routed straight to the upstream engine with no trust
+    check. With trust_policy=enforce (or a regulated tenant requiring
+    signed models), an unsigned/unknown model was blocked on
+    /v1/chat/completions yet fully reachable via /v1/embeddings, which
+    carries the same document content the policy protects. Fixed by calling
+    the same gate before routing in _proxy_embedding; a source-level test
+    pins that BOTH paths gate before router.route so a refactor can't
+    silently reopen either bypass (tests/test_new_features_172.py).
+
 ## Recommended next action
 
 Two LOW-severity paper-only items remain open by deliberate choice, not
