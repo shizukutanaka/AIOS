@@ -28,6 +28,8 @@ ENGINE_HEALTH_TIMEOUT = 5
 PROXY_UPSTREAM_TIMEOUT = 120
 PROXY_EMBED_TIMEOUT = 60
 CLOUD_FALLBACK_TIMEOUT = 30
+HOOK_WEBHOOK_TIMEOUT = 5     # aictl.core.hook_dispatch webhook POST
+HOOK_SCRIPT_TIMEOUT = 10    # aictl.core.hook_dispatch local script exec
 
 # ── SLO Defaults ──────────────────────────────────────
 SLO_TTFT_MS = 500           # Time-to-first-token target

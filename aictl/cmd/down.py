@@ -24,6 +24,10 @@ def run(args: argparse.Namespace) -> int:
     stopped = stop_stack(args.name)
     store.remove_stack(args.name)
 
+    if stopped:
+        from aictl.core.hooks import on_stack_stopped
+        on_stack_stopped(args.name, state_dir=store.dir)
+
     if getattr(args, "json", False):
         print_json({"stopped": stopped})
         return 0

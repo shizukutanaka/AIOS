@@ -168,6 +168,11 @@ def run_set(args: argparse.Namespace) -> int:
     # Rebuild config
     config = _dict_to_config(d)
     save_config(config, state_dir)
+
+    from aictl.core.hooks import on_config_changed
+    on_config_changed(args.key, old_value=str(old_val), new_value=str(obj[last]),
+                      state_dir=state_dir)
+
     if getattr(args, "json", False):
         print_json({"key": args.key, "value": obj[last]})
         return 0

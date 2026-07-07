@@ -97,11 +97,33 @@ Remaining open: item 17 (audit_level) and item 18 (hooks dispatch), both LOW.
 17. [LOW] Tenant-class audit_level field (minimal/standard/detailed). Zero
     references outside its own dataclass. Audit verbosity is uniform
     regardless of tenant class.
-18. [LOW, partially real] Integration hook emitters in core/hooks.py
-    (on_slo_violation, on_stack_applied, on_model_verified, etc.) ARE called
-    from their respective code paths, but they only write to a log/no-op
-    sink. They do not run user scripts or call webhooks. "aictl hooks"
-    inspects configuration; it does not dispatch anything.
+18. [RESOLVED, Pass 173] Integration hooks in core/hooks.py were
+    corrected+fixed: this line previously claimed the emitters "ARE called
+    from their respective code paths" — that was stale. Fresh verification
+    found only on_stack_applied (cmd/apply.py) had a real production call
+    site; the other 9 were reachable only via tests / "aictl hooks test".
+    Fixed both halves: (a) new aictl/core/hook_dispatch.py adds persisted
+    webhook/script subscriptions ("aictl hooks add <event> --webhook/
+    --script ..."), wired into every on_* hook except on_proxy_request
+    (deliberately excluded — fires on every completions request, and a
+    synchronous webhook/script call there would add latency to the hot
+    inference path); (b) wired the 5 previously-dead hooks into real call
+    sites: on_stack_stopped (cmd/down.py), on_model_registered +
+    on_model_verified (cmd/model.py), on_config_changed (cmd/config.py),
+    on_snapshot_created (cmd/snapshot.py), on_slo_violation
+    (daemon/governor.py). "aictl hooks list" now shows a wired/dispatches
+    column per hook so this claim can't go stale silently again.
+    on_engine_health_changed and on_node_joined remain not wired to a new
+    call site (no clean "state changed" / "join" code path identified) —
+    noted, not claimed. "aictl hooks test" defaults to a dry-run
+    (hook_dispatch.suppress_dispatch()) since dispatching would otherwise
+    make a "test" command fire real production webhooks/scripts; --live
+    opts in. Also fixed a real pre-existing bug this surfaced:
+    core/audit.py's get_audit_log() cached its AuditLog singleton such that
+    a call with state_dir=None after an earlier explicit-state_dir call
+    reused the (possibly since-deleted) first directory instead of falling
+    back to DEFAULT_STATE_DIR. See tests/test_new_features_173.py (48
+    tests).
 19. [RESOLVED, Pass 171] "aictl gate" now calls core/security.py scan() as a
     new "Security" step. Deliberately a smoke test, not a score gate: the
     scanner's findings (root vs rootless, cgroup v2 availability, container
@@ -215,12 +237,21 @@ fixed in Pass 168; see the Resolved section below.)
     pins that BOTH paths gate before router.route so a refactor can't
     silently reopen either bypass (tests/test_new_features_172.py).
 
+## Pass 173
+
+28. [RESOLVED, Pass 173] Item 18 fixed: integration hooks now really
+    dispatch webhooks/scripts, and the 9 previously-dead hooks (only
+    on_stack_applied had a real call site) are wired into cmd/down.py,
+    cmd/model.py (x2), cmd/config.py, cmd/snapshot.py, and
+    daemon/governor.py. New "aictl hooks add/remove/subscriptions" CLI.
+    Also fixed a stale-cache bug in core/audit.py's get_audit_log()
+    discovered while testing this (see tests/test_new_features_173.py).
+
 ## Recommended next action
 
-Two LOW-severity paper-only items remain open by deliberate choice, not
-oversight: item 17 (tenant audit_level has no effect on log verbosity) and
-item 18 (integration hooks log/no-op instead of running user
-scripts/webhooks). Both are cosmetic/nice-to-have, not silent security or
-correctness failures. A future pass should re-run the same methodology (grep
-every documented capability field for a real runtime call site outside its
-own definition and tests) to catch any new gaps introduced since this audit.
+One LOW-severity paper-only item remains open by deliberate choice, not
+oversight: item 17 (tenant audit_level has no effect on log verbosity) —
+cosmetic/nice-to-have, not a silent security or correctness failure. A
+future pass should re-run the same methodology (grep every documented
+capability field for a real runtime call site outside its own definition
+and tests) to catch any new gaps introduced since this audit.

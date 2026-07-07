@@ -100,9 +100,23 @@ _log: AuditLog | None = None
 
 
 def get_audit_log(state_dir: Path | None = None) -> AuditLog:
-    """Get audit log."""
+    """Get audit log, recreating the cached singleton if the caller asks for
+    a different directory than it currently points at.
+
+    A call with state_dir=None must resolve to (and cache-check against)
+    DEFAULT_STATE_DIR, not "whatever the cache already happens to hold" --
+    the previous `state_dir is not None and ...` guard treated None as "no
+    opinion, reuse the cache as-is", so a call with an explicit directory
+    followed by a later call with state_dir=None would keep writing to the
+    FIRST (possibly since-deleted) directory instead of falling back to the
+    default. That silently misdirects/loses audit entries for any process
+    that legitimately switches between an explicit state dir and the
+    default one (e.g. tests, or a long-lived daemon serving multiple
+    --state-dir values).
+    """
     global _log
-    if _log is None or (state_dir is not None and _log.dir.parent != state_dir):
+    resolved = state_dir or DEFAULT_STATE_DIR
+    if _log is None or _log.dir.parent != resolved:
         _log = AuditLog(state_dir)
     return _log
 

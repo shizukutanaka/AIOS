@@ -90,6 +90,19 @@ class GovernorDaemon:
                         )
                         if self.on_action:
                             self.on_action(action)
+                        # Governor aggregates possibly-multiple violated
+                        # metrics into one human-readable reason string
+                        # (check_slo never returns discrete metric/value/
+                        # threshold triples) — pass the reason through as
+                        # `metric` so audit/dispatch still carry the full
+                        # detail, rather than picking one metric arbitrarily.
+                        from aictl.core.hooks import on_slo_violation
+                        on_slo_violation(
+                            action.engine, metric=action.reason,
+                            value=float(self.state.consecutive_violations),
+                            threshold=0.0, action=action.action,
+                            state_dir=self.store.dir,
+                        )
                     else:
                         self.state.consecutive_violations = 0
 

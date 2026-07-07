@@ -74,6 +74,10 @@ def run_create(args: argparse.Namespace) -> int:
     mgr = SnapshotManager(store)
     snap = mgr.create(label=getattr(args, "label", ""))
 
+    from aictl.core.hooks import on_snapshot_created
+    on_snapshot_created(snap.snapshot_id, label=getattr(args, "label", ""),
+                       state_dir=store.dir)
+
     if getattr(args, "json", False):
         print_json({"id": snap.snapshot_id, "stacks": len(snap.stacks),
                      "models": len(snap.models)})

@@ -109,6 +109,10 @@ def run_register(args: argparse.Namespace) -> int:
         signed=args.signed,
     )
 
+    from aictl.core.hooks import on_model_registered
+    on_model_registered(args.name, digest=args.digest, runtime=args.fmt,
+                       state_dir=store.dir)
+
     if getattr(args, "json", False):
         print_json({"id": mid, "name": args.name})
         return 0
@@ -205,6 +209,13 @@ def run_verify(args: argparse.Namespace) -> int:
         certificate_identity=getattr(args, "identity", ""),
         certificate_oidc_issuer=getattr(args, "oidc_issuer", ""),
     )
+
+    from pathlib import Path as _Path
+    from aictl.core.hooks import on_model_verified
+    _sd = getattr(args, "state_dir", None)
+    on_model_verified(args.reference, method=result.method,
+                     valid=result.verified,
+                     state_dir=_Path(_sd) if _sd else None)
 
     if getattr(args, "json", False):
         print_json({"verified": result.verified, "method": result.method,
