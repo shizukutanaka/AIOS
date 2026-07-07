@@ -309,6 +309,7 @@ def scan(
     redact_pii: bool = False,
     block_on_pii: bool = False,
     block_on_injection: bool = True,
+    state_dir: Any = None,
 ) -> tuple[ScanResult, str]:
     """Scan text and return (result, possibly_redacted_text).
 
@@ -317,6 +318,12 @@ def scan(
         redact_pii: If True, replace detected PII with [REDACTED].
         block_on_pii: If True, treat any PII as a blocking violation.
         block_on_injection: If True (default), block prompt injection.
+        state_dir: If given, persist a lifetime redaction tally here (read by
+            `/metrics`'s aios_guard_redactions_total). Left as None, scan()
+            stays a pure function with no disk I/O -- callers that don't care
+            about the metric (most tests, library use) get no side effect;
+            only call sites with a real state dir (aictl guard scan) opt in
+            by passing one explicitly.
 
     Returns:
         (ScanResult, processed_text)
@@ -327,6 +334,8 @@ def scan(
 
     if redact_pii and pii_found:
         processed, _ = redact(text)
+        if state_dir is not None:
+            _record_redaction_stat(len(pii_found), state_dir)
 
     blocking = []
     if block_on_pii and pii_found:
@@ -345,6 +354,40 @@ def scan(
         recommended_action=action,
     )
     return result, processed
+
+
+def _guard_stats_path(state_dir: Any = None) -> Any:
+    if state_dir:
+        from pathlib import Path
+        return Path(state_dir) / "guard_stats.json"
+    from aictl.core.state import DEFAULT_STATE_DIR
+    return DEFAULT_STATE_DIR / "guard_stats.json"
+
+
+def _record_redaction_stat(n_redacted: int, state_dir: Any = None) -> None:
+    """Increment the persistent lifetime PII-redaction counter (best-effort,
+    atomic). A broken/corrupt stats file must never break a real scan/redact
+    call -- this is purely advisory telemetry for aios_guard_redactions_total.
+    """
+    if n_redacted <= 0:
+        return
+    try:
+        import json
+        from aictl.core.atomicio import atomic_write_text
+
+        path = _guard_stats_path(state_dir)
+        stats: dict[str, int] = {"total_redactions": 0}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text())
+                if isinstance(loaded, dict):
+                    stats = loaded
+            except (json.JSONDecodeError, OSError):
+                pass
+        stats["total_redactions"] = int(stats.get("total_redactions", 0)) + n_redacted
+        atomic_write_text(path, json.dumps(stats))
+    except Exception:
+        pass  # advisory only; must never break the caller's real scan
 
 
 # ── MCP tool-poisoning detection ───────────────────────────

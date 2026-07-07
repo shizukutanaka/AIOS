@@ -73,10 +73,17 @@ def run_scan(args: argparse.Namespace) -> int:
         warn("Empty input.")
         return 0
 
+    # Resolve a concrete state dir (falls back to the default) so a real
+    # --redact invocation always feeds the aios_guard_redactions_total
+    # counter, regardless of whether --state-dir was passed explicitly.
+    from aictl.core.state import StateStore
+    store = StateStore(getattr(args, "state_dir", None))
+
     result, processed = scan(
         text,
         redact_pii=args.redact,
         block_on_pii=args.block_pii,
+        state_dir=store.dir,
     )
 
     if getattr(args, "json", False):

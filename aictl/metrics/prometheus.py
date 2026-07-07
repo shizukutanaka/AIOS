@@ -158,6 +158,20 @@ def _emit_value_prop_metrics(lines: list[str]) -> None:
     except Exception:
         pass
 
+    # Guard: lifetime PII redaction count (IMPROVEMENTS.md item J — the last
+    # value-prop counter that wasn't emitted yet). Only tallies `aictl guard
+    # scan --redact` invocations today (the CLI is the only call site with a
+    # resolvable state dir); the MCP guard tool doesn't thread one through.
+    try:
+        import json as _json
+        from aictl.core.guard import _guard_stats_path
+        _gs = _json.loads(_guard_stats_path().read_text())
+        _counter(lines, "aios_guard_redactions_total",
+                 "Lifetime count of PII items redacted by `aictl guard scan --redact`",
+                 int(_gs.get("total_redactions", 0) or 0))
+    except Exception:
+        pass  # stats file absent until the first --redact scan
+
     # Cascade routing: escalation counters from persistent stats file.
     try:
         import json as _json

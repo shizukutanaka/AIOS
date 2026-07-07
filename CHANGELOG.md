@@ -2,6 +2,19 @@
 
 ## Unreleased — Quality & correctness fixes
 
+### Observability
+- **Guard redactions metric** (`aictl/core/guard.py`, `aictl/metrics/prometheus.py`):
+  `/metrics` now emits `aios_guard_redactions_total` — the last of
+  `docs/IMPROVEMENTS.md` item J's value-prop counters that wasn't wired yet
+  (cache/metering/cascade counters already were). `scan()` gained an opt-in
+  `state_dir` kwarg to persist the lifetime tally; left at its default it
+  stays the exact pure function it always was, so existing callers/tests are
+  unaffected. `aictl guard scan --redact` always feeds the counter (resolves
+  a concrete state dir regardless of `--state-dir`); the MCP guard tool does
+  not yet (no state-dir plumbing there today — noted, not silently assumed).
+  Route-cost-saved (the other item-J leftover) needs a baseline-cost
+  methodology decision and remains future work.
+
 ### Fixed
 - **Quality gate** (`aictl/cmd/gate.py`): when `ruff`/`mypy` are invoked via
   `python3 -m <tool>` but not installed, the interpreter exits non-zero with
