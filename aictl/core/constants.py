@@ -23,6 +23,18 @@ VLLM_DEFAULT_URL = f"http://localhost:{VLLM_DEFAULT_PORT}"
 SGLANG_DEFAULT_URL = f"http://localhost:{SGLANG_DEFAULT_PORT}"
 OLLAMA_DEFAULT_URL = f"http://localhost:{OLLAMA_DEFAULT_PORT}"
 
+# Opt-in engines (IMPROVEMENTS.md item D): unlike vLLM/SGLang/Ollama above,
+# these are NEVER probed unless a user explicitly sets a URL via
+# `aictl config set engines.<name> <url>` — EngineEndpoints.to_dict() only
+# includes them when non-empty, so out-of-the-box discover_engines()/status/
+# health behavior is completely unchanged.
+LMDEPLOY_DEFAULT_PORT = 23333       # `lmdeploy serve api_server` default
+TRT_LLM_DEFAULT_PORT = 8000         # `trtllm-serve` documented default
+LM_STUDIO_DEFAULT_PORT = 1234       # LM Studio local server default
+LMDEPLOY_DEFAULT_URL = f"http://localhost:{LMDEPLOY_DEFAULT_PORT}"
+TRT_LLM_DEFAULT_URL = f"http://localhost:{TRT_LLM_DEFAULT_PORT}"
+LM_STUDIO_DEFAULT_URL = f"http://localhost:{LM_STUDIO_DEFAULT_PORT}"
+
 # ── Timeouts (seconds) ───────────────────────────────
 ENGINE_HEALTH_TIMEOUT = 5
 PROXY_UPSTREAM_TIMEOUT = 120

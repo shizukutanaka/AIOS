@@ -62,21 +62,33 @@ The gaps below are where it trails current peers or recent research — not gree
 - **Proposal (keeps zero-dep default):**
   1. **Embedding-kNN router:** route by nearest-neighbour over a small labeled prompt set
      (uses the engine's own embeddings; pure-Python kNN). Falls back to the regex scorer.
+     Still open.
   2. **Cascade mode:** try the small model, escalate to the large model only if a local
      confidence/verifier check fails — a research-backed superset of the current one-shot route.
-  3. Ship a **router eval harness** (extend `cmd/eval.py`) so accuracy is a tracked number.
+     ✅ **done** (`aictl route cascade`, `cmd/route.py`'s `run_cascade`).
+  3. Ship a **router eval harness** so accuracy is a tracked number. ✅ **substantially done** —
+     `aictl route test` (`cmd/route.py`'s `run_test`) runs a labeled 12-prompt test set through
+     `score_complexity`/`classify_complexity` and reports accuracy (not literally an extension
+     of `cmd/eval.py` as originally proposed, but satisfies the actual goal). A larger labeled
+     set and eval.py integration would still be a nice-to-have, not a gap.
 
-## D. Inference-engine coverage — three engines, the field has six
+## D. Inference-engine coverage — three engines, the field has six — ✅ implemented (Pass 176)
 
-- **Current:** `runtime/adapters.py` detects **vLLM / SGLang / Ollama** (per
-  `runtime/CLAUDE.md`).
+> **Status:** `runtime/adapters.py` now has `LMDeployAdapter`, `TensorRTLLMAdapter`
+> (`trtllm-serve`), and `LMStudioAdapter` — all OpenAI-compatible `/v1/*`, opt-in only
+> (`EngineEndpoints.lmdeploy`/`tensorrt_llm`/`lm_studio` default `""`, excluded from
+> `to_dict()` until configured via `aictl config set engines.<name> <url>`, so zero-config
+> `discover_engines()`/`status`/demo/gate is unaffected). None has a documented Prometheus
+> contract, so `scrape_metrics()` honestly returns basic status rather than guessing at
+> metric names (same fallback `OllamaAdapter` already uses). MLX/Apple-Silicon detection
+> was already done separately — see item I. `recommend`/`optimize`/`route` all consume
+> `discover_engines()`/`get_adapter()` generically, so all three widen automatically with
+> no further wiring.
+
+- **Previously:** `runtime/adapters.py` detected only **vLLM / SGLang / Ollama**.
 - **Peers:** 2026 comparisons treat **TensorRT-LLM, LMDeploy (TurboMind), LM Studio**, and
   **MLX on Apple Silicon** as mainstream; SGLang/LMDeploy show ~29% higher throughput than
   vLLM, TensorRT-LLM leads at scale, LMDeploy has lowest TTFT.
-- **Proposal:** add adapters + health/metric scrapers for **LMDeploy** and **TensorRT-LLM**
-  (both expose OpenAI/Triton endpoints), an **LM Studio** adapter (OpenAI-compatible), and
-  **MLX/Apple-Silicon detection** in `runtime/broker.py` profile detection (currently
-  nvidia→amd→intel→npu→cpu). This widens `recommend`/`optimize`/`route` to the real field.
 
 ## E. KV-cache-aware cluster routing & long-context KV
 
@@ -244,18 +256,21 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
   helper in `aictl/sdk.py`** so SDK callers can enforce/repair structured outputs locally;
   (3) optional schema enforcement on MCP tool results.
 
-## L. Speculative-decoding advisor is a generation behind
+## L. Speculative-decoding advisor — ✅ implemented (earlier pass), Medusa still missing
 
-- **Current:** `cmd/spec.py` only pairs a **draft + target model** (classic spec decoding);
-  its docstring tops out at "2–3× speedup". No EAGLE/Medusa/MTP awareness.
+> **Status:** this doc's "Current" bullet below was stale — `aictl spec methods` (`cmd/spec.py`,
+> `runtime/speculative.py`) already implements the proposed method dimension: `none | eagle3 |
+> p-eagle | mtp | ngram | standalone`, each with an engine-support matrix and ready-to-paste
+> flags (e.g. vLLM `--speculative-config '{"method":"eagle3",...}'`). `aictl spec methods --all`
+> shows the full matrix. **Medusa specifically is not one of the modeled methods** — the one
+> sub-item from the original proposal genuinely still open.
+
+- **Previously assumed:** `cmd/spec.py` only paired a **draft + target model** (classic spec
+  decoding); no EAGLE/Medusa/MTP awareness. Verified false by reading the actual code.
 - **SOTA:** **EAGLE-3** (arXiv:2503.01840) is now the **de-facto industrial standard** — up to
   **4.79× on Llama-3.3-70B with no quality loss**, supported by vLLM and SGLang; **Medusa**
   (multi-head) and **DeepSeek-V3 multi-token-prediction (MTP)** are mainstream; SpecForge
   (2603.18567) trains drafters.
-- **Proposal:** extend the advisor with a **method dimension** — `draft-pairing | EAGLE-3 |
-  Medusa | MTP` — each with an engine-support matrix and correct flags (e.g. vLLM
-  `--speculative-config '{"method":"eagle3",...}'`). Recommend EAGLE-3 when a trained head
-  exists for the family; fall back to draft-pairing otherwise. Raise the speedup ceiling.
 
 ## M. Fairness & carbon/energy-aware scheduling — carbon advisor ✅ implemented (v1.6); fair-share TBD
 
@@ -283,15 +298,19 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
 
 ## N. MCP server & agent interoperability — observability/streaming gap
 
-- **Current:** a 19-tool JSON-RPC MCP server (`aictl/mcp_server`). aictl ships OTel GenAI
-  spans (`metrics/genai_spans.py`) elsewhere, but the MCP path doesn't emit per-tool spans or
-  stream progress.
+- **Current:** a 19-tool JSON-RPC MCP server (`aictl/mcp_server`). Proposal (1) below is
+  already done — this doc previously claimed otherwise; verified false by reading the code:
+  `mcp_server.py`'s `handle_tool()` wraps every tool dispatch in a `ToolSpan`
+  (`metrics/genai_spans.py`), ring-buffered and fire-and-forget OTLP-exported when
+  `AIOS_OTEL_ENDPOINT` is set, with observability failures never propagating to the caller.
+  Proposals (2) streaming/progress notifications and (3) session persistence remain genuinely
+  open.
 - **Field:** the 2026 agent frameworks (Claude Agent SDK, LangGraph, OpenAI Agents SDK, AWS
   **Strands**) all converge on **MCP + OTel + streaming + persistence**; Strands in particular
   plugs straight into any OTel backend. Observability is now the differentiator, not tool count.
-- **Proposal:** (1) emit an **OTel span per MCP tool call** (reuse `genai_spans.py`) so aictl is
-  a first-class OTel-observable MCP backend; (2) add **streaming/progress notifications** for
-  long tools (deploy, bench); (3) optional **session persistence** for multi-step agent flows.
+- **Proposal:** ~~(1) emit an OTel span per MCP tool call~~ ✅ done. (2) add
+  **streaming/progress notifications** for long tools (deploy, bench); (3) optional
+  **session persistence** for multi-step agent flows.
 
 ## Updated priority (Parts 1 + 2)
 

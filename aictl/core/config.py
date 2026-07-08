@@ -28,10 +28,24 @@ class EngineEndpoints:
     vllm: str = VLLM_DEFAULT_URL
     ollama: str = OLLAMA_DEFAULT_URL
     sglang: str = SGLANG_DEFAULT_URL
+    # Opt-in engines (IMPROVEMENTS.md item D) — empty by default and
+    # excluded from to_dict() unless set, so discover_engines()/status/
+    # health/demo/gate are completely unaffected until a user explicitly
+    # runs `aictl config set engines.lmdeploy <url>` (etc).
+    lmdeploy: str = ""
+    tensorrt_llm: str = ""
+    lm_studio: str = ""
 
     def to_dict(self) -> dict[str, str]:
-        """To dict."""
-        return {"vllm": self.vllm, "ollama": self.ollama, "sglang": self.sglang}
+        """To dict. Opt-in engines only appear once configured (non-empty)."""
+        d = {"vllm": self.vllm, "ollama": self.ollama, "sglang": self.sglang}
+        if self.lmdeploy:
+            d["lmdeploy"] = self.lmdeploy
+        if self.tensorrt_llm:
+            d["tensorrt_llm"] = self.tensorrt_llm
+        if self.lm_studio:
+            d["lm_studio"] = self.lm_studio
+        return d
 
 
 @dataclass
@@ -109,6 +123,9 @@ def load_config(state_dir: Path | None = None) -> Config:
                 vllm=e.get("vllm", c.engines.vllm),
                 ollama=e.get("ollama", c.engines.ollama),
                 sglang=e.get("sglang", c.engines.sglang),
+                lmdeploy=e.get("lmdeploy", c.engines.lmdeploy),
+                tensorrt_llm=e.get("tensorrt_llm", c.engines.tensorrt_llm),
+                lm_studio=e.get("lm_studio", c.engines.lm_studio),
             )
         if "slo" in data:
             s = data["slo"]

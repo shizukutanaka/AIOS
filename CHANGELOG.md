@@ -2,6 +2,16 @@
 
 ## Unreleased — Quality & correctness fixes
 
+### Added
+- **LMDeploy, TensorRT-LLM, LM Studio engine adapters** (`aictl/runtime/adapters.py`):
+  `runtime/adapters.py` only detected vLLM/SGLang/Ollama; the 2026 field also treats
+  LMDeploy (TurboMind), TensorRT-LLM (`trtllm-serve`), and LM Studio as mainstream, all
+  OpenAI-compatible. Opt-in only — `EngineEndpoints.lmdeploy`/`tensorrt_llm`/`lm_studio`
+  default to `""` and are excluded from `to_dict()` until configured
+  (`aictl config set engines.lmdeploy <url>`), so zero-config discovery/status/demo/gate
+  is completely unaffected. `recommend`/`optimize`/`route` all consume `discover_engines()`
+  generically, so all three widen automatically.
+
 ### Security
 - **Guard content-policy + PII redaction gate in the proxy** (`aictl/daemon/proxy.py`):
   `core/guard.py` (9 PII types, 4 content policies, Unicode/homoglyph-hardened) was a
