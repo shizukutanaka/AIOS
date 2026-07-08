@@ -2,6 +2,20 @@
 
 ## Unreleased — Quality & correctness fixes
 
+### Security
+- **Guard content-policy + PII redaction gate in the proxy** (`aictl/daemon/proxy.py`):
+  `core/guard.py` (9 PII types, 4 content policies, Unicode/homoglyph-hardened) was a
+  manual-only tool — `aictl guard scan` / the MCP tool — never consulted on real
+  inference traffic. A prompt-injection/jailbreak attempt sailed straight through to the
+  engine, and PII an upstream model leaked in its response reached the client untouched.
+  Two new `Config` fields, both default to a no-op (`guard_policy: off|warn|enforce`,
+  `guard_redact_output: bool = False`), gate two new proxy checks: `_check_guard`
+  (request-side content policy, before routing, both completions and embeddings) and
+  `_redact_response_pii` (response-side PII redaction, non-streaming only — SSE has no
+  buffering point today, documented not silently dropped). Redaction feeds the same
+  `aios_guard_redactions_total` counter added below. Config re-read per request, so
+  `aictl config set guard_policy enforce` takes effect without a proxy restart.
+
 ### Observability
 - **Guard redactions metric** (`aictl/core/guard.py`, `aictl/metrics/prometheus.py`):
   `/metrics` now emits `aios_guard_redactions_total` — the last of

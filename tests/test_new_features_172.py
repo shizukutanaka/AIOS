@@ -49,6 +49,12 @@ class _EmbeddingStub:
     _model_is_signed = _H._model_is_signed
     _current_tenant = _H._current_tenant
     _audit = _H._audit
+    # Pass 175 wired a content-policy gate into _proxy_embedding too (same
+    # spot as the trust gate this file tests) -- the stub needs it bound so
+    # _proxy_embedding doesn't AttributeError; default config has
+    # guard_policy="off" so it's a no-op unless a test opts in.
+    _check_guard = _H._check_guard
+    _extract_request_text = _H._extract_request_text
 
     def __init__(self, store, body):
         self.store = store

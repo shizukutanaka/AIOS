@@ -118,11 +118,23 @@ The gaps below are where it trails current peers or recent research — not gree
   attacks evade single-turn checks.
 - **Proposal (stdlib-friendly):**
   1. **Unicode normalization + homoglyph folding** before matching (NFKC, confusables) —
-     closes the cheapest evasions, pure stdlib.
+     closes the cheapest evasions, pure stdlib. ✅ **done** (earlier pass).
   2. **Output-side PII redaction** pass (not just input scan) and a redaction mode.
+     ✅ **done (Pass 175)** — `core/guard.py` was previously a manual-only tool (`aictl
+     guard scan`/MCP tool), never consulted on real inference traffic: a prompt-injection
+     attempt sailed straight through the proxy, and PII an upstream model leaked in its
+     response reached the client untouched. Two new `Config` fields
+     (`guard_policy: off|warn|enforce`, `guard_redact_output: bool`, both default
+     off/false — zero behavior change out of the box) now gate `aictl/daemon/proxy.py`:
+     `_check_guard` (content-policy — injection/jailbreak/system-leak, request-side,
+     before routing, both `/v1/chat/completions` and `/v1/embeddings`) and
+     `_redact_response_pii` (PII redaction, response-side, non-streaming only — SSE has
+     no buffering/reassembly point today, documented not silently dropped). Response
+     redaction feeds the same `aios_guard_redactions_total` counter Pass 174 added, so
+     real proxy traffic — not just the manual CLI — now shows up in the metric.
   3. **Optional model-based check hook** (Llama Guard via the local engine) behind a flag,
-     keeping the regex layer as the zero-dep default.
-  4. Multi-turn/session context for injection heuristics.
+     keeping the regex layer as the zero-dep default. Still open.
+  4. Multi-turn/session context for injection heuristics. Still open.
 
 ## H. Quantization advisor — refresh to the 2026 frontier
 

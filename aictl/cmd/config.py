@@ -213,6 +213,12 @@ def _validate_config(config: Any) -> list[str]:
         problems.append(f"trust_policy must be one of {sorted(valid_policies)}, "
                         f"got {d['trust_policy']!r}")
 
+    # guard_policy must be one of the valid values
+    valid_guard_policies = {"enforce", "warn", "off"}
+    if d.get("guard_policy", "off") not in valid_guard_policies:
+        problems.append(f"guard_policy must be one of {sorted(valid_guard_policies)}, "
+                        f"got {d['guard_policy']!r}")
+
     # log_level must be valid
     valid_levels = {"debug", "info", "warning", "error", "critical"}
     if d.get("log_level", "info").lower() not in valid_levels:
@@ -405,6 +411,8 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         fallback=FallbackSettings(**{k: v for k, v in d.get("fallback", {}).items()
                                      if k in FallbackSettings.__dataclass_fields__}),
         trust_policy=d.get("trust_policy", "warn"),
+        guard_policy=d.get("guard_policy", "off"),
+        guard_redact_output=d.get("guard_redact_output", False),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),
         model_cache_dir=d.get("model_cache_dir", ""),

@@ -125,6 +125,99 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
+    def _extract_request_text(self, body: dict[str, Any]) -> str:
+        """Concatenate the user-visible text of a request for guard scanning
+        (chat messages, a raw completions prompt, or embeddings input)."""
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            parts = [m["content"] for m in messages
+                     if isinstance(m, dict) and isinstance(m.get("content"), str)]
+            if parts:
+                return "\n".join(parts)
+        prompt = body.get("prompt")
+        if isinstance(prompt, str):
+            return prompt
+        text_input = body.get("input")
+        if isinstance(text_input, str):
+            return text_input
+        if isinstance(text_input, list):
+            return "\n".join(s for s in text_input if isinstance(s, str))
+        return ""
+
+    def _check_guard(self, body: dict[str, Any]) -> tuple[bool, str]:
+        """Content-policy gate (prompt injection / jailbreak / system-leak)
+        before routing. Orthogonal to guard_redact_output: PII merely
+        *present* in a request is not blocked here -- redaction targets PII
+        leaking back out in a completion, not what a user pastes in.
+
+        Config is re-read per request (not cached), so `aictl config set
+        guard_policy ...` takes effect on live traffic without a restart --
+        same convention as `_model_trust_ok`.
+        """
+        config = load_config(self.store.dir)
+        if config.guard_policy == "off":
+            return True, ""
+
+        text = self._extract_request_text(body)
+        if not text:
+            return True, ""
+
+        from aictl.core.guard import scan
+        result, _ = scan(text, redact_pii=False, block_on_pii=False,
+                         block_on_injection=True)
+        if result.passed:
+            return True, ""
+
+        rules = ", ".join(v.rule for v in result.violations if v.severity == "block")
+        rules = rules or "policy violation"
+
+        if config.guard_policy == "enforce":
+            self._audit("guard.violation", rules, action="block", outcome="blocked")
+            return False, f"Request blocked by content policy: {rules}"
+
+        # warn mode: allow through, but leave a discoverable trail.
+        self._audit("guard.warning", rules, action="allow", outcome="warning")
+        return True, ""
+
+    def _redact_response_pii(self, response_bytes: bytes) -> bytes:
+        """If guard_redact_output is enabled, redact PII from
+        choices[].message.content / choices[].text before the response
+        reaches the client. Best-effort: any parse failure or unexpected
+        shape returns the original bytes unchanged -- this must never break
+        a real completion. Feeds the same lifetime counter `aictl guard scan
+        --redact` does (aios_guard_redactions_total, Pass 174)."""
+        config = load_config(self.store.dir)
+        if not config.guard_redact_output:
+            return response_bytes
+        try:
+            from aictl.core.guard import scan
+            data = json.loads(response_bytes)
+            choices = data.get("choices")
+            if not isinstance(choices, list):
+                return response_bytes
+
+            changed = False
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message")
+                if isinstance(message, dict) and isinstance(message.get("content"), str):
+                    _, redacted = scan(message["content"], redact_pii=True,
+                                       state_dir=self.store.dir)
+                    if redacted != message["content"]:
+                        message["content"] = redacted
+                        changed = True
+                elif isinstance(choice.get("text"), str):
+                    _, redacted = scan(choice["text"], redact_pii=True,
+                                       state_dir=self.store.dir)
+                    if redacted != choice["text"]:
+                        choice["text"] = redacted
+                        changed = True
+
+            return json.dumps(data).encode() if changed else response_bytes
+        except Exception:
+            return response_bytes
+
     def _proxy_completion(self) -> None:
         """Proxy a completion request to the upstream engine."""
         body = self._read_body()
@@ -135,6 +228,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         allowed, reason = self._model_trust_ok(model)
         if not allowed:
             self._error(403, reason)
+            return
+
+        # Content-policy gate (prompt injection/jailbreak/system-leak).
+        guard_ok, guard_reason = self._check_guard(body)
+        if not guard_ok:
+            self._error(400, guard_reason)
             return
 
         # Route
@@ -163,9 +262,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             with urllib.request.urlopen(req, timeout=120) as resp:
                 if stream:
+                    # NOTE: guard_redact_output does NOT apply to streaming
+                    # responses -- SSE chunks are piped straight through with
+                    # no buffering/reassembly point (_stream_response below).
+                    # A regulated deployment that needs output redaction must
+                    # disable streaming; documented, not silently ignored.
                     self._stream_response(resp, decision)
                 else:
                     result = resp.read()
+                    result = self._redact_response_pii(result)
                     end_ns = time.time_ns()
 
                     # Token metering
@@ -224,6 +329,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         allowed, reason = self._model_trust_ok(model)
         if not allowed:
             self._error(403, reason)
+            return
+
+        # Same content-policy gate as _proxy_completion. No response-side
+        # redaction here -- embeddings return numeric vectors, not text.
+        guard_ok, guard_reason = self._check_guard(body)
+        if not guard_ok:
+            self._error(400, guard_reason)
             return
 
         router = self._get_router()
