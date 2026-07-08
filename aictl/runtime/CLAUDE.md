@@ -16,3 +16,8 @@
   hyphen) since `BrokerRouter.route()` calls `get_adapter(h.engine, ...)`.
   `EngineEndpoints.lmdeploy`/`tensorrt_llm`/`lm_studio` default to `""` and
   are excluded from `to_dict()` unless configured — never probed by default.
+- KV-budget hard filter: `BrokerRouter.route()` rejects any engine whose
+  `kv_cache_utilization` exceeds `slo_target.kv_cache_max` (default 0.9),
+  applied AFTER metrics collection (not in `_hard_filter`, which runs
+  before metrics are scraped). `_fallback`'s priority-order path is the
+  safety net if every candidate ends up rejected this way.

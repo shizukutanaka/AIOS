@@ -90,17 +90,28 @@ The gaps below are where it trails current peers or recent research — not gree
   **MLX on Apple Silicon** as mainstream; SGLang/LMDeploy show ~29% higher throughput than
   vLLM, TensorRT-LLM leads at scale, LMDeploy has lowest TTFT.
 
-## E. KV-cache-aware cluster routing & long-context KV
+## E. KV-cache-aware cluster routing & long-context KV — proposal (a) done (Pass 177)
 
-- **Current:** `runtime/prefix_route.py` does prefix-hash locality (RadixAttention-style),
+> **Status:** `SLOConfig.kv_cache_max` (default 0.9) was already threaded through
+> `check_slo()` (governor) and `cmd/optimize.py`'s recommendations, but
+> `runtime/router.py`'s `BrokerRouter` — the one component that actually decides where the
+> next request goes — never referenced it; its only KV-awareness was a soft "headroom"
+> factor in `_soft_score` that could still let a near-exhausted engine win. `BrokerRouter.route()`
+> now hard-rejects any engine whose `kv_cache_utilization` exceeds `slo_target.kv_cache_max`
+> (`kv_cache_exhausted (X% > Y%)`), the same way unreachable/wrong-status engines are
+> already rejected. If every candidate is rejected this way, the existing priority-order
+> `_fallback` path still returns a reachable engine (degraded, not a hard outage) — verified
+> by test, not assumed.
+
+- **Previously:** `runtime/prefix_route.py` does prefix-hash locality (RadixAttention-style),
   good. No KV-budget-aware scheduling or long-context KV compression advice.
 - **SOTA:** *Online Scheduling with KV Cache Constraints* (arXiv:2502.07115); KV-cache
   optimization survey (eviction/compression: H2O, StreamingLLM, SnapKV); InfiniGen KV
   prefetch.
-- **Proposal:** (a) extend the router's soft-score with a **KV-budget term** (reject/penalize
-  endpoints near KV exhaustion using metrics aictl already scrapes); (b) add a
+- **Proposal:** ~~(a) extend the router's soft-score with a KV-budget term~~ ✅ done
+  (hard filter, not just soft-score — stronger than originally proposed). (b) add a
   **long-context KV advisor** to `cmd/optimize.py` recommending eviction/compression flags
-  (e.g. vLLM cache settings) by context length — advisory-only, zero-dep.
+  (e.g. vLLM cache settings) by context length — advisory-only, zero-dep. Still open.
 
 ## F. Prefill/decode & MoE serving advisors — ✅ implemented (v1.6)
 

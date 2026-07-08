@@ -3,6 +3,14 @@
 ## Unreleased — Quality & correctness fixes
 
 ### Added
+- **KV-budget hard filter in the router** (`aictl/runtime/router.py`): `SLOConfig.kv_cache_max`
+  was already used by the governor and `optimize.py`'s recommendations, but `BrokerRouter` —
+  the component that actually picks the next request's engine — never referenced it, only a
+  soft "headroom" factor that could still let a near-exhausted engine win. `route()` now
+  hard-rejects any engine over `kv_cache_max` with a `kv_cache_exhausted` reason code, the
+  same way unreachable/wrong-status engines already are. If every candidate is rejected this
+  way, the existing `_fallback` priority-order path still returns a reachable engine
+  (degraded, not an outage).
 - **LMDeploy, TensorRT-LLM, LM Studio engine adapters** (`aictl/runtime/adapters.py`):
   `runtime/adapters.py` only detected vLLM/SGLang/Ollama; the 2026 field also treats
   LMDeploy (TurboMind), TensorRT-LLM (`trtllm-serve`), and LM Studio as mainstream, all

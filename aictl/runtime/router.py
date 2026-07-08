@@ -118,6 +118,25 @@ class BrokerRouter:
                 except Exception:
                     c.metrics = InferenceMetrics(engine=h.engine)
 
+            # ── KV-budget hard filter (IMPROVEMENTS.md item E) ──
+            # Metrics aren't available until after _hard_filter runs above, so
+            # this check lives here instead: an engine already past the
+            # configured kv_cache_max SLO threshold is one preemption/OOM away
+            # from failing the very next request — reject it outright rather
+            # than merely down-weighting it via _soft_score's generic
+            # "headroom" term. If every candidate ends up rejected this way,
+            # _fallback's priority-order path still picks a reachable engine
+            # (degraded, not a hard outage) rather than failing the request.
+            if (c.metrics and c.metrics.kv_cache_utilization > 0
+                    and c.metrics.kv_cache_utilization > self.slo_target.kv_cache_max):
+                c.rejection_reason = (
+                    f"kv_cache_exhausted ({c.metrics.kv_cache_utilization:.1%} > "
+                    f"{self.slo_target.kv_cache_max:.1%})"
+                )
+                decision.reason_codes.append(f"{h.engine}: rejected ({c.rejection_reason})")
+                candidates.append(c)
+                continue
+
             # ── Soft score ──
             c.score = self._soft_score(c, req)
             candidates.append(c)
