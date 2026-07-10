@@ -113,6 +113,25 @@ def _detect_gpu(args: argparse.Namespace) -> tuple[str, int, int]:
     return gpu_name, vram_mb, cc
 
 
+def _q4_k_m_sweet_spot_note(scores: list[dict[str, Any]],
+                            best: dict[str, Any]) -> str | None:
+    """Return a call-out note if Q4_K_M fits but isn't the top pick.
+
+    Q4_K_M (92% quality, 75% smaller than FP16, runs on CPU too) is the
+    community's most widely-adopted format (IMPROVEMENTS.md item H) even
+    when the scorer favors something else for this specific GPU/use-case —
+    e.g. NVFP4 on a Blackwell card. Surfacing it avoids a user missing the
+    most portable option just because a narrower-fit format scored higher.
+    """
+    if best["quant"] == "q4_k_m":
+        return None
+    if not any(s["quant"] == "q4_k_m" for s in scores):
+        return None
+    return ("Q4_K_M remains the community sweet spot for portability "
+            "(92% quality, 75% smaller than FP16, runs on CPU too) if you "
+            "need broader compatibility than " + best["quant"].upper() + ".")
+
+
 def run_recommend(args: argparse.Namespace) -> int:
     """Generate a recommendation."""
     from aictl.cmd.fit import _find_model
@@ -149,9 +168,11 @@ def run_recommend(args: argparse.Namespace) -> int:
 
     scores.sort(key=lambda x: -x["score"])
     best = scores[0]
+    sweet_spot = _q4_k_m_sweet_spot_note(scores, best)
 
     if getattr(args, "json", False):
-        print_json({"recommended": best, "alternatives": scores[1:]})
+        print_json({"recommended": best, "alternatives": scores[1:],
+                    "sweet_spot_note": sweet_spot})
         return 0
 
     print()
@@ -172,6 +193,13 @@ def run_recommend(args: argparse.Namespace) -> int:
         for alt in scores[1:4]:
             print(f"    {alt['quant']:<8}  {alt['quality']*100:.0f}%  "
                   f"{alt['size_mb']/1024:.1f}GB  via {alt['engine']}")
+        print()
+
+    # Community sweet-spot call-out: Q4_K_M (92% quality / 75% smaller,
+    # portable to CPU) is the most widely-adopted format even when the
+    # scorer picks something else for this specific GPU/use-case.
+    if sweet_spot:
+        print(f"  Note: {sweet_spot}")
         print()
 
     # Reasoning-degradation warning (arXiv:2501.03035): aggressive quant can

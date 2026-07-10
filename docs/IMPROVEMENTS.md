@@ -186,13 +186,22 @@ The gaps below are where it trails current peers or recent research — not gree
      resend full history -- a genuinely separate, bigger feature (persisted per-session
      finding history), not done here.
 
-## H. Quantization advisor — refresh to the 2026 frontier
+## H. Quantization advisor — refresh to the 2026 frontier — ✅ implemented (Pass 180)
 
-- **Current:** `cmd/quant.py` advises FP16/FP8/Q8/AWQ/Q4/Q3 on "April 2026 empirical" data.
+> **Status:** this doc's proposal was mostly already done and undocumented as such —
+> `QUANT_DATA` (`cmd/quant.py`) already has an `"nvfp4"` row (4-bit float, Blackwell,
+> `cc=100`, `q_chat=0.97`) and the AWQ row already notes "AutoAWQ is deprecated — export via
+> llm-compressor/GPTQModel", both verified by reading the code, not assumed. The one
+> genuinely missing piece — "surface the Q4_K_M sweet spot call-out in `quant recommend`" —
+> is now `_q4_k_m_sweet_spot_note()`: whenever Q4_K_M fits the GPU/model but isn't the
+> top-scored pick (e.g. NVFP4 wins on a Blackwell card), `quant recommend` calls it out as
+> the portable, CPU-friendly fallback, in both human output and the `--json` body
+> (`sweet_spot_note` field).
+
+- **Current (historical):** `cmd/quant.py` advises FP16/FP8/Q8/AWQ/Q4/Q3 on "April 2026
+  empirical" data.
 - **Field:** Q4_K_M is the community sweet spot (92% quality / 75% smaller); **NVFP4 / MXFP4
   (4-bit float)** and updated AWQ/GPTQ kernels are now mainstream on Blackwell.
-- **Proposal:** add **FP4 (NVFP4/MXFP4)** rows to the quant table and engine-specific support
-  flags; surface the Q4_K_M "sweet spot" call-out in `quant recommend`.
 
 ## I. Apple Silicon / unified-memory path — ✅ implemented (v1.6)
 
