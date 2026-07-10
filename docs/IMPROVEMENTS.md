@@ -39,16 +39,27 @@ The gaps below are where it trails current peers or recent research — not gree
      hash path is truly last-resort and is *flagged* in `rag status`/`cache status`.
   3. **Cheap reranker:** optional cross-encoder rerank via the local engine for top-k.
 
-## B. Semantic cache — correctness & cache-aware reuse
+## B. Semantic cache — correctness & cache-aware reuse — ✅ proposal (a)+(b) implemented
 
-- **Current:** `core/sem_cache.py` keys on the same weak embedding; eviction is LRU by
-  `last_hit_at` (now parameter-bound after the v1.6 fix). No notion of cache-aware RAG
+> **Status (Pass 174 + 178):** proposal (a) was already done before this audit —
+> `aios_cache_tokens_saved_total` / `aios_cache_hits_total` / `aios_cache_cost_saved_usd_total`
+> are all emitted in `metrics/prometheus.py`. Proposal (b)'s "per-model namespacing" was also
+> already correct: `SemanticCache._key_hash` hashes only the model name, and every lookup
+> query filters `WHERE key_hash = ?`, so a cached response for model A can never semantically
+> match a lookup for model B (see `tests/test_new_features_178.py`). The one genuinely open
+> piece — the cosine-similarity floor (`DEFAULT_THRESHOLD = 0.92`) had no user-facing knob —
+> is now `Config.cache_similarity_floor`, settable via `aictl config set
+> cache_similarity_floor <0-1>`, validated to (0.0, 1.0], read by `get_default_cache()` at
+> first construction. No new CLI subcommand needed; reuses the existing generic `config set`
+> mechanism.
+
+- **Current (historical):** `core/sem_cache.py` keys on the same weak embedding; eviction is
+  LRU by `last_hit_at` (now parameter-bound after the v1.6 fix). No notion of cache-aware RAG
   reuse or partial-prefix reuse.
 - **SOTA:** CacheBlend / prefix-cache reuse for RAG contexts (scheduling survey); Portkey
   reports 30–50% cost cuts from semantic caching with <100ms hits.
-- **Proposal:** (a) record and expose **cost-saved-per-route** and cache-hit histograms in
-  `metrics/` (OTel + Prometheus) so the 30–50% claim is *measured*, not assumed; (b) add a
-  `--similarity-floor` guard and per-model namespacing audit to prevent cross-model false hits.
+- **Remaining gap:** cache-aware RAG reuse / partial-prefix reuse (CacheBlend-style) is not
+  implemented — that piece of the SOTA gap is still open, unlike (a) and (b) above.
 
 ## C. Request routing — heuristic today, learned-optional tomorrow
 

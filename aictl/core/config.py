@@ -92,6 +92,13 @@ class Config:
     trust_policy: str = "warn"        # enforce | warn | disabled
     guard_policy: str = "off"         # enforce | warn | off — content policy (injection/jailbreak)
     guard_redact_output: bool = False  # redact PII from completion responses before returning
+    # Cosine-similarity floor for a semantic-cache hit (IMPROVEMENTS.md item B).
+    # Must match aictl.core.sem_cache.DEFAULT_THRESHOLD -- kept as a separate
+    # literal (not imported) so core/config.py has no dependency on
+    # core/sem_cache.py; get_default_cache() reads this value at first
+    # construction, only overriding the module's own built-in default when
+    # a user has actually configured one.
+    cache_similarity_floor: float = 0.92
     quadlet_rootless: bool = True
     default_recipe: str = "local-chat"
     model_cache_dir: str = ""
@@ -141,6 +148,7 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.trust_policy = data.get("trust_policy", c.trust_policy)
         c.guard_policy = data.get("guard_policy", c.guard_policy)
         c.guard_redact_output = data.get("guard_redact_output", c.guard_redact_output)
+        c.cache_similarity_floor = data.get("cache_similarity_floor", c.cache_similarity_floor)
         c.quadlet_rootless = data.get("quadlet_rootless", c.quadlet_rootless)
         c.default_recipe = data.get("default_recipe", c.default_recipe)
         c.model_cache_dir = data.get("model_cache_dir", c.model_cache_dir)

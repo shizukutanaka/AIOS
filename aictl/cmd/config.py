@@ -219,6 +219,13 @@ def _validate_config(config: Any) -> list[str]:
         problems.append(f"guard_policy must be one of {sorted(valid_guard_policies)}, "
                         f"got {d['guard_policy']!r}")
 
+    # cache_similarity_floor must be a valid cosine-similarity bound: 0 (or
+    # below) would match everything indiscriminately, and cosine similarity
+    # for these embeddings never exceeds 1.0.
+    floor = d.get("cache_similarity_floor", 0.92)
+    if not (0.0 < floor <= 1.0):
+        problems.append(f"cache_similarity_floor must be in (0.0, 1.0], got {floor!r}")
+
     # log_level must be valid
     valid_levels = {"debug", "info", "warning", "error", "critical"}
     if d.get("log_level", "info").lower() not in valid_levels:
@@ -413,6 +420,7 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         trust_policy=d.get("trust_policy", "warn"),
         guard_policy=d.get("guard_policy", "off"),
         guard_redact_output=d.get("guard_redact_output", False),
+        cache_similarity_floor=d.get("cache_similarity_floor", 0.92),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),
         model_cache_dir=d.get("model_cache_dir", ""),

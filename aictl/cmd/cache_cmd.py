@@ -82,7 +82,8 @@ def run_status(args: argparse.Namespace) -> int:
     print(f"  ○ Entries:        {stats['entries']:,}")
     print(f"  ○ Tokens saved:   {stats['total_tokens_saved']:,}")
     print(f"  ○ Lifetime hits:  {stats['lifetime_hits']:,}")
-    print(f"  ○ Threshold:      {stats['threshold']} cosine similarity")
+    print(f"  ○ Threshold:      {stats['threshold']} cosine similarity "
+          f"(aictl config set cache_similarity_floor <0-1> to change)")
     print(f"  ○ DB:             {stats['db_path']}")
     print()
 

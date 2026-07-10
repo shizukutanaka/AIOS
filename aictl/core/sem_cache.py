@@ -319,8 +319,20 @@ _DEFAULT_CACHE: SemanticCache | None = None
 
 
 def get_default_cache() -> SemanticCache:
-    """Return the global default SemanticCache instance."""
+    """Return the global default SemanticCache instance.
+
+    The similarity threshold honors `aictl config set cache_similarity_floor
+    <value>` (IMPROVEMENTS.md item B) if a user has configured one;
+    otherwise DEFAULT_THRESHOLD applies exactly as before. Best-effort: any
+    failure reading config (e.g. during very early bootstrap) falls back to
+    the built-in default rather than blocking cache construction."""
     global _DEFAULT_CACHE
     if _DEFAULT_CACHE is None:
-        _DEFAULT_CACHE = SemanticCache()
+        threshold = DEFAULT_THRESHOLD
+        try:
+            from aictl.core.config import load_config
+            threshold = load_config().cache_similarity_floor
+        except Exception:
+            pass
+        _DEFAULT_CACHE = SemanticCache(threshold=threshold)
     return _DEFAULT_CACHE
