@@ -226,6 +226,16 @@ def _validate_config(config: Any) -> list[str]:
     if not (0.0 < floor <= 1.0):
         problems.append(f"cache_similarity_floor must be in (0.0, 1.0], got {floor!r}")
 
+    # guard_model_check_endpoint, if set, must be http/https -- urllib's
+    # default opener also handles file://, which would let a misconfigured
+    # "endpoint" read arbitrary local files as part of the request attempt.
+    endpoint = d.get("guard_model_check_endpoint", "")
+    if endpoint:
+        from urllib.parse import urlparse
+        if urlparse(endpoint).scheme not in ("http", "https"):
+            problems.append("guard_model_check_endpoint must be http:// or "
+                            f"https://, got {endpoint!r}")
+
     # log_level must be valid
     valid_levels = {"debug", "info", "warning", "error", "critical"}
     if d.get("log_level", "info").lower() not in valid_levels:
@@ -420,6 +430,8 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         trust_policy=d.get("trust_policy", "warn"),
         guard_policy=d.get("guard_policy", "off"),
         guard_redact_output=d.get("guard_redact_output", False),
+        guard_model_check_endpoint=d.get("guard_model_check_endpoint", ""),
+        guard_model_check_model=d.get("guard_model_check_model", "llama-guard3"),
         cache_similarity_floor=d.get("cache_similarity_floor", 0.92),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),

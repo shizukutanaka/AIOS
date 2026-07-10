@@ -162,9 +162,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if not text:
             return True, ""
 
+        model_check = None
+        if config.guard_model_check_endpoint:
+            from aictl.core.guard import make_llm_content_check
+            model_check = make_llm_content_check(
+                config.guard_model_check_endpoint, config.guard_model_check_model)
+
         from aictl.core.guard import scan
         result, _ = scan(text, redact_pii=False, block_on_pii=False,
-                         block_on_injection=True)
+                         block_on_injection=True, model_check=model_check)
         if result.passed:
             return True, ""
 

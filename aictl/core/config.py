@@ -92,6 +92,14 @@ class Config:
     trust_policy: str = "warn"        # enforce | warn | disabled
     guard_policy: str = "off"         # enforce | warn | off — content policy (injection/jailbreak)
     guard_redact_output: bool = False  # redact PII from completion responses before returning
+    # Optional model-based content check (IMPROVEMENTS.md item G, proposal 3):
+    # empty endpoint = disabled (zero-dep default, no network call ever made).
+    # Set both to point the proxy's guard gate at a local Llama-Guard-style
+    # model, e.g. `aictl config set guard_model_check_endpoint
+    # http://localhost:11434` with `aictl config set guard_model_check_model
+    # llama-guard3`.
+    guard_model_check_endpoint: str = ""
+    guard_model_check_model: str = "llama-guard3"
     # Cosine-similarity floor for a semantic-cache hit (IMPROVEMENTS.md item B).
     # Must match aictl.core.sem_cache.DEFAULT_THRESHOLD -- kept as a separate
     # literal (not imported) so core/config.py has no dependency on
@@ -148,6 +156,10 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.trust_policy = data.get("trust_policy", c.trust_policy)
         c.guard_policy = data.get("guard_policy", c.guard_policy)
         c.guard_redact_output = data.get("guard_redact_output", c.guard_redact_output)
+        c.guard_model_check_endpoint = data.get("guard_model_check_endpoint",
+                                                c.guard_model_check_endpoint)
+        c.guard_model_check_model = data.get("guard_model_check_model",
+                                             c.guard_model_check_model)
         c.cache_similarity_floor = data.get("cache_similarity_floor", c.cache_similarity_floor)
         c.quadlet_rootless = data.get("quadlet_rootless", c.quadlet_rootless)
         c.default_recipe = data.get("default_recipe", c.default_recipe)

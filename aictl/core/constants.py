@@ -42,6 +42,7 @@ PROXY_EMBED_TIMEOUT = 60
 CLOUD_FALLBACK_TIMEOUT = 30
 HOOK_WEBHOOK_TIMEOUT = 5     # aictl.core.hook_dispatch webhook POST
 HOOK_SCRIPT_TIMEOUT = 10    # aictl.core.hook_dispatch local script exec
+GUARD_MODEL_CHECK_TIMEOUT = 5   # aictl.core.guard.make_llm_content_check
 
 # ── SLO Defaults ──────────────────────────────────────
 SLO_TTFT_MS = 500           # Time-to-first-token target

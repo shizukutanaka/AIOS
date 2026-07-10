@@ -167,8 +167,24 @@ The gaps below are where it trails current peers or recent research — not gree
      redaction feeds the same `aios_guard_redactions_total` counter Pass 174 added, so
      real proxy traffic — not just the manual CLI — now shows up in the metric.
   3. **Optional model-based check hook** (Llama Guard via the local engine) behind a flag,
-     keeping the regex layer as the zero-dep default. Still open.
-  4. Multi-turn/session context for injection heuristics. Still open.
+     keeping the regex layer as the zero-dep default. ✅ **done (Pass 179)** —
+     `core/guard.py`'s `check_content()`/`scan()` gained an opt-in `model_check` parameter
+     (a plain callable, never a global/auto-registered default) run in *addition* to the
+     always-on regex rules. `make_llm_content_check(endpoint, model)` builds a real,
+     zero-dep (urllib only) check that asks a local OpenAI-compatible chat endpoint (e.g.
+     Ollama serving Llama Guard) for a SAFE/UNSAFE verdict; fails toward "no opinion" (an
+     unreachable engine, timeout, malformed response, or non-http(s) scheme all return
+     `None`) rather than raising or fabricating a block. Wired into both
+     `aictl guard scan --model-check-endpoint/--model-check-model` and the proxy's
+     `_check_guard` via two new `Config` fields (`guard_model_check_endpoint`, empty by
+     default = disabled; `guard_model_check_model`).
+  4. Multi-turn/session context for injection heuristics. Still open -- note: chat requests
+     already concatenate every message in the request body's own `messages` array for
+     scanning (`_extract_request_text`, Pass 175), so an attack spread across turns *within
+     one request* (the client resends full history, as OpenAI-style APIs do) is already
+     covered. The remaining gap is cross-request session state for callers that don't
+     resend full history -- a genuinely separate, bigger feature (persisted per-session
+     finding history), not done here.
 
 ## H. Quantization advisor — refresh to the 2026 frontier
 
