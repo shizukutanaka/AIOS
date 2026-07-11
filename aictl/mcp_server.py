@@ -8,7 +8,9 @@ de facto standard for LLM ↔ tool integration. This server lets
 any MCP-compatible AI assistant manage local inference infrastructure.
 
 Transport: JSON-RPC 2.0 over stdio (stdin/stdout)
-Spec: https://modelcontextprotocol.io/specification/2025-11-25
+Spec: https://modelcontextprotocol.io/specification/2025-11-25 (default
+negotiated version; also speaks 2025-06-18 and the 2026-07-28 release
+candidate on request — see SUPPORTED_MCP_VERSIONS)
 
 Tools exposed:
   aictl_health       — System health check
@@ -44,9 +46,26 @@ from aictl.core.constants import AICTL_VERSION
 
 # ── MCP Protocol Constants ──
 JSONRPC_VERSION = "2.0"
+# Default/fallback version when a client doesn't specify one -- kept at the
+# original baseline so any pre-existing client that omits protocolVersion
+# sees unchanged behavior. Clients that explicitly request a newer version
+# we also speak (see SUPPORTED_MCP_VERSIONS) get that version echoed back.
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# 2026-07-28 is the release-candidate version (final ships 2026-07-28): a
+# stateless core (no session/initialize requirement -- this server never
+# tracked session state anyway), server/discover, and tools/list gaining
+# ttlMs/cacheScope. We advertise it without dropping the legacy handshake,
+# since existing clients still send initialize and nothing here requires
+# removing that path to be RC-compliant.
+SUPPORTED_MCP_VERSIONS = ("2024-11-05", "2025-06-18", "2026-07-28")
 SERVER_NAME = "aictl"
 SERVER_VERSION = AICTL_VERSION
+# How long a client may cache tools/list before re-fetching, and at what
+# scope: aictl's TOOLS list is static for the lifetime of one server
+# process (no dynamic tool registration), so a long, server-scoped TTL is
+# accurate, not just a placeholder.
+TOOLS_LIST_TTL_MS = 300_000
+TOOLS_LIST_CACHE_SCOPE = "server"
 
 
 # ── Tool Definitions ──
@@ -789,8 +808,29 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
     params = request.get("params", {})
 
     if method == "initialize":
+        # Version negotiation: echo back the client's requested version if
+        # we speak it (keeps a client pinned to an older spec working
+        # unchanged); otherwise fall back to our own default. A client that
+        # sends no protocolVersion at all also gets the default, identical
+        # to this server's behavior before the 2026-07-28 RC existed.
+        requested = params.get("protocolVersion", MCP_PROTOCOL_VERSION)
+        negotiated = (requested if requested in SUPPORTED_MCP_VERSIONS
+                     else MCP_PROTOCOL_VERSION)
+        return _response(req_id, {
+            "protocolVersion": negotiated,
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        })
+
+    elif method == "server/discover":
+        # The 2026-07-28 RC's stateless replacement for initialize: a client
+        # can call this without any prior handshake to learn what the
+        # server supports. This server has no session state either way, so
+        # it's safe to expose identical info without requiring initialize
+        # first.
         return _response(req_id, {
             "protocolVersion": MCP_PROTOCOL_VERSION,
+            "supportedVersions": list(SUPPORTED_MCP_VERSIONS),
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })
@@ -799,7 +839,11 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
         return None  # Notification, no response needed
 
     elif method == "tools/list":
-        return _response(req_id, {"tools": TOOLS})
+        return _response(req_id, {
+            "tools": TOOLS,
+            "ttlMs": TOOLS_LIST_TTL_MS,
+            "cacheScope": TOOLS_LIST_CACHE_SCOPE,
+        })
 
     elif method == "tools/call":
         name = params.get("name", "")

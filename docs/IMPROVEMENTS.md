@@ -388,19 +388,30 @@ Fresh survey (July 2026) of papers, engine releases, and protocol news, each
 finding grep-verified against the codebase before being listed (same
 discipline as Parts 1–2: no assumed gaps).
 
-## O. MCP spec 2026-07-28 — stateless core ships in ~2 weeks  ⭐ deadline-driven
+## O. MCP spec 2026-07-28 — stateless core — ✅ implemented (Pass 182)
 
-- **Current:** `aictl/mcp_server.py:47` advertises `protocolVersion:
-  "2024-11-05"` — two spec generations old — and implements the legacy
-  `initialize` handshake. The server is already internally stateless (no
-  session tracking), so migration cost is low.
+> **Status:** `initialize` is kept for legacy clients but now negotiates the
+> requested `protocolVersion` (echoes back 2024-11-05 / 2025-06-18 / 2026-07-28
+> if the client asks for one of those; falls back to the 2024-11-05 default
+> otherwise — zero behavior change for any pre-existing caller). New
+> `server/discover` method is the RC's stateless replacement, callable with
+> no prior handshake. `tools/list` gained `ttlMs`/`cacheScope`. `_meta` in
+> params was already tolerated (unknown keys are simply ignored) — pinned
+> with a regression test rather than left as an untested assumption. The
+> Tasks extension migration is deliberately deferred until the final spec +
+> SDK ecosystem settle (per the original proposal).
+
+- **Historical current:** `aictl/mcp_server.py:47` advertised `protocolVersion:
+  "2024-11-05"` — two spec generations old — and implemented only the legacy
+  `initialize` handshake. The server was already internally stateless (no
+  session tracking), so migration cost was low.
 - **News:** the 2026-07-28 release candidate removes the `initialize`
   handshake and `Mcp-Session-Id` (client metadata moves to `_meta` on every
   request), adds `server/discover`, moves Tasks to an extension, deprecates
   roots/sampling/logging, and changes some error codes (-32002 → -32602 for
-  missing resources; aictl already emits -32601/-32602 only). Final spec
-  ships July 28, 2026.
-- **Proposal:** dual-mode compatibility — keep `initialize` for legacy
+  missing resources; aictl already emitted -32601/-32602 only — nothing to
+  migrate there, confirmed by grep). Final spec ships July 28, 2026.
+- **Proposal (done):** dual-mode compatibility — keep `initialize` for legacy
   clients but negotiate the requested protocol version; add
   `server/discover`; tolerate per-request `_meta`; add `ttlMs`/`cacheScope`
   to `tools/list`. Defer the Tasks extension until the final spec + SDKs
