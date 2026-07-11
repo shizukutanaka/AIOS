@@ -30,7 +30,7 @@ docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 - vLLM v0.19 / SGLang v0.5 / Ollama v0.20
 - K3s v1.35 + KServe v0.17 + llm-d v0.5 (CNCF)
 - K8s Gateway API InferencePool v1
-- NVIDIA Dynamo v0.8 (KVBM + NIXL)
+- NVIDIA Dynamo 1.0 GA (KVBM + NIXL)
 - Cosign v3 · ORAS · OTel GenAI SemConv
 - 7 K8s exports: KServe, Gateway API, KEDA, HPA, Dynamo, P/D Disagg, ModelService
 

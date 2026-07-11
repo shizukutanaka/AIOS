@@ -379,3 +379,93 @@ Fairness/energy scheduling: [Equinox 2508.16646](https://arxiv.org/html/2508.166
 [FREESH 2511.00807](https://arxiv.org/pdf/2511.00807).
 Agent frameworks: [2026 framework showdown](https://qubittool.com/blog/ai-agent-framework-comparison-2026) ·
 [8 SDKs / ACP trade-offs](https://www.morphllm.com/ai-agent-framework).
+
+---
+
+# Part 3 — July 2026 research refresh
+
+Fresh survey (July 2026) of papers, engine releases, and protocol news, each
+finding grep-verified against the codebase before being listed (same
+discipline as Parts 1–2: no assumed gaps).
+
+## O. MCP spec 2026-07-28 — stateless core ships in ~2 weeks  ⭐ deadline-driven
+
+- **Current:** `aictl/mcp_server.py:47` advertises `protocolVersion:
+  "2024-11-05"` — two spec generations old — and implements the legacy
+  `initialize` handshake. The server is already internally stateless (no
+  session tracking), so migration cost is low.
+- **News:** the 2026-07-28 release candidate removes the `initialize`
+  handshake and `Mcp-Session-Id` (client metadata moves to `_meta` on every
+  request), adds `server/discover`, moves Tasks to an extension, deprecates
+  roots/sampling/logging, and changes some error codes (-32002 → -32602 for
+  missing resources; aictl already emits -32601/-32602 only). Final spec
+  ships July 28, 2026.
+- **Proposal:** dual-mode compatibility — keep `initialize` for legacy
+  clients but negotiate the requested protocol version; add
+  `server/discover`; tolerate per-request `_meta`; add `ttlMs`/`cacheScope`
+  to `tools/list`. Defer the Tasks extension until the final spec + SDKs
+  settle.
+
+## P. Guardrail-as-DoS-target — cache the model-check verdicts
+
+- **Current:** Pass 179's `make_llm_content_check` (core/guard.py) runs a
+  synchronous LLM call per guarded request with NO verdict caching
+  (grep-verified) — a flood of identical prompts re-triggers the upstream
+  model every time.
+- **SOTA / threat:** "From Shield to Target" (arXiv:2606.14517, June 2026)
+  characterizes LLM-based guardrails as resource-amplification DoS targets.
+- **Proposal:** (1) in-process LRU verdict cache keyed on SHA-256 of the
+  normalized text (~256 entries, thread-safe) so repeated prompts cost one
+  upstream call; (2) in `proxy._check_guard`, skip the model check entirely
+  when the regex layer already found a blocking violation (no point paying
+  for a second opinion on an already-blocked request).
+
+## Q. vLLM v0.19 features the advisors don't mention yet
+
+- **Current:** aictl pins `vllm/vllm-openai:v0.19.0` (constants.py:65). That
+  release shipped CPU KV-cache offloading (serve models bigger than VRAM by
+  spilling KV to system RAM), FlexKV, and zero-bubble async-scheduled
+  speculative decoding — none surfaced by `aictl fit`/`optimize` advisories.
+- **Proposal:** when `fit` reports a model does NOT fit VRAM, mention CPU
+  KV-cache offloading as a remedy alongside the existing quantization
+  suggestions; `optimize` gains the corresponding flag emission.
+
+## R. Model catalog drift (June–July 2026 releases)
+
+- **Current:** `runtime/recommend.py` MODELS has Gemma 4 and GLM-5 but not
+  **GLM-5.2** (June 2026, now the leading open-weights model on the
+  Artificial Analysis index) or **Kimi K2.6** (April 2026, agentic
+  long-horizon). `runtime/dynamo.py` + `cmd/info.py` said "Dynamo v0.8"
+  though **Dynamo 1.0 went GA at GTC March 2026** (fixed in this pass).
+- **Proposal:** add GLM-5.2 / Kimi K2.6 rows (ollama + vllm variants where
+  applicable); Medusa row in `runtime/speculative.py` (closes item L's
+  remaining gap).
+
+## S. Layered routing + local embeddings are now settled practice
+
+- **News:** RouteJudge (arXiv:2606.18774), cascade decision theory
+  (arXiv:2605.06350), and the 2026 routing surveys converge on a 3-layer
+  pattern: cheap rules → embedding/kNN middle layer → cascade tail. aictl
+  has layers 1 and 3; the embedding middle layer is backlog item C-1.
+  For item A-2 (pluggable real embeddings), the 2026 local consensus picks
+  are now concrete: nomic-embed-text (137M), Qwen3-Embedding-0.6B, bge-small
+  — all Ollama-runnable; rerank with BGE-reranker-v2/Qwen3-Reranker.
+- **Proposal:** unchanged from C-1/A-2, now with named models and validated
+  architecture; kNN router should build on the embedding provider hook.
+
+## Sources (Part 3)
+
+MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
+Guardrail DoS: [From Shield to Target 2606.14517](https://arxiv.org/abs/2606.14517).
+vLLM: [releases](https://github.com/vllm-project/vllm/releases) ·
+[Q2 2026 roadmap #39749](https://github.com/vllm-project/vllm/issues/39749) ·
+[CPU offloading write-up](https://aiforautomation.io/news/2026-04-02-vllm-cpu-offloading-run-bigger-models-free).
+Routing: [RouteJudge 2606.18774](https://arxiv.org/pdf/2606.18774) ·
+[cascade decision theory 2605.06350](https://arxiv.org/pdf/2605.06350) ·
+[2026 routing guide](https://www.digitalapplied.com/blog/llm-model-routing-2026-cost-quality-optimization-engineering-guide).
+Embeddings: [Milvus 2026 comparison](https://milvus.io/blog/choose-embedding-model-rag-2026.md) ·
+[BentoML open-source guide](https://www.bentoml.com/blog/a-guide-to-open-source-embedding-models) ·
+[Qwen3 embed/rerank via Ollama](https://apidog.com/blog/qwen-3-embedding-reranker-ollama/).
+Engines/models: [engine comparison 2026](https://leetllm.com/blog/llm-inference-engine-comparison-2026) ·
+[Ollama release notes](https://releasebot.io/updates/ollama).
+Spec-decode attack (context only): Mistletoe acceleration-collapse (arXiv:2605.14005).

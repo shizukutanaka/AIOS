@@ -1,6 +1,6 @@
 """NVIDIA Dynamo integration: KVBM, NIXL, ModelExpress, Planner.
 
-NVIDIA Dynamo (v0.8+, April 2026) is the "inference OS for AI factories".
+NVIDIA Dynamo (1.0 GA, March 2026 — GTC) is the "inference OS for AI factories".
 This module provides integration points for aictl to work with Dynamo components:
 
   KVBM (KV Block Manager):

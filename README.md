@@ -183,7 +183,7 @@ CLI (66 Python + 29 Go)
 | Container | Podman + Quadlet (systemd) |
 | Inference | vLLM v0.19 / SGLang v0.5 / Ollama v0.20 |
 | K8s | K3s v1.35 + KServe v0.17 + llm-d v0.5 (CNCF) |
-| GPU | NVIDIA Dynamo v0.8 (KVBM + NIXL) |
+| GPU | NVIDIA Dynamo 1.0 GA (KVBM + NIXL) |
 | NPU | NVIDIA, Intel, AMD, Huawei Ascend, Qualcomm |
 | Signing | Cosign v3 + ORAS |
 | Monitoring | OTel GenAI SemConv + Prometheus + Grafana |

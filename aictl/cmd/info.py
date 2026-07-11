@@ -83,7 +83,7 @@ def run(args: argparse.Namespace) -> int:
             "bootc v1.15 (Fedora 42)", "Podman + Quadlet",
             "vLLM v0.19 / SGLang v0.5 / Ollama v0.20",
             "K3s v1.35 + KServe v0.17 + llm-d v0.5",
-            "NVIDIA Dynamo v0.8 (KVBM + NIXL)",
+            "NVIDIA Dynamo 1.0 GA (KVBM + NIXL)",
             "Gateway API InferencePool v1",
             "KEDA v2.19", "Cosign v3 + ORAS",
             "OTel GenAI SemConv v1.40 + Prometheus",
