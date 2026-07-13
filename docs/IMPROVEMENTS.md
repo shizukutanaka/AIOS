@@ -417,19 +417,26 @@ discipline as Parts 1–2: no assumed gaps).
   to `tools/list`. Defer the Tasks extension until the final spec + SDKs
   settle.
 
-## P. Guardrail-as-DoS-target — cache the model-check verdicts
+## P. Guardrail-as-DoS-target — cache the model-check verdicts — ✅ implemented (Pass 183)
 
-- **Current:** Pass 179's `make_llm_content_check` (core/guard.py) runs a
-  synchronous LLM call per guarded request with NO verdict caching
-  (grep-verified) — a flood of identical prompts re-triggers the upstream
-  model every time.
+> **Status:** both proposals shipped. (1) `make_llm_content_check`'s callable
+> consults a module-level thread-safe LRU verdict cache
+> (`GUARD_MODEL_CHECK_CACHE_MAX_ENTRIES` = 256, keyed SHA-256 of
+> endpoint|model|Unicode-normalized text) before any network call — module-level
+> rather than closure-local because the proxy constructs a fresh closure per
+> request (config re-read per request), so a closure-local cache would never be
+> reused. Only genuine SAFE/UNSAFE classifications are cached; network failures
+> are NOT, so a transient outage can't get stuck as permanent no-opinion.
+> (2) `check_content()` skips the model check entirely when the regex layer
+> already found a blocking violation — an obviously-malicious flood never
+> reaches the upstream model at all. E2E-verified through the real proxy:
+> 5 identical requests → exactly 1 upstream guard-model call.
+
+- **Historical current:** Pass 179's `make_llm_content_check` (core/guard.py)
+  ran a synchronous LLM call per guarded request with NO verdict caching —
+  a flood of identical prompts re-triggered the upstream model every time.
 - **SOTA / threat:** "From Shield to Target" (arXiv:2606.14517, June 2026)
   characterizes LLM-based guardrails as resource-amplification DoS targets.
-- **Proposal:** (1) in-process LRU verdict cache keyed on SHA-256 of the
-  normalized text (~256 entries, thread-safe) so repeated prompts cost one
-  upstream call; (2) in `proxy._check_guard`, skip the model check entirely
-  when the regex layer already found a blocking violation (no point paying
-  for a second opinion on an already-blocked request).
 
 ## Q. vLLM v0.19 features the advisors don't mention yet
 

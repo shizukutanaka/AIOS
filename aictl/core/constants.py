@@ -44,6 +44,12 @@ HOOK_WEBHOOK_TIMEOUT = 5     # aictl.core.hook_dispatch webhook POST
 HOOK_SCRIPT_TIMEOUT = 10    # aictl.core.hook_dispatch local script exec
 GUARD_MODEL_CHECK_TIMEOUT = 5   # aictl.core.guard.make_llm_content_check
 
+# ── Guard model-check verdict cache (IMPROVEMENTS.md item P) ─────────
+# DoS hardening (arXiv:2606.14517 "From Shield to Target"): a flood of
+# identical/near-identical prompts must not re-trigger the upstream guard
+# model on every single request.
+GUARD_MODEL_CHECK_CACHE_MAX_ENTRIES = 256
+
 # ── SLO Defaults ──────────────────────────────────────
 SLO_TTFT_MS = 500           # Time-to-first-token target
 SLO_TPS = 50                # Tokens-per-second target

@@ -26,7 +26,9 @@ Content filters (keyword/pattern):
 
 from __future__ import annotations
 
+import collections
 import re
+import threading
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -288,9 +290,15 @@ def check_content(text: str, *, model_check: ModelCheck | None = None) -> list[C
     are taken from the normalized text for clarity in the violation report.
 
     model_check: an optional model-based check (see make_llm_content_check),
-    run AFTER the regex rules. A raising or malformed check is swallowed --
-    a down/misconfigured model-check endpoint must degrade to "no opinion",
-    never crash the always-on zero-dep regex path or turn into a false block.
+    run AFTER the regex rules -- but SKIPPED entirely if the regex layer
+    already found a blocking violation (IMPROVEMENTS.md item P: no point
+    paying for a second, expensive opinion on a request that's already
+    going to be blocked either way; also closes a DoS-amplification vector
+    -- arXiv:2606.14517 -- where a flood of obviously-malicious prompts
+    would otherwise each trigger an upstream model call). A raising or
+    malformed check is swallowed -- a down/misconfigured model-check
+    endpoint must degrade to "no opinion", never crash the always-on
+    zero-dep regex path or turn into a false block.
     """
     scan_text = normalize_for_scan(text)
     violations: list[ContentViolation] = []
@@ -302,7 +310,8 @@ def check_content(text: str, *, model_check: ModelCheck | None = None) -> list[C
             ))
             break  # one violation per rule per text is enough
 
-    if model_check is not None:
+    already_blocked = any(v.severity == "block" for v in violations)
+    if model_check is not None and not already_blocked:
         try:
             extra = model_check(text)
             if extra is not None:
@@ -382,6 +391,54 @@ def scan(
     return result, processed
 
 
+# ── Model-check verdict cache (IMPROVEMENTS.md item P) ─────────────────
+# DoS hardening (arXiv:2606.14517 "From Shield to Target"): LLM-based
+# guardrails are themselves a resource-amplification target -- a flood of
+# identical (or near-identical, once Unicode-normalized) prompts must not
+# re-trigger the upstream model on every single request. Module-level (not
+# per-closure) because the proxy constructs a fresh make_llm_content_check
+# closure on every request (config is re-read per request, matching
+# _model_trust_ok's convention) -- a closure-local cache would never be
+# reused across requests and would defeat the whole point.
+_model_check_cache: "collections.OrderedDict[str, ContentViolation | None]" = (
+    collections.OrderedDict())
+_model_check_cache_lock = threading.Lock()
+
+
+def _model_check_cache_key(endpoint: str, model: str, text: str) -> str:
+    import hashlib
+    normalized = normalize_for_scan(text)
+    raw = f"{endpoint}|{model}|{normalized}".encode("utf-8", errors="replace")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _model_check_cache_get(key: str) -> tuple[bool, "ContentViolation | None"]:
+    """Return (was_cached, verdict). Moves the key to MRU position on hit."""
+    with _model_check_cache_lock:
+        if key not in _model_check_cache:
+            return False, None
+        verdict = _model_check_cache.pop(key)
+        _model_check_cache[key] = verdict  # re-insert = move to MRU end
+        return True, verdict
+
+
+def _model_check_cache_put(key: str, verdict: "ContentViolation | None") -> None:
+    from aictl.core.constants import GUARD_MODEL_CHECK_CACHE_MAX_ENTRIES
+    with _model_check_cache_lock:
+        _model_check_cache[key] = verdict
+        _model_check_cache.move_to_end(key)
+        while len(_model_check_cache) > GUARD_MODEL_CHECK_CACHE_MAX_ENTRIES:
+            _model_check_cache.popitem(last=False)  # evict LRU
+
+
+def _reset_model_check_cache_for_testing() -> None:
+    """Test-only: clear the cache so tests don't leak state into each
+    other (matches the isolation convention used elsewhere, e.g.
+    hook_dispatch's suppress_dispatch)."""
+    with _model_check_cache_lock:
+        _model_check_cache.clear()
+
+
 def make_llm_content_check(endpoint: str, model: str = "llama-guard3",
                            timeout: float | None = None) -> ModelCheck:
     """Build a model_check callable (see check_content/scan) that asks a
@@ -397,8 +454,21 @@ def make_llm_content_check(endpoint: str, model: str = "llama-guard3",
     regex-based default layer is unaffected either way) rather than raising
     or fabricating a block. A model that clearly answers UNSAFE is the only
     path that produces a ContentViolation.
+
+    Verdicts are cached (module-level, ~GUARD_MODEL_CHECK_CACHE_MAX_ENTRIES
+    entries, LRU) keyed on (endpoint, model, normalized text) -- a flood of
+    identical/near-identical prompts costs one upstream call, not one per
+    request (IMPROVEMENTS.md item P, arXiv:2606.14517). The cache is
+    module-level rather than closure-local because callers (the proxy) may
+    construct a fresh closure per request; a closure-local cache would
+    never be reused.
     """
     def _check(text: str) -> ContentViolation | None:
+        cache_key = _model_check_cache_key(endpoint, model, text)
+        was_cached, cached_verdict = _model_check_cache_get(cache_key)
+        if was_cached:
+            return cached_verdict
+
         try:
             import json as _json
             import urllib.request
@@ -434,11 +504,18 @@ def make_llm_content_check(endpoint: str, model: str = "llama-guard3",
                 data = _json.loads(resp.read())
             content = data["choices"][0]["message"]["content"].strip().upper()
             if "UNSAFE" in content:
-                return ContentViolation(
+                verdict = ContentViolation(
                     rule="model_check_unsafe", severity="block",
                     excerpt=text[:60],
                 )
-            return None
+            else:
+                verdict = None
+            # Only a genuine classification is cached -- a transient
+            # network failure (below) must NOT get "stuck" as a permanent
+            # no-opinion; the next identical request should retry once the
+            # endpoint recovers.
+            _model_check_cache_put(cache_key, verdict)
+            return verdict
         except Exception:
             return None
     return _check
