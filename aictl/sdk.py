@@ -805,8 +805,84 @@ def _stream_complete(
                 continue
 
 
+# Known embedding-capable model name substrings, ranked by the 2026 local
+# consensus (docs/IMPROVEMENTS.md item A-2, Pass 181 research: Milvus/
+# BentoML/apidog embedding guides). Matched case-insensitively as a
+# substring against whatever the engine's /v1/models actually reports --
+# real tags vary ("nomic-embed-text", "nomic-embed-text:latest",
+# "nomic-embed-text-v1.5", etc.
+_EMBEDDING_MODEL_PRIORITY = (
+    "nomic-embed-text", "bge-m3", "qwen3-embedding", "bge-large",
+    "bge-small", "all-minilm",
+)
+
+# Per-endpoint capability-detection cache: detected once per process, not
+# re-probed on every embed() call. embed_text() is on the hot path (every
+# semantic-cache lookup/store, every RAG query) -- an extra /v1/models
+# round-trip per call would add real latency for no benefit once an
+# endpoint's model roster is known. Matches _AmbientContext's own
+# detect-once-per-process convention (hardware/default-model are cached
+# the same way).
+_embedding_model_cache: dict[str, str | None] = {}
+_embedding_model_cache_lock = threading.Lock()
+
+
+def _detect_embedding_model(endpoint: str) -> str | None:
+    """Probe `endpoint`'s model list and return the best available
+    embedding-capable model name, or None if none is found.
+
+    Capability detection instead of blindly guessing "nomic-embed-text" on
+    every call regardless of what's actually pulled (IMPROVEMENTS.md item
+    A-2) -- a wrong guess wastes a network round-trip on a call that's
+    virtually guaranteed to fail, right before falling back anyway.
+    Best-effort: any probe failure (unreachable, malformed response) is
+    cached as "no embedding model detected" for this endpoint, same as a
+    genuine empty roster -- not re-attempted every call, since a transient
+    probe failure and a genuinely absent model both correctly result in
+    the hash fallback either way.
+    """
+    with _embedding_model_cache_lock:
+        if endpoint in _embedding_model_cache:
+            return _embedding_model_cache[endpoint]
+
+    detected: str | None = None
+    try:
+        import urllib.request
+        from aictl.core.constants import EMBEDDING_MODEL_DETECT_TIMEOUT
+        req = urllib.request.Request(f"{endpoint.rstrip('/')}/v1/models")
+        with urllib.request.urlopen(req, timeout=EMBEDDING_MODEL_DETECT_TIMEOUT) as r:
+            data = json.loads(r.read())
+        available = [m.get("id", "") for m in data.get("data", [])
+                    if isinstance(m, dict) and m.get("id")]
+        for candidate in _EMBEDDING_MODEL_PRIORITY:
+            for name in available:
+                if candidate in name.lower():
+                    detected = name
+                    break
+            if detected:
+                break
+    except Exception:
+        detected = None
+
+    with _embedding_model_cache_lock:
+        _embedding_model_cache[endpoint] = detected
+    return detected
+
+
+def _reset_embedding_model_cache_for_testing() -> None:
+    """Test-only: clear the per-endpoint detection cache."""
+    with _embedding_model_cache_lock:
+        _embedding_model_cache.clear()
+
+
 def _embed(endpoint: str, texts: list[str]) -> list[list[float]]:
     """Embed text(s) into vectors.
+
+    Uses capability detection (_detect_embedding_model) rather than
+    blindly assuming "nomic-embed-text" is pulled -- if no known
+    embedding-capable model is found on the endpoint, this skips the
+    doomed network round-trip entirely and degrades straight to the hash
+    fallback.
 
     Degraded mode falls back for the WHOLE batch, using the same
     FALLBACK_DIM-width hash embedding as aictl.core.rag. Two bugs lived in
@@ -824,12 +900,17 @@ def _embed(endpoint: str, texts: list[str]) -> list[list[float]]:
     what rag/cache status use to flag degraded retrieval.
     """
     import urllib.request
+    from aictl.core.rag import _fallback_embedding
+
+    model = _detect_embedding_model(endpoint)
+    if model is None:
+        return [_fallback_embedding(t) for t in texts]
 
     vectors: list[list[float]] = []
     try:
         for text in texts:
             body = json.dumps({
-                "model": "nomic-embed-text",
+                "model": model,
                 "input": text,
             }).encode()
             req = urllib.request.Request(
@@ -845,7 +926,6 @@ def _embed(endpoint: str, texts: list[str]) -> list[list[float]]:
         # Degraded mode: deterministic hash-based pseudo-embedding so
         # downstream code doesn't crash in dev environments. Whole batch,
         # shared implementation -- see docstring.
-        from aictl.core.rag import _fallback_embedding
         return [_fallback_embedding(t) for t in texts]
 
 

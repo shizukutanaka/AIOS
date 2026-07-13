@@ -37,6 +37,14 @@ from unittest.mock import patch
 
 
 class TestSdkFallbackDimensionUnified(unittest.TestCase):
+    def setUp(self):
+        from aictl.sdk import _reset_embedding_model_cache_for_testing
+        _reset_embedding_model_cache_for_testing()
+
+    def tearDown(self):
+        from aictl.sdk import _reset_embedding_model_cache_for_testing
+        _reset_embedding_model_cache_for_testing()
+
     def test_unreachable_endpoint_falls_back_to_fallback_dim(self):
         from aictl.sdk import _embed
         from aictl.core.rag import FALLBACK_DIM
@@ -55,7 +63,9 @@ class TestSdkFallbackDimensionUnified(unittest.TestCase):
     def test_partial_batch_failure_degrades_whole_batch_uniformly(self):
         # First text succeeds (mocked 768-dim), second raises: the old code
         # returned [768-dim real, 32-dim hash]; now the WHOLE batch degrades
-        # to uniform FALLBACK_DIM vectors.
+        # to uniform FALLBACK_DIM vectors. Detection is pre-primed (patched
+        # directly) so this test isolates the embeddings-call behavior from
+        # the separate capability-detection round-trip.
         from aictl.core.rag import FALLBACK_DIM
         from aictl import sdk as sdk_mod
 
@@ -78,7 +88,8 @@ class TestSdkFallbackDimensionUnified(unittest.TestCase):
                 return _FakeResp()
             raise OSError("model not pulled")
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch.object(sdk_mod, "_detect_embedding_model", return_value="nomic-embed-text"), \
+             patch("urllib.request.urlopen", side_effect=fake_urlopen):
             vectors = sdk_mod._embed("http://fake-endpoint", ["ok", "fails"])
 
         self.assertEqual(len(vectors), 2)
@@ -99,7 +110,8 @@ class TestSdkFallbackDimensionUnified(unittest.TestCase):
                 return json.dumps(
                     {"data": [{"embedding": [0.5] * 768}]}).encode()
 
-        with patch("urllib.request.urlopen", return_value=_FakeResp()):
+        with patch.object(sdk_mod, "_detect_embedding_model", return_value="nomic-embed-text"), \
+             patch("urllib.request.urlopen", return_value=_FakeResp()):
             vectors = sdk_mod._embed("http://fake-endpoint", ["a", "b"])
         self.assertEqual([len(v) for v in vectors], [768, 768])
 

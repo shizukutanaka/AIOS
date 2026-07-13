@@ -19,7 +19,7 @@ The gaps below are where it trails current peers or recent research — not gree
 
 ---
 
-## A. RAG quality — the embedding is the weak link  ⭐ highest leverage
+## A. RAG quality — the embedding is the weak link  ⭐ highest leverage — proposal 2 ✅ done (Pass 186)
 
 - **Current:** `core/rag.py:305` `embed_text()` calls `aictl.ai.embed()`, but when no engine
   is reachable it falls back to `_fallback_embedding` (`rag.py:321`) — a **64-dim SHA-256
@@ -46,8 +46,17 @@ The gaps below are where it trails current peers or recent research — not gree
      fallback reusing `rag._fallback_embedding`. (b) `cache status` had no degraded
      flag at all — `SemanticCache.stats()` now returns `semantic_embeddings` (same
      FALLBACK_DIM detection as rag) and the CLI warns that only exact-match hits are
-     reliable, with the concrete remedy (`ollama pull nomic-embed-text`). The provider
-     hook with capability detection (probing multiple endpoints/models) remains open.
+     reliable, with the concrete remedy (`ollama pull nomic-embed-text`).
+     **Capability-detection half ✅ done (Pass 186):** `sdk._detect_embedding_model`
+     probes the engine's `/v1/models` (the OpenAI-compatible listing every adapter in
+     this project already speaks) and picks the best available embedding-capable model
+     from the 2026-consensus priority list (nomic-embed-text > bge-m3 >
+     qwen3-embedding > bge-large > bge-small > all-minilm) instead of blindly guessing
+     "nomic-embed-text" on every call. No match → skips the doomed `/v1/embeddings`
+     POST entirely and degrades straight to the hash fallback. Cached per-endpoint for
+     the process lifetime (embed_text is hot-path: every cache lookup/store, every RAG
+     query) — matches `_AmbientContext`'s own detect-once convention. Proposal 2 is now
+     fully closed.
   3. **Cheap reranker:** optional cross-encoder rerank via the local engine for top-k.
 
 ## B. Semantic cache — correctness & cache-aware reuse — ✅ proposal (a)+(b) implemented
