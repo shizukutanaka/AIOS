@@ -87,6 +87,15 @@ def run_status(args: argparse.Namespace) -> int:
     print(f"  ○ DB:             {stats['db_path']}")
     print()
 
+    # Same degraded flag `rag status` shows: FALLBACK_DIM-width vectors mean
+    # the hash fallback embedded these entries -- similarity matching is then
+    # noise, not meaning. Exact-match hits still work; semantic hits don't.
+    if stats["entries"] and not stats.get("semantic_embeddings"):
+        warn("Cached embeddings are the non-semantic hash fallback — only "
+             "exact-match hits are reliable. Pull an embedding model "
+             "(e.g. `ollama pull nomic-embed-text`) and clear the cache.")
+        print()
+
     if hit_pct < 10:
         print("  Tip: Hit rate is low. This is normal for diverse workloads.")
         print("       RAG queries and repeated system prompts benefit most.")

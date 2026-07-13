@@ -37,6 +37,17 @@ The gaps below are where it trails current peers or recent research — not gree
   2. **Pluggable real embeddings:** formalize an embedding-provider hook (Ollama
      `/api/embeddings`, vLLM/SGLang embedding endpoints) with capability detection, so the
      hash path is truly last-resort and is *flagged* in `rag status`/`cache status`.
+     **Honesty half ✅ done (Pass 185):** two real defects fixed — (a) `sdk._embed`'s
+     per-text fallback emitted 32-dim vectors (one raw sha256) while rag's fallback and
+     its semantic-detector use FALLBACK_DIM (64), so an SDK-level fallback (engine up,
+     embedding model not pulled — the most common degradation) produced vectors that
+     `rag status` misreported as SEMANTIC, and a partially-failing batch mixed dims
+     (cosine across mismatched dims silently returns 0.0). Fixed with batch-level
+     fallback reusing `rag._fallback_embedding`. (b) `cache status` had no degraded
+     flag at all — `SemanticCache.stats()` now returns `semantic_embeddings` (same
+     FALLBACK_DIM detection as rag) and the CLI warns that only exact-match hits are
+     reliable, with the concrete remedy (`ollama pull nomic-embed-text`). The provider
+     hook with capability detection (probing multiple endpoints/models) remains open.
   3. **Cheap reranker:** optional cross-encoder rerank via the local engine for top-k.
 
 ## B. Semantic cache — correctness & cache-aware reuse — ✅ proposal (a)+(b) implemented

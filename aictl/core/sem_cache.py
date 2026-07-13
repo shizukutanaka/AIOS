@@ -289,6 +289,22 @@ class SemanticCache:
             lifetime_tokens_saved = c.execute(
                 "SELECT COALESCE(SUM(tokens_saved * hits), 0) FROM cache"
             ).fetchone()[0]
+            sample = c.execute(
+                "SELECT embedding FROM cache LIMIT 1"
+            ).fetchone()
+
+        # Same degraded-retrieval flag `rag status` shows (rag.py's
+        # RagIndex.status): a stored vector of FALLBACK_DIM width means the
+        # hash fallback was used -- similarity matching is then byte-
+        # distribution noise, not meaning, so "semantic cache" is overstating
+        # it and the CLI should say so instead of silently implying quality.
+        semantic = False
+        if sample and sample[0]:
+            try:
+                from aictl.core.rag import FALLBACK_DIM
+                semantic = len(json.loads(sample[0])) != FALLBACK_DIM
+            except Exception:
+                semantic = False
 
         with self._lock:
             hits = self._hits
@@ -304,6 +320,7 @@ class SemanticCache:
             "total_tokens_saved": tokens_saved,
             "lifetime_tokens_saved": lifetime_tokens_saved,
             "lifetime_hits": total_hits,
+            "semantic_embeddings": semantic,
             "db_path": str(self.db_path),
             "threshold": self.threshold,
         }

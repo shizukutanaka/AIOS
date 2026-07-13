@@ -806,32 +806,47 @@ def _stream_complete(
 
 
 def _embed(endpoint: str, texts: list[str]) -> list[list[float]]:
-    """Embed text(s) into vectors."""
+    """Embed text(s) into vectors.
+
+    Degraded mode falls back for the WHOLE batch, using the same
+    FALLBACK_DIM-width hash embedding as aictl.core.rag. Two bugs lived in
+    the old per-text fallback (IMPROVEMENTS.md item A-2):
+      1. It emitted 32-dim vectors (one sha256 digest) while rag's fallback
+         and its "is this semantic?" detector use FALLBACK_DIM (64) -- so an
+         SDK-level fallback (engine reachable but the embedding model not
+         pulled, the most common real degradation) produced vectors that
+         `rag status` misreported as SEMANTIC. False success, silently.
+      2. A partially-failing batch mixed real-model dims with hash dims;
+         cosine() between mismatched dims returns 0.0, silently zeroing
+         similarity for the failed subset instead of degrading uniformly.
+    Batch-level fallback with the shared FALLBACK_DIM fixes both: vectors
+    are always either all-real or all-hash(64), and the 64-width marker is
+    what rag/cache status use to flag degraded retrieval.
+    """
     import urllib.request
 
     vectors: list[list[float]] = []
-    for text in texts:
-        body = json.dumps({
-            "model": "nomic-embed-text",
-            "input": text,
-        }).encode()
-        req = urllib.request.Request(
-            f"{endpoint}/v1/embeddings",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
+    try:
+        for text in texts:
+            body = json.dumps({
+                "model": "nomic-embed-text",
+                "input": text,
+            }).encode()
+            req = urllib.request.Request(
+                f"{endpoint}/v1/embeddings",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.loads(r.read())
-            vec = data["data"][0]["embedding"]
-            vectors.append(vec)
-        except Exception:
-            # Degraded mode: deterministic hash-based pseudo-embedding
-            # So downstream code doesn't crash in dev environments
-            import hashlib
-            h = hashlib.sha256(text.encode()).digest()
-            vectors.append([(b - 128) / 128 for b in h])
-    return vectors
+            vectors.append(data["data"][0]["embedding"])
+        return vectors
+    except Exception:
+        # Degraded mode: deterministic hash-based pseudo-embedding so
+        # downstream code doesn't crash in dev environments. Whole batch,
+        # shared implementation -- see docstring.
+        from aictl.core.rag import _fallback_embedding
+        return [_fallback_embedding(t) for t in texts]
 
 
 # ── The public `ai` object ───────────────────────────
