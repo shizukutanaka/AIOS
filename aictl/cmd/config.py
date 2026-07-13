@@ -236,6 +236,19 @@ def _validate_config(config: Any) -> list[str]:
             problems.append("guard_model_check_endpoint must be http:// or "
                             f"https://, got {endpoint!r}")
 
+    # route_knn_* bounds: a negative/huge margin, a k <= 0, or an
+    # agreement threshold outside (0.5, 1.0] would make the kNN gate
+    # either never fire or accept a bare plurality as "agreement".
+    margin = d.get("route_knn_margin", 5)
+    if not (0 <= margin <= 15):
+        problems.append(f"route_knn_margin must be in [0, 15], got {margin!r}")
+    k = d.get("route_knn_k", 5)
+    if not (1 <= k <= 30):
+        problems.append(f"route_knn_k must be in [1, 30], got {k!r}")
+    min_agreement = d.get("route_knn_min_agreement", 0.8)
+    if not (0.5 < min_agreement <= 1.0):
+        problems.append(f"route_knn_min_agreement must be in (0.5, 1.0], got {min_agreement!r}")
+
     # log_level must be valid
     valid_levels = {"debug", "info", "warning", "error", "critical"}
     if d.get("log_level", "info").lower() not in valid_levels:
@@ -433,6 +446,10 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         guard_model_check_endpoint=d.get("guard_model_check_endpoint", ""),
         guard_model_check_model=d.get("guard_model_check_model", "llama-guard3"),
         cache_similarity_floor=d.get("cache_similarity_floor", 0.92),
+        route_knn_enabled=d.get("route_knn_enabled", False),
+        route_knn_margin=d.get("route_knn_margin", 5),
+        route_knn_k=d.get("route_knn_k", 5),
+        route_knn_min_agreement=d.get("route_knn_min_agreement", 0.8),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),
         model_cache_dir=d.get("model_cache_dir", ""),

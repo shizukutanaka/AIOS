@@ -32,9 +32,12 @@ import argparse
 
 from typing import Any
 
+import hashlib
+import heapq
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -128,6 +131,67 @@ _DEFAULT_TIERS = {
 }
 
 
+# Labeled prompts (expected_tier, prompt) for `route test`'s accuracy
+# benchmark. Hoisted to module scope (was function-local inside run_test)
+# so it can also be referenced by tests asserting disjointness from
+# _KNN_EXAMPLES below -- same 12 entries, unchanged.
+_TEST_CASES = [
+    ("SIMPLE",  "What is 2+2?"),
+    ("SIMPLE",  "Who is the current US president?"),
+    ("SIMPLE",  "What is the capital of France?"),
+    ("SIMPLE",  "Give me 3 colors."),
+    ("MEDIUM",  "Write a Python function that sorts a list."),
+    ("MEDIUM",  "Explain how TCP/IP works in 3 sentences."),
+    ("MEDIUM",  "What are the pros and cons of Docker?"),
+    ("MEDIUM",  "How do I optimize a slow SQL query?"),
+    ("COMPLEX", "Explain quantum entanglement and its implications for computing."),
+    ("COMPLEX", "Compare Kant's categorical imperative with utilitarianism."),
+    ("COMPLEX", "Why does speculative decoding improve LLM throughput? Explain the math."),
+    ("COMPLEX", "Design a distributed cache system that handles 1M requests/second."),
+]
+
+# Labeled examples for the embedding-kNN router (IMPROVEMENTS.md item C-1),
+# disjoint from _TEST_CASES (so `route test --knn`'s accuracy numbers are an
+# honest out-of-sample measurement, not the kNN bank grading itself).
+# ~10 per tier, weighted toward the SIMPLE/MEDIUM and MEDIUM/COMPLEX
+# boundaries (score 25-35 / 55-65) since that's exactly where the gate in
+# route_tier_gated() actually consults kNN -- prompts far from a boundary
+# never reach the kNN vote at all, so bank density there matters less.
+EXPECTED_KNN_EXAMPLES = 30
+_KNN_EXAMPLES: list[tuple[str, str]] = [
+    ("SIMPLE",  "What time is it in Tokyo?"),
+    ("SIMPLE",  "Name 5 fruits."),
+    ("SIMPLE",  "What is the boiling point of water?"),
+    ("SIMPLE",  "Who wrote Romeo and Juliet?"),
+    ("SIMPLE",  "Convert 10 miles to kilometers."),
+    ("SIMPLE",  "What year did World War II end?"),
+    ("SIMPLE",  "List 3 programming languages."),
+    ("SIMPLE",  "What is the largest planet?"),
+    ("SIMPLE",  "Summarize this in one word: happy."),
+    ("SIMPLE",  "Translate 'hello' to Spanish."),
+    ("MEDIUM",  "Write a function to reverse a string in Python."),
+    ("MEDIUM",  "Summarize the plot of a typical mystery novel."),
+    ("MEDIUM",  "What's the difference between a list and a tuple?"),
+    ("MEDIUM",  "Draft a short email declining a meeting."),
+    ("MEDIUM",  "Explain what an API is to a beginner."),
+    ("MEDIUM",  "How do I set up a virtual environment in Python?"),
+    ("MEDIUM",  "What are three tips for better sleep?"),
+    ("MEDIUM",  "Write a SQL query to count rows in a table."),
+    ("MEDIUM",  "Explain the difference between HTTP and HTTPS."),
+    ("MEDIUM",  "What's a good approach to learning a new language?"),
+    ("COMPLEX", "Analyze the trade-offs between microservices and a monolith for a startup."),
+    ("COMPLEX", "Critique the ethical implications of autonomous weapons systems."),
+    ("COMPLEX", "Design a rate limiter that scales across multiple data centers."),
+    ("COMPLEX", "Compare the philosophy of Stoicism and Existentialism on free will."),
+    ("COMPLEX", "Explain the mathematical intuition behind backpropagation in neural networks."),
+    ("COMPLEX", "Evaluate the long-term economic consequences of universal basic income."),
+    ("COMPLEX", "Architect a fault-tolerant event-sourcing system for financial transactions."),
+    ("COMPLEX", "Discuss the trade-offs between consistency and availability in distributed databases."),
+    ("COMPLEX", "Analyze why transformer attention scales quadratically and how to mitigate it."),
+    ("COMPLEX", "Compare the performance implications of optimistic versus pessimistic locking."),
+]
+
+
 def register(sub: Any) -> None:
     """Register CLI subcommand."""
     p = sub.add_parser(
@@ -140,12 +204,20 @@ def register(sub: Any) -> None:
     sh = sp.add_parser("show", help="Score a prompt and show which model it routes to.")
     sh.add_argument("prompt", help="The prompt to analyze")
     sh.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    sh.add_argument(
+        "--knn", action="store_true",
+        help="Consult the embedding-kNN tie-breaker even if route_knn_enabled is off in config.",
+    )
     sh.set_defaults(func=run_show)
 
     # ask
     a = sp.add_parser("ask", help="Route and answer a prompt with the optimal model.")
     a.add_argument("prompt", help="The prompt to answer")
     a.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    a.add_argument(
+        "--knn", action="store_true",
+        help="Consult the embedding-kNN tie-breaker even if route_knn_enabled is off in config.",
+    )
     a.set_defaults(func=run_ask)
 
     # config
@@ -160,6 +232,10 @@ def register(sub: Any) -> None:
     t = sp.add_parser("test", help="Run routing accuracy benchmark on built-in test set.")
     t.add_argument("--n",    type=positive_int, default=10, help="Number of test prompts")
     t.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    t.add_argument(
+        "--knn", action="store_true",
+        help="Consult the embedding-kNN tie-breaker even if route_knn_enabled is off in config.",
+    )
     t.set_defaults(func=run_test)
 
     # batch
@@ -190,8 +266,8 @@ def register(sub: Any) -> None:
 def run_show(args: argparse.Namespace) -> int:
     """Show routing decision for a prompt."""
     prompt = args.prompt
-    score = score_complexity(prompt)
-    tier = classify_complexity(score)
+    tier, meta = route_tier_gated(prompt, force=getattr(args, "knn", False))
+    score = meta["score"]
     cfg = _load_config()
     model = cfg[tier.lower()]["model"]
 
@@ -201,6 +277,7 @@ def run_show(args: argparse.Namespace) -> int:
             "score": score,
             "tier": tier,
             "model": model,
+            "knn_applied": meta["knn_applied"],
         })
         return 0
 
@@ -208,6 +285,8 @@ def run_show(args: argparse.Namespace) -> int:
     bar = "█" * (score // 5) + "░" * (20 - score // 5)
     print(f"  Complexity: [{bar}] {score}/100  →  {tier}")
     print(f"  Routes to:  {model}")
+    if meta["knn_applied"]:
+        print(f"  kNN tie-break applied (regex tier was {meta['regex_tier']})")
     print()
 
     # Why?
@@ -223,8 +302,8 @@ def run_show(args: argparse.Namespace) -> int:
 def run_ask(args: argparse.Namespace) -> int:
     """Route a prompt and answer it with the optimal model."""
     prompt = args.prompt
-    score = score_complexity(prompt)
-    tier = classify_complexity(score)
+    tier, meta = route_tier_gated(prompt, force=getattr(args, "knn", False))
+    score = meta["score"]
     cfg = _load_config()
     model = cfg[tier.lower()]["model"]
 
@@ -251,6 +330,7 @@ def run_ask(args: argparse.Namespace) -> int:
                 "response": str(r),
                 "cost": r.cost,
                 "latency_ms": elapsed_ms,
+                "knn_applied": meta["knn_applied"],
             })
         else:
             print(str(r))
@@ -297,21 +377,7 @@ def run_config(args: argparse.Namespace) -> int:
 
 def run_test(args: argparse.Namespace) -> int:
     """Run accuracy benchmark on built-in test set."""
-    # Labeled prompts: (expected_tier, prompt)
-    _TEST_CASES = [
-        ("SIMPLE",  "What is 2+2?"),
-        ("SIMPLE",  "Who is the current US president?"),
-        ("SIMPLE",  "What is the capital of France?"),
-        ("SIMPLE",  "Give me 3 colors."),
-        ("MEDIUM",  "Write a Python function that sorts a list."),
-        ("MEDIUM",  "Explain how TCP/IP works in 3 sentences."),
-        ("MEDIUM",  "What are the pros and cons of Docker?"),
-        ("MEDIUM",  "How do I optimize a slow SQL query?"),
-        ("COMPLEX", "Explain quantum entanglement and its implications for computing."),
-        ("COMPLEX", "Compare Kant's categorical imperative with utilitarianism."),
-        ("COMPLEX", "Why does speculative decoding improve LLM throughput? Explain the math."),
-        ("COMPLEX", "Design a distributed cache system that handles 1M requests/second."),
-    ]
+    use_knn = getattr(args, "knn", False)
 
     # --n is a count of test prompts; reject < 1 before the negative-slice trap
     # (`_TEST_CASES[:n]` with n=-3 runs all-but-last-3 cases, more than asked).
@@ -325,8 +391,8 @@ def run_test(args: argparse.Namespace) -> int:
     results = []
 
     for expected, prompt in cases:
-        score = score_complexity(prompt)
-        predicted = classify_complexity(score)
+        predicted, meta = route_tier_gated(prompt, force=use_knn)
+        score = meta["score"]
         match = predicted == expected
         if match:
             correct += 1
@@ -336,6 +402,7 @@ def run_test(args: argparse.Namespace) -> int:
             "predicted": predicted,
             "score": score,
             "correct": match,
+            "knn_applied": meta["knn_applied"],
         })
 
     accuracy = correct / max(len(cases), 1) * 100
@@ -349,7 +416,8 @@ def run_test(args: argparse.Namespace) -> int:
     print()
     for r in results:
         icon = "✓" if r["correct"] else "✗"
-        print(f"  {icon} [{r['score']:>3}] {r['expected']:<8} → {r['predicted']:<8}  {r['prompt']}")
+        knn_tag = " [knn]" if r["knn_applied"] else ""
+        print(f"  {icon} [{r['score']:>3}] {r['expected']:<8} → {r['predicted']:<8}{knn_tag}  {r['prompt']}")
     print()
     ok(f"Accuracy: {correct}/{len(cases)} ({accuracy:.0f}%)")
     print()
@@ -644,3 +712,195 @@ def _save_config(cfg: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write: a crash mid-save must not corrupt the tier config.
     atomic_write_text(path, json.dumps(cfg, indent=2, ensure_ascii=False))
+
+
+# ── Embedding-kNN tie-breaker (IMPROVEMENTS.md item C-1) ───
+
+# Tiers the kNN verdict is allowed to move the regex tier to. A 2-tier jump
+# (SIMPLE<->COMPLEX) is never trusted from a handful of nearest neighbors —
+# if the regex scorer and the embedding bank disagree that badly, something
+# is wrong with one of them, not a case for the tie-breaker to resolve.
+_ADJACENT_TIERS = {
+    "SIMPLE": {"MEDIUM"},
+    "MEDIUM": {"SIMPLE", "COMPLEX"},
+    "COMPLEX": {"MEDIUM"},
+}
+
+_KNN_CACHE_LOCK = threading.Lock()
+_KNN_BANK_MEMO: dict[str, Any] | None = None  # in-process memo; avoids re-reading disk every call
+
+# Re-attempt a semantic build if the last cached attempt degraded to the hash
+# fallback and is older than this — an embedding model may become reachable
+# later in a long-lived process (e.g. an engine started after aictl did).
+_KNN_CACHE_RETRY_AFTER_S = 3600
+
+
+def _knn_cache_path() -> Path:
+    """Return the path to the kNN example-bank embedding cache file."""
+    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    return Path(base) / "route_knn_cache.json"
+
+
+def _reset_knn_cache_for_testing() -> None:
+    """Clear the in-process kNN bank memo (test isolation only; disk cache untouched)."""
+    global _KNN_BANK_MEMO
+    with _KNN_CACHE_LOCK:
+        _KNN_BANK_MEMO = None
+
+
+def _knn_examples_hash() -> str:
+    """Stable hash of the labeled example set; auto-invalidates the disk
+    cache if _KNN_EXAMPLES is ever edited."""
+    payload = json.dumps(_KNN_EXAMPLES, sort_keys=True).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _knn_bank_is_fresh(entry: dict[str, Any], bank_hash: str) -> bool:
+    if entry.get("bank_hash") != bank_hash:
+        return False
+    if entry.get("semantic"):
+        return True
+    return (time.time() - float(entry.get("built_at", 0))) < _KNN_CACHE_RETRY_AFTER_S
+
+
+def _get_knn_bank() -> tuple[list[dict[str, Any]], bool]:
+    """Return (bank, semantic) for the labeled kNN example set.
+
+    `bank` is a list of {"tier", "prompt", "vector"} dicts, one per
+    _KNN_EXAMPLES entry. `semantic` is True iff those vectors are real
+    embeddings rather than the SHA-256 hash fallback. Disk+memory cached,
+    keyed on a hash of _KNN_EXAMPLES so edits to the labeled set
+    auto-invalidate the cache; self-heals by retrying the embed after
+    _KNN_CACHE_RETRY_AFTER_S if the last attempt degraded to the fallback.
+    """
+    global _KNN_BANK_MEMO
+
+    bank_hash = _knn_examples_hash()
+
+    with _KNN_CACHE_LOCK:
+        if _KNN_BANK_MEMO is not None and _knn_bank_is_fresh(_KNN_BANK_MEMO, bank_hash):
+            return _KNN_BANK_MEMO["bank"], _KNN_BANK_MEMO["semantic"]
+
+    cache_path = _knn_cache_path()
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text())
+            if isinstance(cached, dict) and _knn_bank_is_fresh(cached, bank_hash):
+                with _KNN_CACHE_LOCK:
+                    _KNN_BANK_MEMO = cached
+                return cached["bank"], cached["semantic"]
+        except Exception:
+            pass  # corrupt/unreadable cache — rebuild below
+
+    from aictl.core.rag import embed_text, FALLBACK_DIM
+    prompts = [p for _, p in _KNN_EXAMPLES]
+    try:
+        vectors = embed_text(prompts)
+    except Exception:
+        vectors = []
+
+    semantic = (
+        len(vectors) == len(prompts)
+        and all(len(v) != FALLBACK_DIM for v in vectors)
+    )
+    if len(vectors) != len(prompts):
+        vectors = [[] for _ in prompts]
+
+    bank = [
+        {"tier": tier, "prompt": prompt, "vector": vector}
+        for (tier, prompt), vector in zip(_KNN_EXAMPLES, vectors)
+    ]
+    entry = {"bank_hash": bank_hash, "semantic": semantic, "built_at": time.time(), "bank": bank}
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(cache_path, json.dumps(entry))
+    except Exception:
+        pass  # cache write is best-effort; kNN still usable from memory this process
+
+    with _KNN_CACHE_LOCK:
+        _KNN_BANK_MEMO = entry
+    return bank, semantic
+
+
+def route_tier_gated(prompt: str, cfg: Any = None, force: bool = False) -> tuple[str, dict[str, Any]]:
+    """Return (tier, meta): the regex-scored tier, optionally refined by a
+    confidence-gated embedding-kNN tie-breaker.
+
+    The regex scorer (score_complexity/classify_complexity) always runs
+    first and is the authoritative verdict. kNN is consulted only as a
+    tie-breaker, and only when every one of these holds:
+      - route_knn_enabled is set in global config, or `force` is True
+      - the regex score falls within route_knn_margin of the 30/60 tier
+        boundary (this prompt is a genuine toss-up, not a clear call)
+      - the labeled example bank has real (non-fallback) embeddings
+      - the live prompt's own embedding is also real (non-fallback)
+      - the top-k neighbor vote reaches route_knn_min_agreement
+      - the kNN verdict is an ADJACENT tier only (never a 2-tier jump)
+    Any exception at any step silently abstains to the regex verdict — this
+    is a tie-breaker, never a replacement, and must never turn a working
+    router into a broken one.
+    """
+    score = score_complexity(prompt)
+    regex_tier = classify_complexity(score)
+    meta: dict[str, Any] = {
+        "score": score,
+        "regex_tier": regex_tier,
+        "knn_applied": False,
+        "knn_tier": None,
+        "knn_agreement": None,
+    }
+
+    # Aliased import: route.py's own _load_config()/_config_path() are the
+    # LOCAL tier-model config (route_config.json); this is the GLOBAL
+    # aictl.core.config.Config that holds the route_knn_* fields. Same name
+    # ("load_config") in the upstream module, so it must be aliased here to
+    # avoid shadowing this file's pre-existing local _load_config.
+    from aictl.core.config import load_config as load_global_config
+    gcfg = cfg if cfg is not None else load_global_config()
+
+    if not (force or gcfg.route_knn_enabled):
+        return regex_tier, meta
+
+    margin = gcfg.route_knn_margin
+    near_boundary = abs(score - 30) <= margin or abs(score - 60) <= margin
+    if not near_boundary:
+        return regex_tier, meta
+
+    try:
+        bank, semantic_bank = _get_knn_bank()
+        if not semantic_bank or not bank:
+            return regex_tier, meta
+
+        from aictl.core.rag import embed_text, cosine, FALLBACK_DIM
+        [query_vec] = embed_text([prompt])
+        if not query_vec or len(query_vec) == FALLBACK_DIM:
+            return regex_tier, meta
+
+        k = max(1, gcfg.route_knn_k)
+        neighbors = heapq.nlargest(
+            k, bank, key=lambda ex: cosine(query_vec, ex["vector"]),
+        )
+        if not neighbors:
+            return regex_tier, meta
+
+        votes: dict[str, int] = {}
+        for ex in neighbors:
+            votes[ex["tier"]] = votes.get(ex["tier"], 0) + 1
+        winner, winner_count = max(votes.items(), key=lambda kv: kv[1])
+        agreement = winner_count / len(neighbors)
+
+        meta["knn_tier"] = winner
+        meta["knn_agreement"] = round(agreement, 3)
+
+        if agreement < gcfg.route_knn_min_agreement:
+            return regex_tier, meta
+        if winner == regex_tier:
+            return regex_tier, meta
+        if winner not in _ADJACENT_TIERS.get(regex_tier, set()):
+            return regex_tier, meta
+
+        meta["knn_applied"] = True
+        return winner, meta
+    except Exception:
+        return regex_tier, meta

@@ -93,7 +93,24 @@ The gaps below are where it trails current peers or recent research — not gree
 - **Proposal (keeps zero-dep default):**
   1. **Embedding-kNN router:** route by nearest-neighbour over a small labeled prompt set
      (uses the engine's own embeddings; pure-Python kNN). Falls back to the regex scorer.
-     Still open.
+     ✅ **done (Pass 187)** — `cmd/route.py`'s `route_tier_gated()`. Design: **confidence-gated
+     tie-breaker**, not a replacement — `score_complexity`/`classify_complexity` always run
+     first and are the sole verdict unless (a) `route_knn_enabled` is set (default `False`,
+     true no-op: zero `embed_text()` calls, zero disk I/O) or `--knn`/`force=True` is passed,
+     (b) the regex score falls within `route_knn_margin` (default 5) of the 30/60 tier
+     boundary — i.e. this is a genuine toss-up, not a clear call, (c) the 30-example labeled
+     bank (`_KNN_EXAMPLES`, 10/tier, disjoint from the 12-entry `_TEST_CASES` eval set) has
+     real (non-hash-fallback) embeddings, disk+memory cached in `route_knn_cache.json`
+     (hash-invalidated on edits to `_KNN_EXAMPLES`, self-heals by retrying the embed after an
+     hour if the last attempt degraded to the hash fallback), (d) the live query's own
+     embedding is also real, (e) a `heapq.nlargest(k, ...)` neighbor vote clears
+     `route_knn_min_agreement` (default 0.8), and (f) the kNN verdict is an **adjacent tier
+     only** — a SIMPLE→COMPLEX 2-tier jump is always rejected regardless of agreement. Any
+     exception anywhere silently abstains to the regex verdict. Wired into `route show`/`ask`/
+     `test` via a `--knn` flag (JSON gains an additive `knn_applied` key; existing keys
+     unchanged); `route batch`/`cascade` deliberately **not** wired this pass (latency/
+     throughput-sensitive paths — left as an explicit, documented gap rather than a silent
+     omission). 29 new tests (`tests/test_new_features_187.py`).
   2. **Cascade mode:** try the small model, escalate to the large model only if a local
      confidence/verifier check fails — a research-backed superset of the current one-shot route.
      ✅ **done** (`aictl route cascade`, `cmd/route.py`'s `run_cascade`).
@@ -487,17 +504,22 @@ discipline as Parts 1–2: no assumed gaps).
 > auto_select_method deliberately never picks it) — closes item L's last
 > gap. Dynamo v0.8→1.0 GA text was fixed in Pass 181.
 
-## S. Layered routing + local embeddings are now settled practice
+## S. Layered routing + local embeddings are now settled practice — ✅ layer 2 done (Pass 187)
 
 - **News:** RouteJudge (arXiv:2606.18774), cascade decision theory
   (arXiv:2605.06350), and the 2026 routing surveys converge on a 3-layer
   pattern: cheap rules → embedding/kNN middle layer → cascade tail. aictl
-  has layers 1 and 3; the embedding middle layer is backlog item C-1.
+  now has all three layers: rules (`score_complexity`), embedding/kNN
+  (`route_tier_gated`, item C-1, ✅ Pass 187), cascade (`run_cascade`).
   For item A-2 (pluggable real embeddings), the 2026 local consensus picks
   are now concrete: nomic-embed-text (137M), Qwen3-Embedding-0.6B, bge-small
   — all Ollama-runnable; rerank with BGE-reranker-v2/Qwen3-Reranker.
-- **Proposal:** unchanged from C-1/A-2, now with named models and validated
-  architecture; kNN router should build on the embedding provider hook.
+- **Proposal:** ~~unchanged from C-1/A-2, now with named models and validated
+  architecture; kNN router should build on the embedding provider hook.~~
+  Done — the kNN router (C-1) builds directly on the Pass 186 embedding
+  capability-detection hook (A-2's remaining half). A reranker (Qwen3-
+  Reranker/BGE-reranker-v2) for `rag search` result re-ordering remains a
+  separate, still-open nice-to-have, not part of the routing layer.
 
 ## Sources (Part 3)
 

@@ -107,6 +107,22 @@ class Config:
     # construction, only overriding the module's own built-in default when
     # a user has actually configured one.
     cache_similarity_floor: float = 0.92
+    # Embedding-kNN request router (IMPROVEMENTS.md item C-1): False by
+    # default = a true no-op, byte-identical to the regex-only router that
+    # existed before this feature -- zero embed_text() calls, zero disk
+    # I/O. When enabled, kNN is consulted ONLY as a confidence-gated
+    # tie-breaker: the always-on regex scorer (score_complexity/
+    # classify_complexity) still runs first and is the sole verdict
+    # unless the score falls within route_knn_margin of a tier boundary
+    # AND real (non-fallback) embeddings are available AND neighbor
+    # agreement clears route_knn_min_agreement AND the kNN verdict is an
+    # adjacent tier (never a 2-tier jump). Any failure at any step
+    # silently abstains to the regex verdict -- see
+    # aictl/cmd/route.py's route_tier_gated().
+    route_knn_enabled: bool = False
+    route_knn_margin: int = 5           # +/- distance from the 30/60 boundary
+    route_knn_k: int = 5                # neighbors consulted
+    route_knn_min_agreement: float = 0.8  # fraction of neighbors that must agree
     quadlet_rootless: bool = True
     default_recipe: str = "local-chat"
     model_cache_dir: str = ""
@@ -161,6 +177,10 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.guard_model_check_model = data.get("guard_model_check_model",
                                              c.guard_model_check_model)
         c.cache_similarity_floor = data.get("cache_similarity_floor", c.cache_similarity_floor)
+        c.route_knn_enabled = data.get("route_knn_enabled", c.route_knn_enabled)
+        c.route_knn_margin = data.get("route_knn_margin", c.route_knn_margin)
+        c.route_knn_k = data.get("route_knn_k", c.route_knn_k)
+        c.route_knn_min_agreement = data.get("route_knn_min_agreement", c.route_knn_min_agreement)
         c.quadlet_rootless = data.get("quadlet_rootless", c.quadlet_rootless)
         c.default_recipe = data.get("default_recipe", c.default_recipe)
         c.model_cache_dir = data.get("model_cache_dir", c.model_cache_dir)
