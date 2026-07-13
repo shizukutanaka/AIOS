@@ -36,7 +36,7 @@ from typing import Any
 
 @dataclass
 class SpeculativeConfig:
-    method: str = "none"         # none | eagle3 | p-eagle | mtp | ngram | standalone
+    method: str = "none"         # none | eagle3 | p-eagle | mtp | medusa | ngram | standalone
     draft_model: str = ""        # HF path for EAGLE3/STANDALONE draft model
     num_speculative_tokens: int = 5
     # EAGLE3-specific
@@ -183,6 +183,8 @@ def estimate_speedup(config: SpeculativeConfig) -> dict[str, Any]:
         "eagle3": {"latency": 1.3, "throughput": 1.7, "note": "EAGLE3 draft head"},
         "p-eagle": {"latency": 1.5, "throughput": 2.1, "note": "P-EAGLE parallel drafting"},
         "mtp": {"latency": 1.2, "throughput": 1.4, "note": "Native MTP (DeepSeek/Qwen3)"},
+        "medusa": {"latency": 1.2, "throughput": 1.9,
+                   "note": "Medusa multi-head drafting — prefer EAGLE3 where a head exists"},
         "ngram": {"latency": 1.1, "throughput": 1.2, "note": "GPU N-gram matching, no extra model"},
         "none": {"latency": 1.0, "throughput": 1.0, "note": "Standard autoregressive"},
     }

@@ -7,34 +7,41 @@ import unittest
 class TestModelDbCount(unittest.TestCase):
     """MODELS list in recommend.py must stay in sync with documentation."""
 
+    # Count history: 26 -> 34 (Pass 32) -> 37 (Pass 184: GLM-5.2 ollama+vllm,
+    # Kimi K2.6). The point of this file is that the DB and the docs move
+    # TOGETHER -- update both, then this pin, in the same commit.
+    EXPECTED = 37
+
     def test_actual_model_count(self):
-        """recommend.MODELS must contain exactly 34 entries."""
+        """recommend.MODELS must contain exactly EXPECTED entries."""
         from aictl.runtime.recommend import MODELS
         self.assertEqual(
-            len(MODELS), 34,
-            f"Expected 34 models in MODELS list, got {len(MODELS)}",
+            len(MODELS), self.EXPECTED,
+            f"Expected {self.EXPECTED} models in MODELS list, got {len(MODELS)} — "
+            "update aictl/runtime/CLAUDE.md and this pin together.",
         )
 
-    def test_runtime_claude_md_not_26(self):
-        """aictl/runtime/CLAUDE.md must not say 26 models (stale count)."""
+    def test_runtime_claude_md_not_stale(self):
+        """aictl/runtime/CLAUDE.md must not carry a superseded count."""
         src = (
             pathlib.Path(__file__).parent.parent / "aictl" / "runtime" / "CLAUDE.md"
         ).read_text()
-        self.assertNotIn(
-            "26 models",
-            src,
-            'aictl/runtime/CLAUDE.md still says "26 models" — update to "34 models".',
-        )
+        for stale in ("26 models", "34 models"):
+            self.assertNotIn(
+                stale, src,
+                f'aictl/runtime/CLAUDE.md still says "{stale}" — update to '
+                f'"{self.EXPECTED} models".',
+            )
 
-    def test_runtime_claude_md_has_34(self):
-        """aictl/runtime/CLAUDE.md must say 34 models."""
+    def test_runtime_claude_md_matches_pin(self):
+        """aictl/runtime/CLAUDE.md must state the current count."""
         src = (
             pathlib.Path(__file__).parent.parent / "aictl" / "runtime" / "CLAUDE.md"
         ).read_text()
         self.assertIn(
-            "34 models",
+            f"{self.EXPECTED} models",
             src,
-            'aictl/runtime/CLAUDE.md must contain "34 models in DB".',
+            f'aictl/runtime/CLAUDE.md must contain "{self.EXPECTED} models in DB".',
         )
 
 

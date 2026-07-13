@@ -224,6 +224,8 @@ _METHOD_INFO: list[tuple[str, str, str, str]] = [
      "Extra latency win on supported models (e.g. GPT-OSS)."),
     ("mtp",        "SGLang",        "model-native MTP weights",
      "DeepSeek-V3/R1 and Qwen3 — no separate draft model."),
+    ("medusa",     "vLLM + TRT-LLM", "trained Medusa heads",
+     "Multi-head drafting; prefer EAGLE-3 where a head exists (better accept rate)."),
     ("ngram",      "vLLM + SGLang", "none (GPU n-gram matching)",
      "Any model, zero setup; modest gain on repetitive output."),
     ("standalone", "SGLang",        "any smaller same-family model",

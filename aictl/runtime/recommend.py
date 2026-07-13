@@ -94,6 +94,14 @@ MODELS: list[ModelRec] = [
     # GLM-5 (April 2026)
     ModelRec("glm5:9b", "ollama", 6500, 8192, "chat", "q4_K_M", 131072,
              "GLM-5 9B — Zhipu AI, strong multilingual"),
+    # GLM-5.2 (June 2026) — leading open-weights on the Artificial Analysis index
+    ModelRec("glm5.2:9b", "ollama", 6500, 8192, "chat", "q4_K_M", 131072,
+             "GLM-5.2 9B — refreshed GLM family, permissive license"),
+    ModelRec("zai-org/GLM-5.2", "vllm", 64000, 81920, "chat", "fp8", 131072,
+             "GLM-5.2 flagship FP8 — top open-weights on AA index (June 2026)"),
+    # Kimi K2.6 (April 2026) — long-horizon agentic execution, Ollama-integrated
+    ModelRec("kimi-k2.6", "ollama", 22000, 32768, "chat", "q4_K_M", 262144,
+             "Kimi K2.6 (1T MoE, 32B active) — long-horizon agentic tasks"),
 
     # ── Reasoning models (dedicated use_case for CoT workloads) ──────
     ModelRec("qwen3:7b-thinking", "ollama", 5500, 8192, "reasoning", "q4_K_M", 32768,

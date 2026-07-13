@@ -438,26 +438,34 @@ discipline as Parts 1–2: no assumed gaps).
 - **SOTA / threat:** "From Shield to Target" (arXiv:2606.14517, June 2026)
   characterizes LLM-based guardrails as resource-amplification DoS targets.
 
-## Q. vLLM v0.19 features the advisors don't mention yet
+## Q. vLLM v0.19 features the advisors don't mention yet — ✅ fit hint done (Pass 184)
 
-- **Current:** aictl pins `vllm/vllm-openai:v0.19.0` (constants.py:65). That
-  release shipped CPU KV-cache offloading (serve models bigger than VRAM by
-  spilling KV to system RAM), FlexKV, and zero-bubble async-scheduled
-  speculative decoding — none surfaced by `aictl fit`/`optimize` advisories.
-- **Proposal:** when `fit` reports a model does NOT fit VRAM, mention CPU
-  KV-cache offloading as a remedy alongside the existing quantization
-  suggestions; `optimize` gains the corresponding flag emission.
+> **Status:** `aictl fit`'s doesn't-fit path now appends a note pointing at
+> vLLM v0.19+ CPU KV-cache offloading (spill KV to system RAM) as a remedy
+> alongside the existing quantization/alternative-model suggestions — scoped
+> to the "weights fit but context doesn't" case, honestly noting the latency
+> cost. `optimize` flag emission for offloading remains open (needs the
+> exact flag surface to settle across vLLM point releases before we emit
+> ready-to-paste flags).
 
-## R. Model catalog drift (June–July 2026 releases)
+- **Current (historical):** aictl pins `vllm/vllm-openai:v0.19.0`
+  (constants.py:65). That release shipped CPU KV-cache offloading (serve
+  models bigger than VRAM by spilling KV to system RAM), FlexKV, and
+  zero-bubble async-scheduled speculative decoding — none surfaced by
+  `aictl fit`/`optimize` advisories.
 
-- **Current:** `runtime/recommend.py` MODELS has Gemma 4 and GLM-5 but not
-  **GLM-5.2** (June 2026, now the leading open-weights model on the
-  Artificial Analysis index) or **Kimi K2.6** (April 2026, agentic
-  long-horizon). `runtime/dynamo.py` + `cmd/info.py` said "Dynamo v0.8"
-  though **Dynamo 1.0 went GA at GTC March 2026** (fixed in this pass).
-- **Proposal:** add GLM-5.2 / Kimi K2.6 rows (ollama + vllm variants where
-  applicable); Medusa row in `runtime/speculative.py` (closes item L's
-  remaining gap).
+## R. Model catalog drift (June–July 2026 releases) — ✅ implemented (Pass 184)
+
+> **Status:** GLM-5.2 added as both `glm5.2:9b` (ollama, q4_K_M) and
+> `zai-org/GLM-5.2` (vllm, fp8 flagship); Kimi K2.6 added as `kimi-k2.6`
+> (ollama, 1T MoE / 32B active — VRAM sized like the existing DeepSeek-V4
+> 32B-active precedent). MODELS 34 → 37; the count-sync test
+> (test_category_audit_fixes_32.py, now a single EXPECTED pin) and
+> runtime/CLAUDE.md move together with it. Medusa is now a modeled method
+> in `runtime/speculative.py` + `cmd/spec.py`'s matrix (vLLM + TRT-LLM,
+> trained heads required, note steers to EAGLE-3 where a head exists;
+> auto_select_method deliberately never picks it) — closes item L's last
+> gap. Dynamo v0.8→1.0 GA text was fixed in Pass 181.
 
 ## S. Layered routing + local embeddings are now settled practice
 

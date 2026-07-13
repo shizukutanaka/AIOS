@@ -132,6 +132,15 @@ def run(args: argparse.Namespace) -> int:
             f"{args.model} (FP16) needs {target.vram_required_mb}MB "
             f"but {gpu_name} has only {vram_mb}MB."
         )
+        # vLLM v0.19+ can spill KV cache to system RAM, letting long-context
+        # workloads run on a GPU whose VRAM only barely holds the weights --
+        # a remedy alongside (not instead of) quantization when the weights
+        # themselves are the problem (IMPROVEMENTS.md item Q).
+        notes.append(
+            "If the weights fit but context doesn't: vLLM v0.19+ CPU KV-cache "
+            "offloading spills KV to system RAM "
+            "(--kv-cache-offloading, needs ample RAM; adds latency)."
+        )
 
     if getattr(args, "json", False):
         print_json(asdict(FitResult(
