@@ -108,6 +108,13 @@ def register(sub: Any) -> None:
     carbon.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     carbon.set_defaults(func=run_carbon)
 
+    fairshare = sp.add_parser(
+        "fairshare",
+        help="Fair-share advisory: Jain's fairness index over per-entity token usage.",
+    )
+    fairshare.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    fairshare.set_defaults(func=run_fairshare)
+
     p.set_defaults(func=run_summary)
 
 
@@ -324,6 +331,45 @@ def run_carbon(args: argparse.Namespace) -> int:
     print(f"  Region intensities (gCO₂e/kWh): " +
           "  ".join(f"{k}={v}" for k, v in CARBON_INTENSITY_BY_REGION.items()))
     print("  Source: IEA 2024, arXiv:2511.00807 (FREESH)\n")
+    return 0
+
+
+def run_fairshare(args: argparse.Namespace) -> int:
+    """Fair-share advisory: Jain's fairness index over per-entity token usage.
+
+    Advisory only -- reads existing metering.py data, makes no scheduling or
+    admission decisions. See core/fairness.py for the metric and its
+    rationale (IMPROVEMENTS.md item M).
+    """
+    from dataclasses import asdict
+    from aictl.core.metering import TokenMeter
+    from aictl.core.fairness import compute_fairness
+
+    report = compute_fairness(TokenMeter().list_usage())
+    use_json = getattr(args, "json", False)
+
+    if use_json:
+        print_json(asdict(report))
+        return 0
+
+    if report.entity_count == 0:
+        warn("No metered entities yet — run some requests through aictl and retry.")
+        return 0
+
+    print()
+    print("  Fair-Share Advisor")
+    print()
+    print(f"  Jain's fairness index: {report.jains_index:.3f}  "
+          f"(1.0 = perfectly equal, 1/{report.entity_count} = maximally unfair)")
+    print(f"  Entities: {report.entity_count}   Total tokens: {report.total_tokens:,}")
+    print()
+    for e in report.entities:
+        tag = {"starved": "▼ starved", "over_share": "▲ over-share", "fair": "  fair"}[e["classification"]]
+        print(f"    {tag:<14} {e['entity_id']:<20} {e['share']*100:>5.1f}%  "
+              f"({e['total_tokens']:,} tokens, {e['entity_type']})")
+    print()
+    print(f"  Note: {report.locality_note}")
+    print()
     return 0
 
 

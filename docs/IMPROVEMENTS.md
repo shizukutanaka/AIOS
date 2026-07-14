@@ -373,13 +373,33 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
   (multi-head) and **DeepSeek-V3 multi-token-prediction (MTP)** are mainstream; SpecForge
   (2603.18567) trains drafters.
 
-## M. Fairness & carbon/energy-aware scheduling — carbon advisor ✅ implemented (v1.6); fair-share TBD
+## M. Fairness & carbon/energy-aware scheduling — carbon advisor ✅ (v1.6); fair-share advisory ✅ (Pass 190)
 
 > **Carbon/energy advisor status:** shipped as `aictl tco carbon` and `aictl tco --carbon-intensity`.
 > Shows kWh + CO₂e (regional IEA 2024 grid intensities), GPU power-cap flags (`nvidia-smi -pl`),
 > projected savings, and FREESH-style scheduling projections (28.6% energy / 45.5% emissions).
-> The `aictl_tco` MCP tool now also accepts `region` / `carbon_intensity`. The VTC/DLPM
-> fair-share scheduling component remains a future item.
+> The `aictl_tco` MCP tool now also accepts `region` / `carbon_intensity`.
+
+> **Fair-share advisory status (Pass 190):** research (a dedicated Workflow) found VTC's
+> (arXiv:2401.00588) exact weighted virtual-counter formula could not be independently verified
+> (the paper PDF itself was unreachable to the fetcher) — rather than ship a guessed formula,
+> `aictl tco fairshare` reports **Jain's Fairness Index** over each metered entity's share of
+> `core/metering.py`'s existing cumulative `total_tokens` (the well-grounded, verifiable
+> alternative the research surfaced; needs no new counters). `core/fairness.py`'s
+> `compute_fairness()` is a pure function over `TokenMeter.list_usage()` — advisory only, no
+> code path in `governor.py`/`broker.py`/the request admission path touches it, matching the
+> "advisory-first" scoping explicitly called for below. Each entity is classified `starved` /
+> `fair` / `over_share` against `1/n` expected share (with the honest, tested property that
+> `over_share` is mathematically unreachable at exactly 2 entities — `share > 2/n` requires
+> `share > 1.0` when `n=2`). DLPM's locality-blending (see proposal 1 below) was explicitly
+> **not** attempted this pass: research confirmed `runtime/prefix_route.py`'s
+> `PrefixRouteTracker` is endpoint-keyed only with no per-tenant/entity dimension anywhere in
+> it, so blending it in would mean fabricating data that doesn't exist — the report instead
+> carries an honest `locality_note` documenting this as a named future extension. A live VTC/
+> DLPM scheduler wired into the governor/router's actual admission path (rather than a report)
+> remains open — a genuinely bigger feature, since `governor.py` was confirmed to have no
+> per-tenant concept anywhere today (purely SLO-reactive on engines, not entities). 16 new tests
+> (`tests/test_new_features_190.py`).
 
 ## M original. Fairness & carbon/energy-aware scheduling — counters exist, policy doesn't
 
@@ -393,9 +413,11 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
   45.5% emissions** via Least-Laxity-First + dynamic GPU-frequency scaling.
 - **Proposal (zero-dep, advisory-first):** (1) a **VTC/DLPM-style fair-share counter** in the
   governor/router that blends the token usage aictl already meters with prefix-locality from
-  `prefix_route.py`; (2) a **carbon/energy advisor in `cmd/tco.py`** — accept a carbon-intensity
-  input, recommend **GPU power-cap / frequency-scaling** settings and report kWh + CO₂e
-  alongside dollars, turning TCO into TCO+carbon.
+  `prefix_route.py` — **advisory report half ✅ done (Pass 190, see above)**; a live scheduler
+  wired into the actual admission path remains open. (2) a **carbon/energy advisor in
+  `cmd/tco.py`** — accept a carbon-intensity input, recommend **GPU power-cap /
+  frequency-scaling** settings and report kWh + CO₂e alongside dollars, turning TCO into
+  TCO+carbon. ✅ **done** (`aictl tco carbon`, see above).
 
 ## N. MCP server & agent interoperability — observability ✅ + streaming ✅ (Pass 188); session persistence open
 
