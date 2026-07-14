@@ -123,6 +123,18 @@ class Config:
     route_knn_margin: int = 5           # +/- distance from the 30/60 boundary
     route_knn_k: int = 5                # neighbors consulted
     route_knn_min_agreement: float = 0.8  # fraction of neighbors that must agree
+    # Pluggable reranker for RAG search results (IMPROVEMENTS.md item A-3):
+    # empty endpoint = disabled (zero-dep default, no network call ever
+    # made). Targets a TEI-compatible (HuggingFace Text Embeddings
+    # Inference) /rerank endpoint -- the only self-hosted reranker contract
+    # independently verified against its own OpenAPI spec (vLLM's /rerank
+    # claims Cohere-compatibility but its exact field names could not be
+    # confirmed against vLLM's own docs). Set both to point `rag search
+    # --rerank`/`rag ask --rerank` at a local cross-encoder, e.g. `aictl
+    # config set rerank_endpoint http://localhost:8080` with `aictl config
+    # set rerank_model bge-reranker-v2-m3`.
+    rerank_endpoint: str = ""
+    rerank_model: str = ""
     quadlet_rootless: bool = True
     default_recipe: str = "local-chat"
     model_cache_dir: str = ""
@@ -181,6 +193,8 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.route_knn_margin = data.get("route_knn_margin", c.route_knn_margin)
         c.route_knn_k = data.get("route_knn_k", c.route_knn_k)
         c.route_knn_min_agreement = data.get("route_knn_min_agreement", c.route_knn_min_agreement)
+        c.rerank_endpoint = data.get("rerank_endpoint", c.rerank_endpoint)
+        c.rerank_model = data.get("rerank_model", c.rerank_model)
         c.quadlet_rootless = data.get("quadlet_rootless", c.quadlet_rootless)
         c.default_recipe = data.get("default_recipe", c.default_recipe)
         c.model_cache_dir = data.get("model_cache_dir", c.model_cache_dir)

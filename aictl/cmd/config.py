@@ -249,6 +249,15 @@ def _validate_config(config: Any) -> list[str]:
     if not (0.5 < min_agreement <= 1.0):
         problems.append(f"route_knn_min_agreement must be in (0.5, 1.0], got {min_agreement!r}")
 
+    # rerank_endpoint, if set, must be http/https -- same file:// concern as
+    # guard_model_check_endpoint above.
+    rerank_endpoint = d.get("rerank_endpoint", "")
+    if rerank_endpoint:
+        from urllib.parse import urlparse
+        if urlparse(rerank_endpoint).scheme not in ("http", "https"):
+            problems.append("rerank_endpoint must be http:// or "
+                            f"https://, got {rerank_endpoint!r}")
+
     # log_level must be valid
     valid_levels = {"debug", "info", "warning", "error", "critical"}
     if d.get("log_level", "info").lower() not in valid_levels:
@@ -450,6 +459,8 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         route_knn_margin=d.get("route_knn_margin", 5),
         route_knn_k=d.get("route_knn_k", 5),
         route_knn_min_agreement=d.get("route_knn_min_agreement", 0.8),
+        rerank_endpoint=d.get("rerank_endpoint", ""),
+        rerank_model=d.get("rerank_model", ""),
         quadlet_rootless=d.get("quadlet_rootless", True),
         default_recipe=d.get("default_recipe", "local-chat"),
         model_cache_dir=d.get("model_cache_dir", ""),

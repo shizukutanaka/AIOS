@@ -19,7 +19,7 @@ The gaps below are where it trails current peers or recent research — not gree
 
 ---
 
-## A. RAG quality — the embedding is the weak link  ⭐ highest leverage — proposal 2 ✅ done (Pass 186)
+## A. RAG quality — the embedding is the weak link  ⭐ highest leverage — proposals 2+3 ✅ done (Pass 186, 189)
 
 - **Current:** `core/rag.py:305` `embed_text()` calls `aictl.ai.embed()`, but when no engine
   is reachable it falls back to `_fallback_embedding` (`rag.py:321`) — a **64-dim SHA-256
@@ -58,6 +58,23 @@ The gaps below are where it trails current peers or recent research — not gree
      query) — matches `_AmbientContext`'s own detect-once convention. Proposal 2 is now
      fully closed.
   3. **Cheap reranker:** optional cross-encoder rerank via the local engine for top-k.
+     ✅ **done (Pass 189)** — research (a dedicated Workflow pass) found Ollama has no
+     native rerank endpoint at all, and while vLLM claims Cohere-compatibility for its own
+     `/rerank`, the exact field names couldn't be independently confirmed (vLLM's own docs
+     403'd automated fetches three times). TEI (HuggingFace Text Embeddings Inference)'s
+     `/rerank` contract was the only one verified against its own OpenAPI spec, so
+     `core/rerank.py`'s `rerank(endpoint, model, query, candidates)` targets that shape
+     exclusively rather than shipping a guessed vLLM/Cohere contract. Off by default
+     (`Config.rerank_endpoint == ""` — zero network calls, RRF order unchanged);
+     `core/rag.py`'s `search()`/`answer()` gained an optional `config` parameter that,
+     when `rerank_endpoint` is set, reranks a widened RRF-fused candidate pool
+     (`max(k*4, RERANK_POOL_MIN=20)`, not just the naive top-k — reranking only the
+     already-sliced top-k would defeat the purpose) before the final `[:k]` slice. Any
+     failure (unreachable endpoint, non-2xx, malformed JSON, out-of-range index)
+     silently falls back to the pre-existing RRF order. Wired into `rag search`/`rag ask`
+     via a `--rerank` flag; `--rerank` without a configured `rerank_endpoint` warns once
+     and proceeds unaffected rather than silently no-op'ing. 26 new tests
+     (`tests/test_new_features_189.py`).
 
 ## B. Semantic cache — correctness & cache-aware reuse — ✅ proposal (a)+(b) implemented
 
@@ -536,9 +553,12 @@ discipline as Parts 1–2: no assumed gaps).
 - **Proposal:** ~~unchanged from C-1/A-2, now with named models and validated
   architecture; kNN router should build on the embedding provider hook.~~
   Done — the kNN router (C-1) builds directly on the Pass 186 embedding
-  capability-detection hook (A-2's remaining half). A reranker (Qwen3-
+  capability-detection hook (A-2's remaining half). ~~A reranker (Qwen3-
   Reranker/BGE-reranker-v2) for `rag search` result re-ordering remains a
-  separate, still-open nice-to-have, not part of the routing layer.
+  separate, still-open nice-to-have, not part of the routing layer.~~ Also
+  done (Pass 189, item A proposal 3) — `core/rerank.py`, off by default,
+  targets a TEI-compatible `/rerank` endpoint (see item A above for why TEI
+  over vLLM/Cohere's contract).
 
 ## Sources (Part 3)
 
