@@ -380,21 +380,40 @@ A deeper sweep surfaced four more areas, each grounded in an existing module.
   input, recommend **GPU power-cap / frequency-scaling** settings and report kWh + CO₂e
   alongside dollars, turning TCO into TCO+carbon.
 
-## N. MCP server & agent interoperability — observability/streaming gap
+## N. MCP server & agent interoperability — observability ✅ + streaming ✅ (Pass 188); session persistence open
 
 - **Current:** a 19-tool JSON-RPC MCP server (`aictl/mcp_server`). Proposal (1) below is
   already done — this doc previously claimed otherwise; verified false by reading the code:
   `mcp_server.py`'s `handle_tool()` wraps every tool dispatch in a `ToolSpan`
   (`metrics/genai_spans.py`), ring-buffered and fire-and-forget OTLP-exported when
   `AIOS_OTEL_ENDPOINT` is set, with observability failures never propagating to the caller.
-  Proposals (2) streaming/progress notifications and (3) session persistence remain genuinely
-  open.
+  Proposal (2) is now done (Pass 188); (3) session persistence remains genuinely open.
 - **Field:** the 2026 agent frameworks (Claude Agent SDK, LangGraph, OpenAI Agents SDK, AWS
   **Strands**) all converge on **MCP + OTel + streaming + persistence**; Strands in particular
   plugs straight into any OTel backend. Observability is now the differentiator, not tool count.
 - **Proposal:** ~~(1) emit an OTel span per MCP tool call~~ ✅ done. (2) add
-  **streaming/progress notifications** for long tools (deploy, bench); (3) optional
-  **session persistence** for multi-step agent flows.
+  **streaming/progress notifications** for long tools (deploy, bench); ✅ **done (Pass 188)** —
+  research (canonical MCP GitHub source: `schema.ts` + `progress.mdx` across 2024-11-05 through
+  the 2026-07-28 RC draft, since the docs site 403s automated fetches) confirmed
+  `params._meta.progressToken` is stable across every spec version, `notifications/progress`
+  gained an optional `message` field in 2025-03-26+, and no `capabilities.progress` entry exists
+  in any `ClientCapabilities`/`ServerCapabilities` schema — support is implicit/opt-in per
+  request, not capability-negotiated. Of the 19 tools, only `aictl_eval` has genuine multi-step
+  latency (a real `aictl.ai.ask()` call per case via `_run_case`); it's the sole tool
+  instrumented this pass — over-instrumenting a sub-millisecond tool would just be noise.
+  `handle_request`'s `tools/call` branch extracts `progress_token` from
+  `params._meta.progressToken`; `handle_tool`/`_dispatch_tool` thread it through as an optional
+  `on_progress`/`progress_token` parameter (default `None`, so every pre-existing call site and
+  every other tool is unaffected); `_make_progress_emitter()` builds a callback that writes a
+  spec-shaped `notifications/progress` line to stdout and flushes it (the stdio loop is
+  single-threaded/blocking per request, so no other writer can race it), wrapped in the same
+  "observability must never break the serving path" `try/except Exception: pass` convention
+  `handle_tool`'s `ToolSpan` export already uses — doubled up with a second guard around the
+  call site inside `_tool_eval` itself, so even a misbehaving `on_progress` callback (not just a
+  broken stdout pipe) can't abort an eval run. `initialize`/`server/discover` both gained an
+  (optional, presence-only) `"progress": {}` capability entry. 14 new tests
+  (`tests/test_new_features_188.py`). (3) optional **session persistence** for multi-step agent
+  flows remains open — a genuinely bigger feature (this server is intentionally stateless today).
 
 ## Updated priority (Parts 1 + 2)
 

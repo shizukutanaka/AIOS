@@ -290,6 +290,34 @@ def get_tool_spans() -> list:
     return list(_TOOL_SPANS)
 
 
+def _make_progress_emitter(progress_token: Any):
+    """Build an on_progress(progress, total, message) callback that writes a
+    spec-shaped `notifications/progress` JSON-RPC line to stdout and flushes it.
+
+    Progress is opt-in per MCP request (params._meta.progressToken) -- this is
+    only ever constructed when a client actually sent a token. A write failure
+    (closed pipe, non-serializable message) must never abort the tool call in
+    progress, matching handle_tool's existing "observability must never break
+    the serving path" convention for ToolSpan export.
+    """
+    def emit(progress: int, total: int, message: str) -> None:
+        try:
+            sys.stdout.write(json.dumps({
+                "jsonrpc": JSONRPC_VERSION,
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": progress_token,
+                    "progress": progress,
+                    "total": total,
+                    "message": message,
+                },
+            }) + "\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+    return emit
+
+
 def _first_text(result: dict) -> str:
     """Extract the first text content fragment from an MCP result dict."""
     for item in result.get("content", []):
@@ -336,15 +364,23 @@ def _float_arg(args: dict[str, Any], key: str, default: Any) -> Any:
         raise ValueError(f"{key} must be a number, got {val!r}")
 
 
-def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def handle_tool(
+    name: str, arguments: dict[str, Any], progress_token: Any = None,
+) -> dict[str, Any]:
     """Execute a tool, record an OTel ToolSpan, and return the MCP result.
 
     The span is always appended to the in-process ring buffer.  If the env var
     AIOS_OTEL_ENDPOINT is set the span is also fire-and-forget exported via
     OTLP/HTTP.  Observability failures never propagate to the caller.
+
+    progress_token: the client's params._meta.progressToken, if it sent one.
+    None (the default) means the client didn't opt in to progress notifications
+    -- no on_progress callback is built and no tool emits anything extra, so
+    behavior is byte-identical to before this feature existed.
     """
+    on_progress = _make_progress_emitter(progress_token) if progress_token is not None else None
     start_ns = time.monotonic_ns()
-    result = _dispatch_tool(name, arguments)
+    result = _dispatch_tool(name, arguments, on_progress=on_progress)
     end_ns = time.monotonic_ns()
 
     try:
@@ -367,8 +403,16 @@ def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Tool Handlers ──
-def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch to a specific tool implementation and return MCP result."""
+def _dispatch_tool(
+    name: str, arguments: dict[str, Any], on_progress: Any = None,
+) -> dict[str, Any]:
+    """Dispatch to a specific tool implementation and return MCP result.
+
+    on_progress, if given, is a Callable[[int, int, str], None] for a tool
+    handler to report incremental progress. Only handlers with genuinely
+    slow, multi-step work (currently: aictl_eval's per-case LLM calls) accept
+    it; every other branch ignores the parameter entirely.
+    """
     try:
         if name == "aictl_health":
             return _tool_health()
@@ -393,7 +437,7 @@ def _dispatch_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         elif name == "aictl_fit":
             return _tool_fit(arguments)
         elif name == "aictl_eval":
-            return _tool_eval(arguments)
+            return _tool_eval(arguments, on_progress=on_progress)
         elif name == "aictl_spec_recommend":
             return _tool_spec_recommend(arguments)
         elif name == "aictl_quant":
@@ -593,8 +637,14 @@ def _tool_fabric() -> dict[str, Any]:
 # ── v1.6.0 Tool Handlers ──
 
 
-def _tool_eval(args: dict[str, Any]) -> dict[str, Any]:
-    """Run eval cases inline."""
+def _tool_eval(args: dict[str, Any], on_progress: Any = None) -> dict[str, Any]:
+    """Run eval cases inline.
+
+    Each case is a real inference call (aictl.cmd.eval._run_case -> aictl.ai.ask),
+    the one genuinely slow, multi-step tool in this server -- if the caller
+    opted into progress notifications (on_progress is not None), one
+    notification is emitted per completed case with total=len(cases).
+    """
     cases = args.get("cases", [])
     model = args.get("model", "auto")
     if not cases:
@@ -602,7 +652,15 @@ def _tool_eval(args: dict[str, Any]) -> dict[str, Any]:
     from aictl.sdk import _AmbientContext
     _AmbientContext.reset_for_testing()
     from aictl.cmd.eval import _run_case
-    results = [_run_case(c, model) for c in cases]
+    results = []
+    for i, c in enumerate(cases):
+        results.append(_run_case(c, model))
+        if on_progress is not None:
+            try:
+                case_id = c.get("id", f"case-{i}") if isinstance(c, dict) else f"case-{i}"
+                on_progress(i + 1, len(cases), f"Ran case {i + 1}/{len(cases)}: {case_id}")
+            except Exception:
+                pass  # progress reporting must never break the eval run itself
     passed = sum(1 for r in results if r["passed"])
     lines = [f"Eval: {passed}/{len(results)} passed", ""]
     for r in results:
@@ -818,7 +876,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
                      else MCP_PROTOCOL_VERSION)
         return _response(req_id, {
             "protocolVersion": negotiated,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {"tools": {"listChanged": False}, "progress": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })
 
@@ -831,7 +889,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
         return _response(req_id, {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "supportedVersions": list(SUPPORTED_MCP_VERSIONS),
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {"tools": {"listChanged": False}, "progress": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })
 
@@ -851,7 +909,11 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             # Missing tool name is a protocol error, not a tool error.
             return _error(req_id, -32602, "Invalid params: missing tool name")
         arguments = params.get("arguments", {})
-        result = handle_tool(name, arguments)
+        # Progress notifications are opt-in per MCP spec (params._meta.progressToken);
+        # a client that never sends one gets no on_progress callback anywhere downstream.
+        meta = params.get("_meta", {})
+        progress_token = meta.get("progressToken") if isinstance(meta, dict) else None
+        result = handle_tool(name, arguments, progress_token=progress_token)
         return _response(req_id, result)
 
     elif method == "ping":
