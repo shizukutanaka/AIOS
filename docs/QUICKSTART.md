@@ -7,7 +7,7 @@ Five minutes from zero to a working local AI.
 ```bash
 git clone https://github.com/shizukutanaka/aios.git
 cd aios
-python3 -m aictl --version   # aictl 1.6.0
+python3 -m aictl --version   # aictl 1.7.0
 ```
 
 No pip install required for basic use. Zero external Python dependencies.

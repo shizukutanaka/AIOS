@@ -2,7 +2,7 @@
 
 ## What
 `aictl` — CLI for local AI inference infrastructure on immutable Linux.
-80 Python + 29 Go commands, 3433+ tests, zero external Python deps. v1.6.0.
+80 Python + 29 Go commands, 3433+ tests, zero external Python deps. v1.7.0.
 
 ## Map
 ```

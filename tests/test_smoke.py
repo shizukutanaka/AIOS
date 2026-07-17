@@ -21,7 +21,7 @@ class TestSmokeAllCommands(unittest.TestCase):
     """Verify every registered command parses and has a func."""
 
     def test_version(self):
-        self.assertEqual(VERSION, "1.6.0")
+        self.assertEqual(VERSION, "1.7.0")
 
     def test_parser_builds(self):
         p = build_parser()

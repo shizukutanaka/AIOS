@@ -3,7 +3,7 @@
 > Normative specification of `aictl` behavior and contracts, written to be
 > *checkable*: the global invariants below are enforced by
 > `tests/test_spec_conformance.py`. Where the implementation diverged from this
-> spec, the gap is recorded in §7 with its resolution. Version 1.6.0.
+> spec, the gap is recorded in §7 with its resolution. Version 1.7.0.
 
 ## 1. Purpose & scope
 

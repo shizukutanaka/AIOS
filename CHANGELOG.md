@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased — Quality & correctness fixes
+## v1.7.0 — 2026-07-16 — Retrieval quality, layered routing, fairness & guardrail hardening
+
+Highlights since v1.6.0 (all additive, off-by-default/opt-in — zero breaking changes,
+zero new external dependencies, still stdlib-only):
+
+- **Retrieval:** hybrid dense+BM25 RAG retrieval with Reciprocal Rank Fusion; pluggable
+  cross-encoder **reranker** (`rag search --rerank`, TEI-compatible `/rerank`, off by
+  default); embedding-provider **capability detection** so the hash fallback is truly
+  last-resort, with degraded-mode honesty flags in `rag status`/`cache status`.
+- **Routing:** the embedding-**kNN** confidence-gated tie-breaker (`route --knn`) completes
+  the rules → embedding → cascade layered-routing stack.
+- **Guardrails:** the content-policy + PII-redaction gate now runs on real proxy traffic
+  (opt-in, no-op by default); an optional Llama-Guard-style **model check** with an LRU
+  verdict cache (DoS hardening, arXiv:2606.14517).
+- **MCP:** 2026-07-28 spec compatibility (version negotiation, `server/discover`,
+  `ttlMs`/`cacheScope`) plus **progress notifications** for long-running tool calls.
+- **Fairness/cost:** `tco fairshare` advisory (Jain's fairness index over per-tenant token
+  usage); carbon/energy advisor (`tco carbon`).
+- **Catalog/advisors:** GLM-5.2 & Kimi K2.6 models, Medusa speculative-decoding method,
+  vLLM v0.19 KV-offload hints, NVFP4 quant sweet-spot notes, Apple-Silicon unified-memory
+  fit math, 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio).
+
+3433+ tests (all green), 80 Python + 29 Go commands, 19 MCP tools.
 
 ### Added
 - **KV-budget hard filter in the router** (`aictl/runtime/router.py`): `SLOConfig.kv_cache_max`

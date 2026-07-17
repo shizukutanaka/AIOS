@@ -53,7 +53,7 @@ lint:  ## Compile-check all Python modules
 install:  ## Install as editable package
 	pip install -e . --break-system-packages 2>/dev/null || pip install -e .
 
-# ── v1.6.0 feature checks ───────────────────────
+# ── v1.7.0 feature checks ───────────────────────
 
 rag-check:  ## Verify RAG pipeline works end-to-end
 	@echo "Testing RAG pipeline..."

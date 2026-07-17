@@ -3,7 +3,7 @@
 > Normative specification of `aictl`'s **input-validation and defensive-coding
 > contracts**. Companion to `docs/SPECIFICATION.md` (which defines the global
 > invariants G1–G5). The **V-invariants** below are enforced by
-> `tests/test_input_validation_spec.py`. Version 1.6.0.
+> `tests/test_input_validation_spec.py`. Version 1.7.0.
 
 ## 1. Purpose & scope (目的・範囲)
 

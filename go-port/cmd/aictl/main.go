@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	version  = "1.6.0"
+	version  = "1.7.0"
 	jsonFlag bool
 	stateDir string
 )
@@ -1084,7 +1084,7 @@ func cmdInfo() *cobra.Command {
 			}
 			if jsonFlag {
 				return printJSON(map[string]interface{}{
-					"version":         "1.6.0",
+					"version":         "1.7.0",
 					"go_commands":     29,
 					"python_commands": 80,
 					"rest_endpoints":  30,
@@ -1093,7 +1093,7 @@ func cmdInfo() *cobra.Command {
 					"stack":           stack,
 				})
 			}
-			fmt.Println("✓ aictl v1.6.0 (Go port)")
+			fmt.Println("✓ aictl v1.7.0 (Go port)")
 			fmt.Println()
 			fmt.Println("  Commands  29 Go + 80 Python")
 			fmt.Println("  REST API  30 endpoints")

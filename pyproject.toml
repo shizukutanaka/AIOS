@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aictl"
-version = "1.6.0"
+version = "1.7.0"
 description = "AI Native Linux OS — local-first AI inference infrastructure CLI"
 keywords = ["ai", "llm", "ollama", "vllm", "inference", "local-ai", "rag", "mcp", "cli", "mlops"]
 authors = [{name = "shizukutanaka"}]

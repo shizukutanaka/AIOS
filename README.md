@@ -66,7 +66,7 @@ aictl deploy modelservice qwen3:32b           # → llm-d Helm values
 ```bash
 git clone https://github.com/shizukutanaka/aios.git
 cd aios
-python3 -m aictl --version   # aictl 1.6.0
+python3 -m aictl --version   # aictl 1.7.0
 ```
 
 ## Quick Start
@@ -156,6 +156,11 @@ aictl guard scan "text with email"     # PII検出
 aictl tco                              # 今月の真のAIコスト
 aictl quota create team-eng --tokens-per-month 10000000
 
+# v1.7.0 — 検索品質・ルーティング・公平性
+aictl rag search "query" --rerank      # クロスエンコーダで再ランキング (TEI互換)
+aictl route show "your question" --knn # 埋め込みkNNで境界付近を判定
+aictl tco fairshare                    # テナント間の公平性 (Jain指数)
+
 # K8s
 aictl cluster gateway <stack>          # Gateway API InferencePool
 aictl scale keda <stack>               # KEDA ScaledObject
@@ -171,8 +176,9 @@ CLI (66 Python + 29 Go)
 ├── Core      Metering + Security + Cost + API Keys + Audit
 ├── Trust     Cosign v3 + ORAS
 ├── Metrics   OTel GenAI SemConv + Prometheus
-├── MCP       19 tools (stdio JSON-RPC 2.0)
-└── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
+├── MCP       19 tools (stdio JSON-RPC 2.0, progress notifications)
+├── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
+└── v1.7.0    Reranker + kNN Route + Fair-Share + Guard Model-Check + Embeddings
 ```
 
 ## Technology Stack

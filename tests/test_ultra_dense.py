@@ -595,7 +595,7 @@ class TestFinalRatioBoost(unittest.TestCase):
         self.assertIn("protocolVersion", r["result"])
         self.assertIn("serverInfo", r["result"])
         self.assertEqual(r["result"]["serverInfo"]["name"], "aictl")
-        self.assertEqual(r["result"]["serverInfo"]["version"], "1.6.0")
+        self.assertEqual(r["result"]["serverInfo"]["version"], "1.7.0")
 
     def test_quant_all_keys_exist(self):
         from aictl.cmd.quant import QUANT_DATA
@@ -1021,7 +1021,7 @@ class TestExactly200(unittest.TestCase):
     def test_final_assert_push(self):
         from aictl.core.constants import AICTL_VERSION, OLLAMA_DEFAULT_PORT
         from aictl.mcp_server import TOOLS
-        self.assertEqual(AICTL_VERSION, "1.6.0")
+        self.assertEqual(AICTL_VERSION, "1.7.0")
         self.assertEqual(OLLAMA_DEFAULT_PORT, 11434)
         self.assertEqual(len(TOOLS), 19)
         self.assertGreater(len(AICTL_VERSION), 0)

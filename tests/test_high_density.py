@@ -556,7 +556,7 @@ class TestProjectFiles(unittest.TestCase):
             cfg = tomllib.load(f)
         proj = cfg.get("project", {})
         self.assertEqual(proj["name"], "aictl")
-        self.assertEqual(proj["version"], "1.6.0")
+        self.assertEqual(proj["version"], "1.7.0")
         self.assertIsInstance(proj.get("keywords", []), list)
         self.assertGreater(len(proj.get("keywords", [])), 3)
         self.assertIn(">=3.11", proj.get("requires-python", ""))

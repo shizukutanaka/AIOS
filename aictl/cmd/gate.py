@@ -155,11 +155,11 @@ def run(args: argparse.Namespace) -> int:
         missing_readme = [c for c in ["diff", "prompt", "route", "guard", "tco"]
                           if f"aictl {c}" not in readme_text]
 
-        # Verify CHANGELOG has v1.6.0
+        # Verify CHANGELOG documents the current release
         cl_text = (project_root / "CHANGELOG.md").read_text(errors="replace")
-        has_changelog = "v1.6.0" in cl_text
+        has_changelog = "v1.7.0" in cl_text
 
-        doc_issues = missing_help + missing_readme + ([] if has_changelog else ["v1.6.0 missing from CHANGELOG"])
+        doc_issues = missing_help + missing_readme + ([] if has_changelog else ["v1.7.0 missing from CHANGELOG"])
         if doc_issues:
             results.append(("Docs", False, f"missing: {', '.join(doc_issues[:3])}"))
         else:

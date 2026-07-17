@@ -86,7 +86,7 @@ PRICE_PER_MILLION_INPUT = 0.15   # USD
 PRICE_PER_MILLION_OUTPUT = 0.60  # USD
 
 # ── Versions ──────────────────────────────────────────
-AICTL_VERSION = "1.6.0"
+AICTL_VERSION = "1.7.0"
 
 # ── Test Ports (for E2E / gate / demo) ────────────────
 TEST_ENGINE_PORT = 19960
