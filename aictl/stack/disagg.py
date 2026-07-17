@@ -16,10 +16,8 @@ Usage:
 
 from __future__ import annotations
 
-import argparse
-
 from dataclasses import dataclass
-from aictl.core.constants import VLLM_IMAGE, DEFAULT_MAX_MODEL_LEN, DEFAULT_GPU_MEMORY_UTIL
+from aictl.core.constants import VLLM_IMAGE, DEFAULT_MAX_MODEL_LEN, DEFAULT_GPU_MEMORY_UTIL, VLLM_DEFAULT_PORT
 from typing import Any
 
 
@@ -39,7 +37,19 @@ class DisaggConfig:
     enable_chunked_prefill: bool = True
     image: str = VLLM_IMAGE
     namespace: str = "default"
-    port: int = 8000
+    port: int = VLLM_DEFAULT_PORT
+
+    def __post_init__(self) -> None:
+        if self.prefill_replicas < 1:
+            raise ValueError(f"prefill_replicas must be >= 1, got {self.prefill_replicas}")
+        if self.decode_replicas < 1:
+            raise ValueError(f"decode_replicas must be >= 1, got {self.decode_replicas}")
+        if self.prefill_replicas + self.decode_replicas < 2:
+            raise ValueError("total replicas (prefill + decode) must be >= 2")
+        if not (0 < self.gpu_memory_utilization <= 1.0):
+            raise ValueError(
+                f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}"
+            )
 
 
 def generate_disagg_manifests(config: DisaggConfig) -> list[dict[str, Any]]:
@@ -51,7 +61,7 @@ def generate_disagg_manifests(config: DisaggConfig) -> list[dict[str, Any]]:
       3. Gateway API InferencePool + InferenceModel
       4. llm-d ModelService CRD (if available)
     """
-    model_slug = config.model.split("/")[-1].lower().replace(".", "-")
+    model_slug = (config.model.rstrip("/").split("/")[-1] or "model").lower().replace(".", "-")
     resources: list[dict[str, Any]] = []
 
     # ── Prefill Deployment ──
@@ -161,7 +171,7 @@ def _kv_config(role: str, config: DisaggConfig) -> str:
     return json.dumps(cfg)
 
 
-def _deployment(name: Any, image: Any, args: argparse.Namespace, replicas: Any, gpu: Any, namespace: Any, port: Any, labels: Any) -> dict[str, Any]:
+def _deployment(name: Any, image: Any, args: list[str], replicas: Any, gpu: Any, namespace: Any, port: Any, labels: Any) -> dict[str, Any]:
     """Generate Kubernetes Deployment manifest."""
     return {
         "apiVersion": "apps/v1",

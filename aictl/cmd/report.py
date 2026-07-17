@@ -43,8 +43,15 @@ def run(args: argparse.Namespace) -> int:
 
     output = getattr(args, "output", "")
     if output:
-        Path(output).write_text(md)
-        ok(f"Report saved to {output}")
+        try:
+            out_path = Path(output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(md)
+            ok(f"Report saved to {output}")
+        except OSError as e:
+            from aictl.core.output import err as print_err
+            print_err(f"Cannot write report to {output}: {e}")
+            return 1
     else:
         print(md)
     return 0

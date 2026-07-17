@@ -49,6 +49,10 @@ def run_benchmark(
     timeout: int = 60,
 ) -> BenchResult:
     """Run a simple benchmark against an OpenAI-compatible endpoint."""
+    if num_requests < 1:
+        raise ValueError(f"number of requests must be >= 1, got {num_requests}")
+    if max_tokens < 1:
+        raise ValueError(f"max tokens must be >= 1, got {max_tokens}")
     result = BenchResult(endpoint=endpoint, model=model, requests=num_requests)
 
     # Detect API type
@@ -82,7 +86,7 @@ def run_benchmark(
     if ttfts:
         ttfts.sort()
         result.ttft_ms_avg = sum(ttfts) / len(ttfts)
-        result.ttft_ms_p95 = ttfts[int(len(ttfts) * 0.95)] if len(ttfts) > 1 else ttfts[0]
+        result.ttft_ms_p95 = ttfts[int((len(ttfts) - 1) * 0.95)] if len(ttfts) > 1 else ttfts[0]
         result.total_ms_avg = sum(totals) / len(totals)
 
     result.tokens_generated = total_tokens
@@ -159,7 +163,7 @@ def _bench_openai(endpoint: str, model: str, prompt: str, max_tokens: int,
         content = data["choices"][0].get("message", {}).get("content", "")
         tokens = len(content.split())  # Rough estimate
 
-    # TTFT approximation (non-streaming): total / 2
-    ttft = total * 0.3  # Rough estimate — first token usually ~30% of total
+    # TTFT for non-streaming: entire response latency = time to first usable token
+    ttft = total
 
     return ttft, total, tokens

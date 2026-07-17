@@ -2,11 +2,11 @@
 
 ## What
 `aictl` — CLI for local AI inference infrastructure on immutable Linux.
-65 Python + 29 Go commands, 1380+ tests, zero external Python deps. v1.6.0.
+80 Python + 29 Go commands, 3433+ tests, zero external Python deps. v1.7.0.
 
 ## Map
 ```
-aictl/cmd/        65 CLI commands (init doctor ps apply down recipe model ...)
+aictl/cmd/        80 CLI commands (init doctor ps apply down recipe model capacity trust scheduler ...)
 aictl/core/       state config events audit apikeys cost security tenant metering
                   snapshots logging hooks plugins output constants
 aictl/runtime/    broker adapters router autoscaler recommend mig fabric
@@ -14,12 +14,12 @@ aictl/runtime/    broker adapters router autoscaler recommend mig fabric
                   speculative fallback optimize health nodes
 aictl/stack/      manifest(10 recipes) orchestrator quadlet kserve gateway
                   disagg modelservice systemctl
-aictl/daemon/     aiosd(22 REST) governor proxy mock_engine
-aictl/trust/      verify cosign oras
+aictl/daemon/     aiosd(30 REST) governor proxy mock_engine
+aictl/trust/      verify baseline cosign oras
 aictl/metrics/    slo otel prometheus collector_config genai_spans
-aictl/mcp_server  MCP server (18 tools, JSON-RPC 2.0 stdio)
+aictl/mcp_server  MCP server (19 tools, JSON-RPC 2.0 stdio)
 go-port/          29 Go commands (Cobra)
-tests/            62 test files, 1380+ tests
+tests/            258 test files, 3433+ tests
 docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 .claude/          3 agents, 5 commands, 8 skills
 ```
@@ -30,7 +30,7 @@ docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 - vLLM v0.19 / SGLang v0.5 / Ollama v0.20
 - K3s v1.35 + KServe v0.17 + llm-d v0.5 (CNCF)
 - K8s Gateway API InferencePool v1
-- NVIDIA Dynamo v0.8 (KVBM + NIXL)
+- NVIDIA Dynamo 1.0 GA (KVBM + NIXL)
 - Cosign v3 · ORAS · OTel GenAI SemConv
 - 7 K8s exports: KServe, Gateway API, KEDA, HPA, Dynamo, P/D Disagg, ModelService
 
@@ -48,7 +48,7 @@ docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
 ## Workflows
 ```bash
 # Verify everything works
-aictl gate                         # Compile + import + version + 1380 tests + demo
+aictl gate                         # Compile + import + version + 3433 tests + demo
 
 # Add a new command
 1. Create aictl/cmd/<name>.py      # register(sub) + run(args)

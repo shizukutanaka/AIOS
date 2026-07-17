@@ -433,15 +433,16 @@ class TestMCPToolsComplete(unittest.TestCase):
         self.assertIn("Depreciation", text)
         self.assertIn("Total", text)
 
-    def test_tools_list_has_18_tools(self):
+    def test_tools_list_has_19_tools(self):
         from aictl.mcp_server import handle_request
         r = handle_request({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})
         tools = r["result"]["tools"]
-        self.assertEqual(len(tools), 18)
+        self.assertEqual(len(tools), 19)
         names = {t["name"] for t in tools}
         self.assertIn("aictl_fit", names)
         self.assertIn("aictl_guard_scan", names)
         self.assertIn("aictl_tco", names)
+        self.assertIn("aictl_guided", names)
 
     def test_all_tools_have_input_schema(self):
         from aictl.mcp_server import TOOLS

@@ -317,6 +317,85 @@ class TestSpecRecommend(unittest.TestCase):
         self.assertIn("vllm serve", flags)
 
 
+class TestSpecMethods(unittest.TestCase):
+    """The EAGLE-3 / MTP / NGRAM method advisor (bridges runtime/speculative)."""
+
+    def test_methods_eagle3_model(self):
+        from aictl.cmd.spec import run_methods
+        class FA:
+            model = "meta-llama/Llama-3.1-8B-Instruct"
+            all = False
+            json = False
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_methods(FA())
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("EAGLE3", out.upper())
+        self.assertIn("speculative-config", out)
+
+    def test_methods_specific_json(self):
+        from aictl.cmd.spec import run_methods
+        class FA:
+            model = "meta-llama/Llama-3.1-8B-Instruct"
+            all = False
+            json = True
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_methods(FA())
+        self.assertEqual(rc, 0)
+        data = json.loads(buf.getvalue())
+        self.assertEqual(data["method"], "eagle3")
+        self.assertGreater(data["estimated_throughput_speedup"], 1.0)
+        self.assertTrue(data["vllm_args"])
+
+    def test_methods_mtp_model(self):
+        from aictl.cmd.spec import run_methods
+        class FA:
+            model = "deepseek-ai/DeepSeek-V3"
+            all = False
+            json = True
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_methods(FA())
+        data = json.loads(buf.getvalue())
+        self.assertEqual(data["method"], "mtp")
+
+    def test_methods_matrix_all(self):
+        from aictl.cmd.spec import run_methods
+        class FA:
+            model = None
+            all = True
+            json = False
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = run_methods(FA())
+        self.assertEqual(rc, 0)
+        out = buf.getvalue().lower()
+        for method in ("eagle3", "mtp", "ngram", "p-eagle"):
+            self.assertIn(method, out)
+
+    def test_methods_matrix_json(self):
+        from aictl.cmd.spec import run_methods
+        class FA:
+            model = None
+            all = True
+            json = True
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            run_methods(FA())
+        data = json.loads(buf.getvalue())
+        self.assertTrue(any(r["method"] == "eagle3" for r in data))
+        for r in data:
+            self.assertGreaterEqual(r["throughput_speedup"], 1.0)
+
+    def test_methods_registered(self):
+        from aictl.__main__ import build_parser
+        p = build_parser()
+        ns = p.parse_args(["spec", "methods", "some-model"])
+        self.assertEqual(ns.spec_cmd, "methods")
+
+
 class TestCommandCount(unittest.TestCase):
     def test_eval_and_spec_registered(self):
         from aictl.__main__ import build_parser

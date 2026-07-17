@@ -234,9 +234,13 @@ def validate_quadlet(content: str) -> list[str]:
     if not has_name:
         issues.append("Missing ContainerName= (will use auto-generated name)")
 
-    # GPU check
-    any("AddDevice=" in line and "nvidia" in line.lower() for line in lines)
-    any("NVIDIA_VISIBLE_DEVICES" in line for line in lines)
+    # GPU check: if the unit requests GPUs (env) but never passes the device
+    # through, the container will fail to see the GPU at runtime.
+    has_gpu_env = any("NVIDIA_VISIBLE_DEVICES" in line for line in lines)
+    has_gpu_device = any("AddDevice=" in line and "nvidia" in line.lower()
+                         for line in lines)
+    if has_gpu_env and not has_gpu_device:
+        issues.append("NVIDIA_VISIBLE_DEVICES set but no AddDevice= for the GPU")
 
     # Health check recommendation
     has_health = any("HealthCmd=" in line for line in lines)

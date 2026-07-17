@@ -20,6 +20,9 @@ from typing import Any
 from aictl.runtime.router import BrokerRouter, RouteRequest
 from aictl.core.config import load_config
 from aictl.core.state import StateStore
+from aictl.core.constants import PROXY_PORT, DAEMON_HOST
+
+_MAX_BODY_BYTES = 100 * 1024 * 1024  # 100 MB cap to prevent memory exhaustion
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -89,6 +92,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._error(429, msg)
             return False
 
+        # Tenant-class rate limit (additional ceiling on top of the per-key
+        # limit above) — only applies if this key was explicitly linked to a
+        # tenant via `aictl tenant link-key`. An unlinked key behaves exactly
+        # as before (per-key limiting only); TenantRateLimiter previously had
+        # no caller anywhere in the codebase, so tenant classes were cosmetic.
+        from aictl.core.tenant import find_tenant_by_key_id, get_rate_limiter
+        tenant = find_tenant_by_key_id(self.store.dir if self.store else None, key.key_id)
+        if tenant is not None:
+            tenant_class = tenant.get("tenant_class", "standard")
+            if not get_rate_limiter().check(tenant["id"], tenant_class):
+                self._error(429, f"Tenant '{tenant['id']}' rate limit exceeded "
+                                 f"(class: {tenant_class})")
+                return False
+
         # Record usage
         mgr.record_usage(key.key_id)
 
@@ -108,11 +125,122 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
 
+    def _extract_request_text(self, body: dict[str, Any]) -> str:
+        """Concatenate the user-visible text of a request for guard scanning
+        (chat messages, a raw completions prompt, or embeddings input)."""
+        messages = body.get("messages")
+        if isinstance(messages, list):
+            parts = [m["content"] for m in messages
+                     if isinstance(m, dict) and isinstance(m.get("content"), str)]
+            if parts:
+                return "\n".join(parts)
+        prompt = body.get("prompt")
+        if isinstance(prompt, str):
+            return prompt
+        text_input = body.get("input")
+        if isinstance(text_input, str):
+            return text_input
+        if isinstance(text_input, list):
+            return "\n".join(s for s in text_input if isinstance(s, str))
+        return ""
+
+    def _check_guard(self, body: dict[str, Any]) -> tuple[bool, str]:
+        """Content-policy gate (prompt injection / jailbreak / system-leak)
+        before routing. Orthogonal to guard_redact_output: PII merely
+        *present* in a request is not blocked here -- redaction targets PII
+        leaking back out in a completion, not what a user pastes in.
+
+        Config is re-read per request (not cached), so `aictl config set
+        guard_policy ...` takes effect on live traffic without a restart --
+        same convention as `_model_trust_ok`.
+        """
+        config = load_config(self.store.dir)
+        if config.guard_policy == "off":
+            return True, ""
+
+        text = self._extract_request_text(body)
+        if not text:
+            return True, ""
+
+        model_check = None
+        if config.guard_model_check_endpoint:
+            from aictl.core.guard import make_llm_content_check
+            model_check = make_llm_content_check(
+                config.guard_model_check_endpoint, config.guard_model_check_model)
+
+        from aictl.core.guard import scan
+        result, _ = scan(text, redact_pii=False, block_on_pii=False,
+                         block_on_injection=True, model_check=model_check)
+        if result.passed:
+            return True, ""
+
+        rules = ", ".join(v.rule for v in result.violations if v.severity == "block")
+        rules = rules or "policy violation"
+
+        if config.guard_policy == "enforce":
+            self._audit("guard.violation", rules, action="block", outcome="blocked")
+            return False, f"Request blocked by content policy: {rules}"
+
+        # warn mode: allow through, but leave a discoverable trail.
+        self._audit("guard.warning", rules, action="allow", outcome="warning")
+        return True, ""
+
+    def _redact_response_pii(self, response_bytes: bytes) -> bytes:
+        """If guard_redact_output is enabled, redact PII from
+        choices[].message.content / choices[].text before the response
+        reaches the client. Best-effort: any parse failure or unexpected
+        shape returns the original bytes unchanged -- this must never break
+        a real completion. Feeds the same lifetime counter `aictl guard scan
+        --redact` does (aios_guard_redactions_total, Pass 174)."""
+        config = load_config(self.store.dir)
+        if not config.guard_redact_output:
+            return response_bytes
+        try:
+            from aictl.core.guard import scan
+            data = json.loads(response_bytes)
+            choices = data.get("choices")
+            if not isinstance(choices, list):
+                return response_bytes
+
+            changed = False
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message")
+                if isinstance(message, dict) and isinstance(message.get("content"), str):
+                    _, redacted = scan(message["content"], redact_pii=True,
+                                       state_dir=self.store.dir)
+                    if redacted != message["content"]:
+                        message["content"] = redacted
+                        changed = True
+                elif isinstance(choice.get("text"), str):
+                    _, redacted = scan(choice["text"], redact_pii=True,
+                                       state_dir=self.store.dir)
+                    if redacted != choice["text"]:
+                        choice["text"] = redacted
+                        changed = True
+
+            return json.dumps(data).encode() if changed else response_bytes
+        except Exception:
+            return response_bytes
+
     def _proxy_completion(self) -> None:
         """Proxy a completion request to the upstream engine."""
         body = self._read_body()
         model = body.get("model", "")
         start_ns = time.time_ns()
+
+        # Model-trust gate: enforce signature policy BEFORE routing/serving.
+        allowed, reason = self._model_trust_ok(model)
+        if not allowed:
+            self._error(403, reason)
+            return
+
+        # Content-policy gate (prompt injection/jailbreak/system-leak).
+        guard_ok, guard_reason = self._check_guard(body)
+        if not guard_ok:
+            self._error(400, guard_reason)
+            return
 
         # Route
         router = self._get_router()
@@ -140,9 +268,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
             with urllib.request.urlopen(req, timeout=120) as resp:
                 if stream:
+                    # NOTE: guard_redact_output does NOT apply to streaming
+                    # responses -- SSE chunks are piped straight through with
+                    # no buffering/reassembly point (_stream_response below).
+                    # A regulated deployment that needs output redaction must
+                    # disable streaming; documented, not silently ignored.
                     self._stream_response(resp, decision)
                 else:
                     result = resp.read()
+                    result = self._redact_response_pii(result)
                     end_ns = time.time_ns()
 
                     # Token metering
@@ -159,7 +293,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(result)
 
         except urllib.error.HTTPError as e:
-            self._error(e.code, f"Upstream error from {decision.selected_engine}")
+            # Preserve the upstream error body (e.g. vLLM's validation message)
+            # so OpenAI-compatible clients can surface the real cause.
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", "replace")[:500]
+            except Exception:
+                pass
+            msg = f"Upstream error from {decision.selected_engine}"
+            if detail:
+                msg += f": {detail}"
+            self._error(e.code, msg)
         except Exception as e:
             self._error(502, f"Proxy error: {e}")
 
@@ -183,6 +327,23 @@ class ProxyHandler(BaseHTTPRequestHandler):
         body = self._read_body()
         model = body.get("model", "")
 
+        # Same model-trust gate as _proxy_completion (Pass 166): an
+        # unsigned-model bypass on /v1/embeddings would undercut
+        # trust_policy=enforce / tenant require_signed_models entirely —
+        # embeddings requests carry the same document content a regulated
+        # tenant is trying to keep off untrusted models.
+        allowed, reason = self._model_trust_ok(model)
+        if not allowed:
+            self._error(403, reason)
+            return
+
+        # Same content-policy gate as _proxy_completion. No response-side
+        # redaction here -- embeddings return numeric vectors, not text.
+        guard_ok, guard_reason = self._check_guard(body)
+        if not guard_ok:
+            self._error(400, guard_reason)
+            return
+
         router = self._get_router()
         decision = router.route(RouteRequest(model=model, objective="throughput"))
 
@@ -201,7 +362,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._error(502, f"Proxy error: {e}")
 
-    def _list_models(self) -> list[Any]:
+    def _list_models(self) -> None:
         """Aggregate models from all engines."""
         from aictl.runtime.adapters import discover_engines
         config = load_config(self.store.dir)
@@ -235,18 +396,137 @@ class ProxyHandler(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             entity_id = "anonymous"
             if auth.startswith("Bearer ") and auth[7:].startswith("aios-"):
-                entity_id = auth[7:20]
+                # Attribute by the key's id (SHA-256 prefix), NEVER the raw key —
+                # using the raw key persisted the secret in plaintext in the
+                # metering store and surfaced it in `meter report`. This id matches
+                # `apikey list`, so usage still maps cleanly back to a key.
+                from aictl.core.apikeys import key_id_for
+                entity_id = key_id_for(auth[7:])
 
             model = request_body.get("model", "unknown")
             from aictl.core.metering import TokenMeter
             meter = TokenMeter(self.store.dir if self.store else None)
             meter.record(entity_id, model, prompt_tokens, completion_tokens)
+
+            # Feed the actual token count back to the tenant-class limiter
+            # (checked pre-flight in _check_auth; recorded here once the real
+            # count is known — one check()+record() pair per request, matching
+            # TenantRateLimiter's own documented two-phase contract).
+            from aictl.core.tenant import find_tenant_by_key_id, get_rate_limiter
+            tenant = find_tenant_by_key_id(self.store.dir if self.store else None, entity_id)
+            if tenant is not None:
+                get_rate_limiter().record(tenant["id"], prompt_tokens + completion_tokens)
         except Exception:
             pass  # Metering failures must not affect requests
+
+    def _current_tenant(self) -> dict[str, Any] | None:
+        """Resolve the requesting API key's linked tenant record, or None.
+
+        Shared by the internet-egress gate and the model-trust gate — both need
+        'which tenant is this request', and neither should duplicate the
+        bearer-parse + key_id + registry-lookup dance."""
+        auth = self.headers.get("Authorization", "")
+        if not (auth.startswith("Bearer ") and auth[7:].startswith("aios-")):
+            return None
+        from aictl.core.apikeys import key_id_for
+        from aictl.core.tenant import find_tenant_by_key_id
+        return find_tenant_by_key_id(self.store.dir if self.store else None,
+                                     key_id_for(auth[7:]))
+
+    def _audit(self, event: str, resource: str, *, action: str = "deny",
+               outcome: str = "blocked", **details: Any) -> None:
+        """Best-effort audit write (never raises into the request path)."""
+        try:
+            from aictl.core.audit import AuditLog, AuditEntry
+            AuditLog(self.store.dir if self.store else None).write(AuditEntry(
+                event=event, resource=resource, action=action,
+                outcome=outcome, details=details))
+        except Exception:
+            pass
+
+    def _tenant_disallows_internet(self) -> bool:
+        """True if the requesting key's linked tenant class has
+        allow_internet=False. Unlinked keys are unaffected (opt-in layer,
+        matching the tenant rate-limit enforcement added in Pass 164)."""
+        from aictl.core.tenant import get_tenant_class
+        tenant = self._current_tenant()
+        if tenant is None:
+            return False
+        tc = get_tenant_class(tenant.get("tenant_class", "standard"))
+        if tc.allow_internet:
+            return False
+        self._audit("proxy.cloud_fallback_blocked", tenant["id"],
+                    tenant_class=tenant.get("tenant_class", "standard"))
+        return True
+
+    def _model_is_signed(self, model: str) -> bool:
+        """True if `model` is present in the local registry AND marked signed.
+
+        An unknown model (never registered) is treated as unsigned — unknown
+        provenance is not trusted provenance."""
+        if not model or not self.store:
+            return False
+        try:
+            for m in self.store.list_models():
+                if m.get("name") == model and m.get("signed"):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _model_trust_ok(self, model: str) -> tuple[bool, str]:
+        """Model-trust gate (P1 global trust_policy + P2 tenant
+        require_signed_models). Returns (allowed, reason).
+
+        Strictness resolution (strictest wins):
+          - tenant.require_signed_models True  -> STRICT (block unsigned)
+          - global trust_policy == 'enforce'   -> STRICT
+          - global trust_policy == 'disabled'  -> allow, no check
+          - otherwise ('warn', default)        -> allow, audit an unsigned warning
+
+        A signed model always passes. Enforcement is opt-in: default config is
+        'warn' and no tenant requires signing, so out-of-the-box behavior is
+        unchanged — nothing is ever blocked until an operator asks for it."""
+        from aictl.core.config import load_config
+        from aictl.core.tenant import get_tenant_class
+
+        policy = load_config(self.store.dir if self.store else None).trust_policy
+        tenant = self._current_tenant()
+        tenant_requires = (
+            tenant is not None
+            and get_tenant_class(tenant.get("tenant_class", "standard")).require_signed_models
+        )
+
+        strict = tenant_requires or policy == "enforce"
+        if not strict and policy == "disabled":
+            return True, ""
+        if self._model_is_signed(model):
+            return True, ""
+        if strict:
+            who = f"tenant '{tenant['id']}'" if tenant_requires else "trust_policy=enforce"
+            self._audit("proxy.unsigned_model_blocked", model or "(none)",
+                        reason=who)
+            return False, (f"Model '{model}' is not a signed/verified model and "
+                           f"{who} requires signed models. Register + verify it "
+                           f"(aictl model verify {model}) or relax the policy.")
+        # warn mode: allow, but leave an audit trail of the unsigned serve
+        self._audit("proxy.unsigned_model_served", model or "(none)",
+                    action="allow", outcome="warning")
+        return True, ""
 
     def _try_cloud_fallback(self, body: dict[str, Any]) -> bool:
         """Attempt cloud provider fallback. Returns True if successful."""
         try:
+            # A tenant whose class disallows internet egress must NEVER be
+            # routed to an external cloud API — even when local engines are
+            # down and fallback is globally enabled. `allow_internet` (like
+            # max_requests_per_min before Pass 164) had no runtime consumer
+            # anywhere in the codebase; a regulated/air-gapped tenant would
+            # otherwise silently leak its request to a cloud provider the
+            # moment local engines became unreachable.
+            if self._tenant_disallows_internet():
+                return False
+
             from aictl.runtime.fallback import load_fallback_config, cloud_completion
             config = load_fallback_config(self.store.dir if self.store else None)
             if not config.enabled:
@@ -305,9 +585,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> dict[str, Any]:
         """Read and return data from the source."""
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            length = 0
+        # Must be `<= 0`, not `== 0`: a NEGATIVE Content-Length survives the
+        # `min(length, _MAX_BODY_BYTES)` cap (min(-5, cap) == -5) and then
+        # `rfile.read(-5)` reads until EOF — defeating the 100 MB memory-
+        # exhaustion guard this cap exists to enforce. Treat any non-positive
+        # length as "no body" (matches aiosd._read_body).
+        if length <= 0:
             return {}
+        length = min(length, _MAX_BODY_BYTES)
         return json.loads(self.rfile.read(length))
 
     def _json(self, status: int, data: Any) -> None:
@@ -334,7 +623,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self._json(status, data)
 
 
-def serve_proxy(host: str = "127.0.0.1", port: int = 8080,
+def serve_proxy(host: str = DAEMON_HOST, port: int = PROXY_PORT,
                 store: StateStore | None = None) -> None:
     """Start the completions proxy."""
     if store is None:

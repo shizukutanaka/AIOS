@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from aictl.core.constants import DEFAULT_GPU_MEMORY_UTIL, VLLM_DEFAULT_PORT
+
 
 @dataclass
 class HardwareProfile:
@@ -90,7 +92,9 @@ def optimize_vllm_flags(
 
     # ── Tensor parallelism ──
     tp = 1
-    if model_vram_mb > hardware.vram_per_gpu_mb * 0.85 and hardware.gpu_count > 1:
+    if (hardware.vram_per_gpu_mb > 0
+            and model_vram_mb > hardware.vram_per_gpu_mb * 0.85
+            and hardware.gpu_count > 1):
         tp = min(hardware.gpu_count, _smallest_power_of_2_gte(
             model_vram_mb / (hardware.vram_per_gpu_mb * 0.7)
         ))
@@ -110,7 +114,7 @@ def optimize_vllm_flags(
         notes.append("FP8 E5M2 KV cache: lower precision but fits on A100")
 
     # ── GPU memory utilization ──
-    gpu_util = 0.90
+    gpu_util = DEFAULT_GPU_MEMORY_UTIL
     if tp > 1:
         gpu_util = 0.85  # Leave headroom for TP communication
     flags.append(f"--gpu-memory-utilization={gpu_util}")
@@ -119,10 +123,14 @@ def optimize_vllm_flags(
     if max_context > 0:
         flags.append(f"--max-model-len={max_context}")
     else:
-        # Auto-detect reasonable context for VRAM
-        available_for_kv = (total_vram * gpu_util - model_vram_mb / tp) * (0.5 if kv_dtype == "fp8" else 1.0)
-        # Rough: 1MB per 1K context tokens for 8B model
-        context_budget = max(4096, min(131072, int(available_for_kv / model_size_b * 1000)))
+        # Auto-detect reasonable context for VRAM. total_vram is the aggregate
+        # across all GPUs and, with TP, the model is sharded — so the whole
+        # model footprint (model_vram_mb) is subtracted once, not /tp.
+        # FP8 KV cache gives 2x compression → same VRAM holds 2x more tokens.
+        available_for_kv = (total_vram * gpu_util - model_vram_mb) * (2.0 if kv_dtype == "fp8" else 1.0)
+        # Rough: 1MB per 1K context tokens for 8B model. Guard div-by-zero.
+        context_budget = max(4096, min(131072,
+                                       int(available_for_kv / max(model_size_b, 1) * 1000)))
         flags.append(f"--max-model-len={context_budget}")
 
     # ── Prefix caching ──
@@ -176,7 +184,7 @@ def optimize_vllm_flags(
     )
 
 
-def flags_to_command(result: OptimizeResult, port: int = 8000) -> str:
+def flags_to_command(result: OptimizeResult, port: int = VLLM_DEFAULT_PORT) -> str:
     """Convert optimization result to a runnable vllm serve command."""
     args = " \\\n    ".join(result.flags + [f"--port={port}"])
     return f"vllm serve \\\n    {args}"

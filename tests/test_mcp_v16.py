@@ -17,7 +17,7 @@ class TestMCPProtocol(unittest.TestCase):
         self.assertEqual(r["jsonrpc"], "2.0")
         self.assertEqual(r["id"], 1)
         self.assertIn("protocolVersion", r["result"])
-        self.assertEqual(r["result"]["serverInfo"]["version"], "1.6.0")
+        self.assertEqual(r["result"]["serverInfo"]["version"], "1.7.0")
         self.assertIn("tools", r["result"]["capabilities"])
 
     def test_tools_list(self):
@@ -26,7 +26,7 @@ class TestMCPProtocol(unittest.TestCase):
         tools = r["result"]["tools"]
         self.assertGreaterEqual(len(tools), 16)
         names = {t["name"] for t in tools}
-        # v1.6.0 tools must be present
+        # v1.7.0 tools must be present
         for required in ["aictl_fit", "aictl_quant", "aictl_guard_scan",
                          "aictl_rag_ask", "aictl_troubleshoot", "aictl_tco"]:
             self.assertIn(required, names, f"Missing tool: {required}")
@@ -167,7 +167,7 @@ class TestMCPToolSchemas(unittest.TestCase):
 
     def test_tool_count(self):
         from aictl.mcp_server import TOOLS
-        self.assertEqual(len(TOOLS), 18)
+        self.assertEqual(len(TOOLS), 19)
 
 
 if __name__ == "__main__":

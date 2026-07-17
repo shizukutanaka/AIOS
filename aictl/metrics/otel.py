@@ -46,14 +46,15 @@ def build_metric_payload(
     """Build an OTLP/HTTP JSON payload from current metrics."""
     now_ns = int(time.time() * 1_000_000_000)
 
-    resource = {
-        "attributes": [
-            {"key": "service.name", "value": {"stringValue": "aios"}},
-            {"key": "service.version", "value": {"stringValue": "0.4.0"}},
-            {"key": "aios.node_id", "value": {"stringValue": node_id}},
-            {"key": "aios.profile", "value": {"stringValue": profile}},
-        ]
-    }
+    resource_attrs = [
+        {"key": "service.name", "value": {"stringValue": "aios"}},
+        {"key": "service.version", "value": {"stringValue": "0.4.0"}},
+    ]
+    if node_id:
+        resource_attrs.append({"key": "aios.node_id", "value": {"stringValue": node_id}})
+    if profile:
+        resource_attrs.append({"key": "aios.profile", "value": {"stringValue": profile}})
+    resource = {"attributes": resource_attrs}
 
     points: list[dict[str, Any]] = []
 

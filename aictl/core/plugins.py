@@ -100,7 +100,10 @@ def wire_plugin_events() -> int:
     for info in discover_plugins():
         module = load_plugin(info["path"])
         if module and hasattr(module, "on_event"):
-            bus.subscribe_all(module.on_event)
-            count += 1
+            try:
+                bus.subscribe_all(module.on_event)
+                count += 1
+            except Exception as e:
+                logger.warning("Plugin %s event wiring failed: %s", info["name"], e)
 
     return count

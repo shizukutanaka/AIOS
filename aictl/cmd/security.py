@@ -25,7 +25,11 @@ def run(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         from dataclasses import asdict
         print_json(asdict(report))
-        return 0
+        # Exit code must agree with the human path below: a failing audit
+        # (score < 50) returns non-zero so a CI gate doing `aictl security
+        # --json; echo $?` actually blocks on it. Previously this branch
+        # always returned 0, so the JSON consumer never saw the failure.
+        return 0 if report.score >= 50 else 1
 
     # Score display
     if report.score >= 80:
@@ -40,7 +44,8 @@ def run(args: argparse.Namespace) -> int:
 
     if report.findings:
         severity_icons = {"critical": "\u2717", "high": "\u2717", "medium": "\u26a0", "low": "\u00b7", "info": "\u00b7"}
-        for f in sorted(report.findings, key=lambda x: ["critical", "high", "medium", "low", "info"].index(x.severity)):
+        _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+        for f in sorted(report.findings, key=lambda x: _sev_rank.get(x.severity, 5)):
             icon = severity_icons.get(f.severity, "?")
             print(f"  {icon} [{f.severity.upper():8s}] {f.title}")
             print(f"    {f.description}")

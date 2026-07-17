@@ -388,6 +388,93 @@ class TestTCOContracts(unittest.TestCase):
         self.assertGreater(monthly, 0)
         self.assertLess(monthly, _DEFAULTS["gpu_price_jpy"])
 
+    # ── Carbon / energy advisor tests ──────────────────────────────
+
+    def test_carbon_intensity_table_all_positive(self):
+        from aictl.cmd.tco import CARBON_INTENSITY_BY_REGION
+        for region, ci in CARBON_INTENSITY_BY_REGION.items():
+            self.assertGreater(ci, 0, f"{region} intensity should be positive")
+            self.assertLess(ci, 1200, f"{region} intensity unreasonably high")
+
+    def test_carbon_intensity_regional_ordering(self):
+        from aictl.cmd.tco import CARBON_INTENSITY_BY_REGION
+        # France (nuclear) << Germany << global average is a sanity check on IEA data
+        self.assertLess(CARBON_INTENSITY_BY_REGION["fr"],
+                        CARBON_INTENSITY_BY_REGION["de"])
+        self.assertLess(CARBON_INTENSITY_BY_REGION["fr"],
+                        CARBON_INTENSITY_BY_REGION["global"])
+
+    def test_run_summary_json_has_carbon_fields(self):
+        import argparse
+        import json
+        import io
+        import tempfile
+        import os
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["AIOS_STATE_DIR"] = td
+            try:
+                from aictl.cmd.tco import run_summary
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = run_summary(argparse.Namespace(
+                        period_days=7, carbon_intensity=460, json=True))
+                self.assertEqual(rc, 0)
+                data = json.loads(buf.getvalue())
+                self.assertIn("kwh", data)
+                self.assertIn("co2e_kg", data)
+                self.assertIn("carbon_intensity_gco2_kwh", data)
+                self.assertEqual(data["carbon_intensity_gco2_kwh"], 460)
+                self.assertGreater(data["kwh"], 0)
+                # CO₂e = kWh * 460 / 1000
+                expected = data["kwh"] * 460 / 1000
+                self.assertAlmostEqual(data["co2e_kg"], round(expected, 3), places=2)
+            finally:
+                os.environ.pop("AIOS_STATE_DIR", None)
+
+    def test_run_carbon_json_shape(self):
+        import argparse
+        import json
+        import io
+        import tempfile
+        import os
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["AIOS_STATE_DIR"] = td
+            try:
+                from aictl.cmd.tco import run_carbon
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = run_carbon(argparse.Namespace(
+                        region="jp", period_days=7, json=True))
+                self.assertEqual(rc, 0)
+                data = json.loads(buf.getvalue())
+                self.assertEqual(data["region"], "jp")
+                self.assertEqual(data["carbon_intensity_gco2_kwh"], 460)
+                self.assertIn("kwh", data)
+                self.assertIn("co2e_kg", data)
+                self.assertIn("co2e_equiv_km_driven", data)
+                self.assertIn("projected", data)
+                self.assertLess(data["projected"]["aggressive_kwh"], data["kwh"])
+            finally:
+                os.environ.pop("AIOS_STATE_DIR", None)
+
+    def test_power_caps_conservative_less_than_tdp(self):
+        from aictl.cmd.tco import _GPU_POWER_CAPS
+        for gpu, caps in _GPU_POWER_CAPS.items():
+            self.assertLess(caps["conservative"], caps["tdp"],
+                            f"{gpu}: conservative cap should be below TDP")
+            self.assertLess(caps["aggressive"], caps["conservative"],
+                            f"{gpu}: aggressive cap should be below conservative")
+            self.assertGreater(caps["aggressive"], 0,
+                               f"{gpu}: aggressive cap should be positive")
+
+    def test_tco_carbon_subcommand_registered(self):
+        from aictl.__main__ import build_parser
+        p = build_parser()
+        args = p.parse_args(["tco", "carbon", "--region", "fr"])
+        self.assertEqual(args.region, "fr")
+
 
 class TestMCPProtocol(unittest.TestCase):
     """MCP server protocol contracts."""
@@ -469,7 +556,7 @@ class TestProjectFiles(unittest.TestCase):
             cfg = tomllib.load(f)
         proj = cfg.get("project", {})
         self.assertEqual(proj["name"], "aictl")
-        self.assertEqual(proj["version"], "1.6.0")
+        self.assertEqual(proj["version"], "1.7.0")
         self.assertIsInstance(proj.get("keywords", []), list)
         self.assertGreater(len(proj.get("keywords", [])), 3)
         self.assertIn(">=3.11", proj.get("requires-python", ""))
@@ -495,12 +582,22 @@ class TestQuantContracts(unittest.TestCase):
 
     def test_quant_data_complete(self):
         from aictl.cmd.quant import QUANT_DATA
-        required = ["fp16", "fp8", "awq", "q4_k_m", "gptq", "q3_k_m"]
+        required = ["fp16", "fp8", "nvfp4", "awq", "q4_k_m", "gptq", "q3_k_m"]
         for k in required:
             self.assertIn(k, QUANT_DATA)
             self.assertIn("q_chat", QUANT_DATA[k])
             self.assertIn("q_code", QUANT_DATA[k])
             self.assertIn("engines", QUANT_DATA[k])
+
+    def test_nvfp4_is_blackwell_gated(self):
+        # FP4 (NVFP4/MXFP4) is a Blackwell feature → must require CC ≥ 100,
+        # beat AWQ on quality, and stay AWQ-class in size.
+        from aictl.cmd.quant import QUANT_DATA
+        nvfp4, awq = QUANT_DATA["nvfp4"], QUANT_DATA["awq"]
+        self.assertGreaterEqual(nvfp4["cc"], 100)
+        self.assertGreater(nvfp4["q_reasoning"], awq["q_reasoning"])
+        self.assertLessEqual(nvfp4["size"], awq["size"] + 0.02)
+        self.assertIn("vllm", nvfp4["engines"])
 
     def test_quant_quality_range(self):
         from aictl.cmd.quant import QUANT_DATA

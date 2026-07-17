@@ -13,22 +13,38 @@ Profiles are strings like:
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+
+# Fraction of unified memory usable as VRAM on Apple Silicon. macOS reserves the
+# rest for the OS; the practical default wired limit is ~75% (raisable via
+# iogpu.wired_limit_pct), so we budget conservatively at 0.75.
+UNIFIED_MEMORY_FRACTION = 0.75
+
+# Typical Apple Silicon configurations (chip → common unified-memory sizes in GB).
+# Used by `aictl fit --gpu "M3 Max"` to reason about a Mac without one present.
+APPLE_SILICON_RAM_GB: dict[str, list[int]] = {
+    "M1": [8, 16], "M1 Pro": [16, 32], "M1 Max": [32, 64], "M1 Ultra": [64, 128],
+    "M2": [8, 16, 24], "M2 Pro": [16, 32], "M2 Max": [32, 64, 96], "M2 Ultra": [64, 128, 192],
+    "M3": [8, 16, 24], "M3 Pro": [18, 36], "M3 Max": [36, 64, 96, 128],
+    "M4": [16, 24, 32], "M4 Pro": [24, 48], "M4 Max": [36, 48, 64, 128],
+}
 
 
 @dataclass
 class GPUInfo:
     index: int
     name: str
-    vendor: str          # nvidia | amd | intel
+    vendor: str          # nvidia | amd | intel | apple
     vram_mb: int
     driver_version: str
-    compute_cap: str     # e.g. "8.9" for NVIDIA, "gfx1100" for AMD
+    compute_cap: str     # e.g. "8.9" for NVIDIA, "gfx1100" for AMD, "metal3" for Apple
     mig_capable: bool = False
     mig_enabled: bool = False
+    unified_memory: bool = False  # True for Apple Silicon: vram_mb is the unified budget
 
 
 @dataclass
@@ -65,7 +81,7 @@ class RuntimeReport:
 
 
 def _run(cmd: list[str], timeout: int = 10) -> str | None:
-    """Execute the command and return an exit code."""
+    """Execute the command and return its stdout, or None on failure."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() if r.returncode == 0 else None
@@ -149,6 +165,48 @@ def detect_nvidia() -> list[GPUInfo]:
     return gpus
 
 
+def gpu_live_stats() -> list[dict]:
+    """Query live per-GPU utilization and memory via nvidia-smi.
+
+    Returns a list of dicts: {index, name, util_pct, mem_used_mb,
+    mem_total_mb, temp_c, power_w}. Empty list if nvidia-smi is unavailable.
+    """
+    if not shutil.which("nvidia-smi"):
+        return []
+
+    out = _run([
+        "nvidia-smi",
+        "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,"
+        "temperature.gpu,power.draw",
+        "--format=csv,noheader,nounits",
+    ])
+    if not out:
+        return []
+
+    stats: list[dict] = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+
+        def _num(value: str, cast=int):
+            try:
+                return cast(float(value))
+            except (ValueError, TypeError):
+                return 0
+
+        stats.append({
+            "index": _num(parts[0]),
+            "name": parts[1],
+            "util_pct": _num(parts[2]),
+            "mem_used_mb": _num(parts[3]),
+            "mem_total_mb": _num(parts[4]),
+            "temp_c": _num(parts[5]) if len(parts) > 5 else 0,
+            "power_w": _num(parts[6], float) if len(parts) > 6 else 0.0,
+        })
+    return stats
+
+
 def detect_amd() -> list[GPUInfo]:
     """Detect AMD GPUs via rocm-smi."""
     if not shutil.which("rocm-smi"):
@@ -158,8 +216,15 @@ def detect_amd() -> list[GPUInfo]:
     if not out:
         return []
 
+    # Parse VRAM from rocm-smi output: "GPU[N]: VRAM Total Memory (B): <bytes>"
+    vram_by_index: dict[int, int] = {}
+    for line in out.splitlines():
+        m = re.search(r"GPU\[(\d+)\].*VRAM Total Memory.*?[,:\s]+(\d+)", line, re.IGNORECASE)
+        if m:
+            vram_by_index[int(m.group(1))] = int(m.group(2)) // (1024 * 1024)
+
+    # Parse device names from lspci (reliable for product names)
     gpus: list[GPUInfo] = []
-    # Fallback: parse lspci for AMD GPUs
     lspci = _run(["lspci", "-nn"])
     if lspci:
         idx = 0
@@ -170,12 +235,78 @@ def detect_amd() -> list[GPUInfo]:
                     index=idx,
                     name=name_match.group(1) if name_match else "AMD GPU",
                     vendor="amd",
-                    vram_mb=0,
+                    vram_mb=vram_by_index.get(idx, 0),
                     driver_version="",
                     compute_cap="",
                 ))
                 idx += 1
+
+    # If lspci found no GPUs but rocm-smi reported VRAM entries, synthesize basic entries
+    if not gpus and vram_by_index:
+        for idx, vram_mb in sorted(vram_by_index.items()):
+            gpus.append(GPUInfo(
+                index=idx,
+                name="AMD GPU",
+                vendor="amd",
+                vram_mb=vram_mb,
+                driver_version="",
+                compute_cap="",
+            ))
+
     return gpus
+
+
+def unified_memory_budget_mb(ram_mb: int,
+                             fraction: float = UNIFIED_MEMORY_FRACTION) -> int:
+    """VRAM budget usable by the GPU on a unified-memory system.
+
+    On Apple Silicon the GPU and CPU share one memory pool, so a large slice of
+    system RAM is addressable as 'VRAM' — unlike discrete GPUs. Pure function so
+    it is testable without a Mac present.
+    """
+    return int(ram_mb * fraction)
+
+
+def detect_apple_silicon() -> list[GPUInfo]:
+    """Detect an Apple Silicon (M-series) integrated GPU with unified memory.
+
+    Returns a single GPUInfo whose vram_mb is the *unified-memory budget* (a
+    fraction of system RAM), since the integrated GPU can address system RAM as
+    VRAM. Empty on non-Apple-Silicon hosts.
+    """
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        return []
+
+    # Chip name via sysctl (e.g. "Apple M3 Max").
+    chip = _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "Apple Silicon"
+    # Total RAM via sysctl hw.memsize (bytes).
+    mem_raw = _run(["sysctl", "-n", "hw.memsize"])
+    ram_mb = 0
+    if mem_raw and mem_raw.isdigit():
+        ram_mb = int(mem_raw) // (1024 * 1024)
+
+    return [GPUInfo(
+        index=0,
+        name=chip.replace("Apple ", "").strip() or "Apple Silicon",
+        vendor="apple",
+        vram_mb=unified_memory_budget_mb(ram_mb) if ram_mb else 0,
+        driver_version="",
+        compute_cap="metal3",
+        unified_memory=True,
+    )]
+
+
+def lookup_apple_silicon_vram(chip: str) -> int:
+    """Unified-memory VRAM budget (MB) for a named Apple chip, largest config.
+
+    Matches loosely (e.g. 'm3 max', 'M3 Max', 'Apple M3 Max'). Returns 0 if the
+    chip is unknown.
+    """
+    norm = chip.lower().replace("apple", "").strip()
+    for name, sizes in APPLE_SILICON_RAM_GB.items():
+        if name.lower() == norm:
+            return unified_memory_budget_mb(max(sizes) * 1024)
+    return 0
 
 
 def detect_npus() -> list[NPUInfo]:
@@ -292,13 +423,15 @@ def _infer_arch(g: GPUInfo) -> str:
         if any(x in name for x in ["7900", "7800", "7700", "7600"]):
             return "rdna3"
         return "gpu"
+    if g.vendor == "apple":
+        return "metal"
     return "gpu"
 
 
 def full_detect() -> RuntimeReport:
     """Run full hardware detection and return a RuntimeReport."""
     system = detect_system()
-    gpus = detect_nvidia() + detect_amd()
+    gpus = detect_nvidia() + detect_amd() + detect_apple_silicon()
     npus = detect_npus()
     profile = select_profile(gpus, npus)
     container = detect_container_runtime()
@@ -323,6 +456,13 @@ def full_detect() -> RuntimeReport:
     for g in gpus:
         if g.vendor == "nvidia" and g.mig_capable and not g.mig_enabled:
             recs.append(f"GPU {g.index} ({g.name}) supports MIG — enable for multi-tenant isolation")
+
+    # Apple Silicon: unified memory + MLX path
+    for g in gpus:
+        if g.vendor == "apple":
+            recs.append(
+                f"Apple Silicon ({g.name}): {g.vram_mb // 1024}GB unified memory "
+                f"usable as VRAM. Use MLX or Ollama (Metal) for the fastest local path.")
 
     return RuntimeReport(
         system=system,

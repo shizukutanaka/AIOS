@@ -44,6 +44,24 @@ class ModelServiceConfig:
     namespace: str = "default"
     image: str = VLLM_IMAGE
 
+    def __post_init__(self) -> None:
+        # Validate physical quantities (mirrors DisaggConfig). Without this a
+        # negative flag flowed straight into the Helm values as
+        # `replicaCount: -2` / `tensorParallelSize: -1` — a manifest that looks
+        # valid but is rejected cluster-side, surfacing as a confusing apply-time
+        # error far from the `aictl deploy modelservice` invocation that caused it.
+        # replicas/gpu_count allow 0 (replicas=0 is a legitimate scale-to-zero
+        # baseline the HPA block handles); tensor_parallel/max_model_len are
+        # divisor/length quantities that are meaningless below 1.
+        if self.replicas < 0:
+            raise ValueError(f"replicas must be >= 0, got {self.replicas}")
+        if self.gpu_count < 0:
+            raise ValueError(f"gpu_count must be >= 0, got {self.gpu_count}")
+        if self.tensor_parallel < 1:
+            raise ValueError(f"tensor_parallel must be >= 1, got {self.tensor_parallel}")
+        if self.max_model_len < 1:
+            raise ValueError(f"max_model_len must be >= 1, got {self.max_model_len}")
+
 
 # Preset configurations matching llm-d's BaseConfig patterns
 PRESETS: dict[str, dict[str, Any]] = {
@@ -76,7 +94,7 @@ PRESETS: dict[str, dict[str, Any]] = {
 def generate_helm_values(config: ModelServiceConfig) -> dict[str, Any]:
     """Generate Helm values.yaml for llm-d ModelService."""
     preset = PRESETS.get(config.preset, PRESETS["balanced"])
-    model_slug = config.model.split("/")[-1].lower().replace(".", "-")
+    model_slug = (config.model.rstrip("/").split("/")[-1] or "model").lower().replace(".", "-")
 
     values: dict[str, Any] = {
         "modelService": {
@@ -121,7 +139,8 @@ def generate_helm_values(config: ModelServiceConfig) -> dict[str, Any]:
         "autoscaling": {
             "enabled": True,
             "minReplicas": max(1, config.replicas),
-            "maxReplicas": config.replicas * 4,
+            # Never below minReplicas, even when config.replicas is 0/1.
+            "maxReplicas": max(config.replicas * 4, max(1, config.replicas)),
             "scaleToZero": False,
             "targetMetric": "queue_depth",
             "targetValue": 5,

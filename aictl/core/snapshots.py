@@ -44,10 +44,16 @@ class SnapshotManager:
 
     def create(self, label: str = "") -> Snapshot:
         """Create a full state snapshot."""
+        import re
         import uuid
         snap_id = f"{int(time.time())}_{uuid.uuid4().hex[:6]}"
         if label:
-            snap_id = f"{label}_{snap_id}"
+            # The label is prepended to snap_id, which becomes the snapshot's
+            # filename. A raw label like "../../etc/passwd" would let the write
+            # escape snap_dir (path traversal). Restrict to a safe charset so the
+            # id can only ever be a single path component.
+            safe_label = re.sub(r"[^A-Za-z0-9_.-]", "_", label).strip("._-") or "snap"
+            snap_id = f"{safe_label}_{snap_id}"
 
         node = self.store.load_node()
         stacks = self.store.load_stacks()
@@ -84,7 +90,8 @@ class SnapshotManager:
 
         # Write snapshot
         snap_path = self.snap_dir / f"{snap_id}.json"
-        snap_path.write_text(json.dumps(asdict(snap), indent=2, default=str))
+        from aictl.core.atomicio import atomic_write_text
+        atomic_write_text(snap_path, json.dumps(asdict(snap), indent=2, default=str))
 
         return snap
 
@@ -148,9 +155,12 @@ class SnapshotManager:
                     model_id=m.get("id", ""),
                     name=m.get("name", ""),
                     digest=m.get("digest", ""),
+                    size_bytes=int(m.get("size_bytes", 0) or 0),
                     fmt=m.get("format", "gguf"),
                     signed=bool(m.get("signed", 0)),
                     signer=m.get("signer", ""),
+                    registered_at=float(m.get("registered_at", 0) or 0),
+                    status=m.get("status", "available"),
                 )
 
         return True, f"Restored from snapshot: {snapshot_id}"

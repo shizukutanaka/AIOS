@@ -17,7 +17,37 @@ from __future__ import annotations
 from typing import Any
 
 import os
+import sys
 from dataclasses import dataclass
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.0) -> float:
+    """Read a float tuning knob from the environment, *safely*.
+
+    These are read at import time, so a naive ``float(os.environ[...])`` lets a
+    malformed value (``AICTL_GPU_WATTS=abc``) raise ValueError during import —
+    crashing the entire CLI/SDK before the error handler can run, for any
+    command that imports this module. A negative value would also silently
+    produce negative cost estimates. So: unset/empty → default; non-numeric or
+    below ``minimum`` → warn on stderr and fall back to default (never crash,
+    never silently accept a bad physical quantity). stderr keeps --json on
+    stdout clean.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        print(f"  warning: {name}={raw!r} is not a number; using default {default}",
+              file=sys.stderr)
+        return default
+    if val < minimum:
+        print(f"  warning: {name}={val} is below the minimum {minimum}; "
+              f"using default {default}", file=sys.stderr)
+        return default
+    return val
+
 
 
 # ── Pricing table ──────────────────────────────────────────
@@ -54,9 +84,9 @@ CLOUD_PRICES: dict[str, ModelPrice] = {
 # Local inference electricity cost estimate
 # Assumes RTX 4090 @ 450W, 8 tok/s average (mixed models)
 # ¥27/kWh Tokyo → ~$0.18/kWh
-_LOCAL_WATTS = float(os.environ.get("AICTL_GPU_WATTS", "450"))
-_KWH_RATE_USD = float(os.environ.get("AICTL_KWH_RATE_USD", "0.18"))
-_LOCAL_TOKENS_PER_HOUR = float(os.environ.get("AICTL_TOKENS_PER_HOUR", "28800"))
+_LOCAL_WATTS = _env_float("AICTL_GPU_WATTS", 450.0, minimum=0.0)
+_KWH_RATE_USD = _env_float("AICTL_KWH_RATE_USD", 0.18, minimum=0.0)
+_LOCAL_TOKENS_PER_HOUR = _env_float("AICTL_TOKENS_PER_HOUR", 28800.0, minimum=1.0)
 
 # USD per local token
 _LOCAL_COST_PER_TOKEN = (

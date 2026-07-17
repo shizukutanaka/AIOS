@@ -19,6 +19,7 @@ import argparse
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.argtypes import positive_int
 
 
 def register(sub: Any) -> None:
@@ -36,13 +37,21 @@ def register(sub: Any) -> None:
 
     p_ask = sp.add_parser("ask", help="Ask a question. Uses indexed docs as context.")
     p_ask.add_argument("question", help="Your question.")
-    p_ask.add_argument("-k", type=int, default=5,
+    p_ask.add_argument("-k", type=positive_int, default=5,
                        help="Number of chunks to retrieve (default: 5)")
+    p_ask.add_argument(
+        "--rerank", action="store_true",
+        help="Rerank retrieved chunks via the configured rerank_endpoint.",
+    )
     p_ask.set_defaults(func=run_ask)
 
     p_search = sp.add_parser("search", help="Show raw retrieval matches.")
     p_search.add_argument("query", help="Search query.")
-    p_search.add_argument("-k", type=int, default=5)
+    p_search.add_argument("-k", type=positive_int, default=5)
+    p_search.add_argument(
+        "--rerank", action="store_true",
+        help="Rerank retrieved chunks via the configured rerank_endpoint.",
+    )
     p_search.set_defaults(func=run_search)
 
     p_status = sp.add_parser("status", help="Show index statistics.")
@@ -106,17 +115,25 @@ def run_ask(args: argparse.Namespace) -> int:
     from aictl.core.rag import RagStore, answer
     from aictl.core.empty_state import show as show_empty
 
+    # -k is a retrieval count: a value < 1 is meaningless and would otherwise
+    # hit the negative-slice trap (returning all-but-last-k fused results).
+    if args.k < 1:
+        err(f"-k must be >= 1 (got {args.k}).")
+        return 1
+
     store = RagStore()
     if store.stats()["embedded"] == 0:
         show_empty("rag_index")
         return 1
+
+    cfg = _load_rerank_config(args)
 
     print()
     print(f"  Question: {args.question}")
     print()
     print("  Searching index...")
 
-    response, sources = answer(args.question, store, k=args.k)
+    response, sources = answer(args.question, store, k=args.k, config=cfg)
 
     print()
     if not sources:
@@ -158,12 +175,19 @@ def run_search(args: argparse.Namespace) -> int:
     from aictl.core.rag import RagStore, search
     from aictl.core.empty_state import show as show_empty
 
+    # -k is a retrieval count; reject < 1 before it hits the negative-slice trap.
+    if args.k < 1:
+        err(f"-k must be >= 1 (got {args.k}).")
+        return 1
+
     store = RagStore()
     if store.stats()["embedded"] == 0:
         show_empty("rag_index")
         return 1
 
-    matches = search(args.query, store, k=args.k)
+    cfg = _load_rerank_config(args)
+
+    matches = search(args.query, store, k=args.k, config=cfg)
     if not matches:
         warn("No relevant documents found.")
         return 2
@@ -238,3 +262,23 @@ def run_reset(args: argparse.Namespace) -> int:
     store.clear()
     ok("Index cleared.")
     return 0
+
+
+def _load_rerank_config(args: argparse.Namespace) -> Any:
+    """Return a Config for search()/answer() to consult, or None.
+
+    Loading config unconditionally would still be a true no-op (its
+    rerank_endpoint defaults to "", which search()/answer() already treat as
+    "no reranking"), but returning None outright when --rerank wasn't passed
+    keeps the common path from touching disk/config at all. When --rerank IS
+    passed but no rerank_endpoint is configured, warn once rather than
+    silently doing nothing -- the user asked for reranking explicitly.
+    """
+    if not getattr(args, "rerank", False):
+        return None
+    from aictl.core.config import load_config
+    cfg = load_config()
+    if not cfg.rerank_endpoint:
+        warn("--rerank set but no rerank_endpoint configured; using unranked RRF order. "
+             "Try: aictl config set rerank_endpoint http://localhost:8080")
+    return cfg

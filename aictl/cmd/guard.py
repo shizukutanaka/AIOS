@@ -37,6 +37,14 @@ def register(sub: Any) -> None:
                    help="Replace detected PII with [REDACTED].")
     s.add_argument("--block-pii", action="store_true",
                    help="Treat any PII as a blocking violation (exit 2).")
+    s.add_argument("--model-check-endpoint", default="",
+                   help="Also consult a local OpenAI-compatible endpoint "
+                        "(e.g. Ollama serving Llama Guard) for a model-based "
+                        "safety verdict, in addition to the built-in regex "
+                        "rules. Off by default — no network call unless set.")
+    s.add_argument("--model-check-model", default="llama-guard3",
+                   help="Model name to request at --model-check-endpoint "
+                        "(default: llama-guard3).")
     s.set_defaults(func=run_scan)
 
     t = sp.add_parser("test", help="Run built-in validation suite.")
@@ -47,6 +55,10 @@ def register(sub: Any) -> None:
     m.add_argument("--file", "-f",
                    help="JSON file with MCP tools list (default: aictl's own).")
     m.set_defaults(func=run_mcp_scan)
+
+    st = sp.add_parser("stats", help="Show lifetime guard scan statistics.")
+    st.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    st.set_defaults(func=run_stats)
 
 
 def run_scan(args: argparse.Namespace) -> int:
@@ -69,10 +81,25 @@ def run_scan(args: argparse.Namespace) -> int:
         warn("Empty input.")
         return 0
 
+    # Resolve a concrete state dir (falls back to the default) so a real
+    # --redact invocation always feeds the aios_guard_redactions_total
+    # counter, regardless of whether --state-dir was passed explicitly.
+    from aictl.core.state import StateStore
+    store = StateStore(getattr(args, "state_dir", None))
+
+    model_check = None
+    endpoint = getattr(args, "model_check_endpoint", "")
+    if endpoint:
+        from aictl.core.guard import make_llm_content_check
+        model_check = make_llm_content_check(
+            endpoint, getattr(args, "model_check_model", "llama-guard3"))
+
     result, processed = scan(
         text,
         redact_pii=args.redact,
         block_on_pii=args.block_pii,
+        state_dir=store.dir,
+        model_check=model_check,
     )
 
     if getattr(args, "json", False):
@@ -223,3 +250,52 @@ def run_mcp_scan(args: argparse.Namespace) -> int:
     print()
     warn("Review flagged descriptions before trusting these tools (TPA risk).")
     return 2
+
+
+def run_stats(args: argparse.Namespace) -> int:
+    """Show lifetime guard scan statistics from perf records."""
+    try:
+        from aictl.core.perf import summary
+        g = summary().get("guard", {})
+    except Exception as e:
+        warn(f"Could not read perf data: {e}")
+        g = {}
+
+    total_scans = int(g.get("count", 0))
+    blocks = int(g.get("failures", 0))
+    clean = total_scans - blocks
+    block_rate = blocks / total_scans if total_scans > 0 else 0.0
+    p50 = g.get("p50_ms", 0)
+    p95 = g.get("p95_ms", 0)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print_json({
+            "total_scans": total_scans,
+            "clean": clean,
+            "blocks_or_pii": blocks,
+            "block_rate": round(block_rate, 4),
+            "latency_p50_ms": p50,
+            "latency_p95_ms": p95,
+        })
+        return 0
+
+    print()
+    if total_scans == 0:
+        warn("No guard scans recorded yet.")
+        print("  Try: aictl guard scan 'My email is alice@example.com'")
+        print()
+        return 0
+
+    print(f"  ── Guard Statistics ───────────────────────────────────")
+    print()
+    print(f"  Total scans:      {total_scans:>6}")
+    print(f"  Clean:            {clean:>6}")
+    print(f"  PII / blocked:    {blocks:>6}  ({block_rate:.1%})")
+    print()
+    print(f"  Latency p50:      {p50:.1f} ms")
+    print(f"  Latency p95:      {p95:.1f} ms")
+    print()
+    ok("Stats from perf history (last 1000 runs)")
+    print()
+    return 0

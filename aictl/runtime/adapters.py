@@ -9,6 +9,9 @@ Each adapter knows how to:
 vLLM exposes Prometheus metrics at /metrics.
 Ollama exposes a REST API at /api/*.
 SGLang exposes OpenAI-compatible /v1/* and /metrics.
+LMDeploy, TensorRT-LLM (trtllm-serve), and LM Studio expose OpenAI-compatible
+/v1/* only (no Prometheus metrics contract) — opt-in engines, never probed
+unless a user configures a URL (IMPROVEMENTS.md item D).
 """
 
 from __future__ import annotations
@@ -22,7 +25,10 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from aictl.core.constants import OLLAMA_DEFAULT_URL, SGLANG_DEFAULT_URL, VLLM_DEFAULT_URL
+from aictl.core.constants import (
+    OLLAMA_DEFAULT_URL, SGLANG_DEFAULT_URL, VLLM_DEFAULT_URL,
+    LMDEPLOY_DEFAULT_URL, TRT_LLM_DEFAULT_URL, LM_STUDIO_DEFAULT_URL,
+)
 from aictl.metrics.slo import InferenceMetrics
 
 # Probe failure counter — silent errors during engine discovery.
@@ -59,7 +65,6 @@ class EngineHealth:
 def _http_get(url: str, timeout: int = 5) -> tuple[int, str]:
     """Simple HTTP GET, returns (status_code, body)."""
     try:
-        time.monotonic()
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode()
@@ -141,20 +146,12 @@ class VLLMAdapter:
         # tokens/sec from generation throughput
         m.tokens_per_sec = _prom_gauge(body, "vllm:avg_generation_throughput_toks_per_s")
 
-        # Prefix cache (v1 engine)
+        # Prefix cache (v1 engine, v0.18+): record the hit rate in its own
+        # field — must NOT clobber m.model (the model name used for telemetry).
         cache_queries = _prom_gauge(body, "vllm:prefix_cache_queries")
         cache_hits = _prom_gauge(body, "vllm:prefix_cache_hits")
         if cache_queries > 0:
-            m.model = f"cache_hit_rate={cache_hits/cache_queries:.2f}"
-
-        # Error rate from request counters
-        _prom_gauge(body, "vllm:request_success_total")
-        # Prefix cache metrics (v1 engine, v0.18+)
-        cache_queries = _prom_gauge(body, "vllm:prefix_cache_queries")
-        cache_hits = _prom_gauge(body, "vllm:prefix_cache_hits")
-        if hasattr(m, '_prefix_cache_hit_rate'):
-            pass  # future use
-
+            m.prefix_cache_hit_rate = cache_hits / cache_queries
 
         return m
 
@@ -246,6 +243,7 @@ class SGLangAdapter:
         elif code > 0:
             h.reachable = True
             h.status = "DEGRADED"
+            h.error = f"HTTP {code}"
         else:
             h.error = body[:200]
             return h
@@ -276,6 +274,146 @@ class SGLangAdapter:
         m.kv_cache_utilization = _prom_gauge(body, "sglang_cache_hit_rate")
 
         return m
+
+
+# ══════════════════════════════════════════════════════════
+#  LMDeploy adapter (IMPROVEMENTS.md item D)
+# ══════════════════════════════════════════════════════════
+
+class LMDeployAdapter:
+    """Adapter for LMDeploy's (TurboMind) OpenAI-compatible api_server.
+
+    Opt-in only: never probed unless a user sets engines.lmdeploy (see
+    constants.LMDEPLOY_DEFAULT_URL / EngineEndpoints.to_dict()).
+    """
+
+    def __init__(self, endpoint: str = LMDEPLOY_DEFAULT_URL):
+        """Initialize LMDeploy adapter."""
+        self.endpoint = endpoint.rstrip("/")
+
+    def health(self) -> EngineHealth:
+        """Health."""
+        h = EngineHealth(engine="lmdeploy", endpoint=self.endpoint)
+        t0 = time.monotonic()
+        code, body = _http_get(f"{self.endpoint}/health")
+        h.latency_ms = (time.monotonic() - t0) * 1000
+
+        if code == 200:
+            h.reachable = True
+            h.status = "READY"
+        elif code > 0:
+            h.reachable = True
+            h.status = "DEGRADED"
+            h.error = f"HTTP {code}"
+        else:
+            h.error = body[:200]
+            return h
+
+        code, body = _http_get(f"{self.endpoint}/v1/models")
+        if code == 200:
+            try:
+                data = json.loads(body)
+                h.models = [m.get("id", "") for m in data.get("data", [])]
+            except (json.JSONDecodeError, KeyError) as _e:
+                _note_probe_error("probe", "", _e)  # logged, not raised
+
+        return h
+
+    def scrape_metrics(self) -> InferenceMetrics:
+        """LMDeploy's api_server has no documented Prometheus endpoint —
+        return basic status, matching OllamaAdapter's honest fallback rather
+        than guessing at metric names."""
+        return InferenceMetrics(engine="lmdeploy", timestamp=time.time())
+
+
+# ══════════════════════════════════════════════════════════
+#  TensorRT-LLM adapter (IMPROVEMENTS.md item D)
+# ══════════════════════════════════════════════════════════
+
+class TensorRTLLMAdapter:
+    """Adapter for NVIDIA TensorRT-LLM's `trtllm-serve` OpenAI-compatible
+    endpoint. Opt-in only (see LMDeployAdapter docstring)."""
+
+    def __init__(self, endpoint: str = TRT_LLM_DEFAULT_URL):
+        """Initialize TensorRT-LLM adapter."""
+        self.endpoint = endpoint.rstrip("/")
+
+    def health(self) -> EngineHealth:
+        """Health."""
+        h = EngineHealth(engine="tensorrt_llm", endpoint=self.endpoint)
+        t0 = time.monotonic()
+        code, body = _http_get(f"{self.endpoint}/health")
+        h.latency_ms = (time.monotonic() - t0) * 1000
+
+        if code == 200:
+            h.reachable = True
+            h.status = "READY"
+        elif code > 0:
+            h.reachable = True
+            h.status = "DEGRADED"
+            h.error = f"HTTP {code}"
+        else:
+            h.error = body[:200]
+            return h
+
+        code, body = _http_get(f"{self.endpoint}/v1/models")
+        if code == 200:
+            try:
+                data = json.loads(body)
+                h.models = [m.get("id", "") for m in data.get("data", [])]
+            except (json.JSONDecodeError, KeyError) as _e:
+                _note_probe_error("probe", "", _e)  # logged, not raised
+
+        return h
+
+    def scrape_metrics(self) -> InferenceMetrics:
+        """`trtllm-serve` has no stable public Prometheus contract across
+        versions — return basic status rather than guessing at metric
+        names (same honest-fallback rationale as LMDeployAdapter)."""
+        return InferenceMetrics(engine="tensorrt_llm", timestamp=time.time())
+
+
+# ══════════════════════════════════════════════════════════
+#  LM Studio adapter (IMPROVEMENTS.md item D)
+# ══════════════════════════════════════════════════════════
+
+class LMStudioAdapter:
+    """Adapter for LM Studio's local OpenAI-compatible server. Opt-in only
+    (see LMDeployAdapter docstring)."""
+
+    def __init__(self, endpoint: str = LM_STUDIO_DEFAULT_URL):
+        """Initialize LM Studio adapter."""
+        self.endpoint = endpoint.rstrip("/")
+
+    def health(self) -> EngineHealth:
+        """Health. LM Studio has no dedicated /health route — /v1/models
+        responding is itself the readiness signal."""
+        h = EngineHealth(engine="lm_studio", endpoint=self.endpoint)
+        t0 = time.monotonic()
+        code, body = _http_get(f"{self.endpoint}/v1/models")
+        h.latency_ms = (time.monotonic() - t0) * 1000
+
+        if code == 200:
+            h.reachable = True
+            h.status = "READY"
+            try:
+                data = json.loads(body)
+                h.models = [m.get("id", "") for m in data.get("data", [])]
+            except (json.JSONDecodeError, KeyError) as _e:
+                _note_probe_error("probe", "", _e)  # logged, not raised
+        elif code > 0:
+            h.reachable = True
+            h.status = "DEGRADED"
+            h.error = f"HTTP {code}"
+        else:
+            h.error = body[:200]
+
+        return h
+
+    def scrape_metrics(self) -> InferenceMetrics:
+        """LM Studio's local server has no metrics endpoint — return basic
+        status (same honest-fallback rationale as LMDeployAdapter)."""
+        return InferenceMetrics(engine="lm_studio", timestamp=time.time())
 
 
 # ══════════════════════════════════════════════════════════
@@ -355,6 +493,9 @@ def discover_engines(endpoints: dict[str, str] | None = None) -> list[EngineHeal
         "vllm": VLLMAdapter,
         "ollama": OllamaAdapter,
         "sglang": SGLangAdapter,
+        "lmdeploy": LMDeployAdapter,
+        "tensorrt_llm": TensorRTLLMAdapter,
+        "lm_studio": LMStudioAdapter,
     }
 
     results: list[EngineHealth] = []
@@ -367,15 +508,19 @@ def discover_engines(endpoints: dict[str, str] | None = None) -> list[EngineHeal
     return results
 
 
-def get_adapter(engine: str, endpoint: str) -> "VLLMAdapter | OllamaAdapter | SGLangAdapter | None":
-    """Get the appropriate adapter for an engine type."""
+def get_adapter(engine: str, endpoint: str) -> Any:
+    """Get the appropriate adapter for an engine type. Return type is one of
+    VLLMAdapter | OllamaAdapter | SGLangAdapter | LMDeployAdapter |
+    TensorRTLLMAdapter | LMStudioAdapter | None."""
     adapters: dict[str, Any] = {
         "vllm": VLLMAdapter,
         "ollama": OllamaAdapter,
         "sglang": SGLangAdapter,
+        "lmdeploy": LMDeployAdapter,
+        "tensorrt_llm": TensorRTLLMAdapter,
+        "lm_studio": LMStudioAdapter,
     }
     cls = adapters.get(engine)
     if cls:
-        adapter: VLLMAdapter | OllamaAdapter | SGLangAdapter = cls(endpoint)
-        return adapter
+        return cls(endpoint)
     return None

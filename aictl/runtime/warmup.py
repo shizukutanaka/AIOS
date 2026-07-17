@@ -57,12 +57,18 @@ class WarmupManager:
 
     def get_warmup_candidates(self, top_n: int = 3) -> list[UsageRecord]:
         """Return the top N most-used models for preloading."""
+        # Guard the slice: `scored[:top_n]` with a negative top_n is the classic
+        # trap — `scored[:-3]` returns *all but the last 3*, so `--top -3` would
+        # warm up (library_size - 3) models, the inverse of limiting to a few.
+        # A non-positive request means "no candidates", never "almost all".
+        if top_n <= 0:
+            return []
         usage = self._load_usage()
         records: list[UsageRecord] = []
         for key, data in usage.items():
             records.append(UsageRecord(
-                model=data["model"],
-                engine=data["engine"],
+                model=data.get("model", ""),
+                engine=data.get("engine", ""),
                 count=data.get("count", 0),
                 last_used=data.get("last_used", 0),
                 avg_load_time_ms=data.get("avg_load_time_ms", 0),
@@ -92,7 +98,7 @@ class WarmupManager:
                 result = self._warmup_ollama(rec.model)
             elif rec.engine in ("vllm", "sglang"):
                 result = {"model": rec.model, "engine": rec.engine,
-                          "status": "skip", "reason": "vLLM/SGLang models load on container start"}
+                          "status": "skipped", "reason": "vLLM/SGLang models load on container start"}
 
             results.append(result)
         return results
@@ -110,9 +116,12 @@ class WarmupManager:
                 data = json.loads(resp.read())
                 available = [m.get("name", "") for m in data.get("models", [])]
                 if model not in available and not any(model in m for m in available):
-                    # Pull model
-                    subprocess.run(["ollama", "pull", model],
-                                   capture_output=True, timeout=300)
+                    # Pull model; propagate failure so caller gets a clear error
+                    pull = subprocess.run(["ollama", "pull", model],
+                                          capture_output=True, timeout=300)
+                    if pull.returncode != 0:
+                        result["error"] = pull.stderr.decode(errors="replace").strip()[:200]
+                        return result
 
             # Send minimal request to load into memory
             t0 = time.monotonic()

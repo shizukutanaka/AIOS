@@ -112,6 +112,10 @@ def measure(command: str) -> Iterator[dict[str, Any]]:
 
 def read_recent(limit: int = 50) -> list[PerfRecord]:
     """Read the most recent perf records. Robust to corrupted lines."""
+    # limit==0 must mean "no records": lines[-0:] would otherwise return every
+    # line (same [-n:] trap as EventBus.recent).
+    if limit <= 0:
+        return []
     path = _perf_path()
     if not path.exists():
         return []
@@ -125,8 +129,15 @@ def read_recent(limit: int = 50) -> list[PerfRecord]:
     for line in lines[-limit:]:
         try:
             d = json.loads(line)
-            records.append(PerfRecord(**d))
-        except (json.JSONDecodeError, TypeError):
+            if not isinstance(d, dict):
+                continue
+            # Filter unknown keys so a record written by a newer aictl (with an
+            # extra field) still loads with its known fields, instead of being
+            # dropped wholesale.
+            records.append(PerfRecord(**{
+                k: v for k, v in d.items() if k in PerfRecord.__dataclass_fields__
+            }))
+        except (json.JSONDecodeError, TypeError, ValueError):
             continue
     return records
 

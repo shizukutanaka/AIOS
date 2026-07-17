@@ -26,6 +26,7 @@ class VerifyResult:
     digest: str = ""
     error: str = ""
     raw_output: str = ""
+    warning: str = ""        # non-fatal caveat about what `verified` actually means
 
 
 def cosign_available() -> bool:
@@ -67,12 +68,26 @@ def verify_image(
         ])
         result.method = "cosign-keyless"
     else:
-        # Cosign v3: keyless without specific identity
+        # Cosign v3: keyless WITHOUT a pinned identity/issuer. This matches
+        # ANY valid Sigstore signature from ANY OIDC identity — an attacker
+        # can self-sign a malicious image via their own free GitHub Actions
+        # workflow and it verifies just as cleanly as a signature from the
+        # project's real publisher. `verified=True` here means "this image is
+        # signed by *someone*", not "this image is trustworthy" — callers MUST
+        # surface `result.warning` rather than treat a bare "✓ verified" as a
+        # supply-chain guarantee. Pass certificate_identity +
+        # certificate_oidc_issuer to get a real provenance check.
         cmd.extend([
             "--certificate-identity-regexp", ".*",
             "--certificate-oidc-issuer-regexp", ".*",
         ])
         result.method = "cosign-keyless"
+        result.warning = (
+            "No --identity/--oidc-issuer given: this only confirms the image "
+            "was signed by SOME Sigstore identity, not by a trusted publisher. "
+            "Anyone can self-sign a malicious image and pass this check. Pass "
+            "--identity and --oidc-issuer for a real provenance guarantee."
+        )
 
     # Cosign v3: --output text by default, use --output json for structured
     cmd.extend(["--output", "json"])
@@ -107,6 +122,7 @@ def verify_attestation(
     result = VerifyResult(method="cosign-attestation")
 
     if not cosign_available():
+        result.method = "cosign-unavailable"
         result.error = "cosign not installed"
         return result
 
@@ -123,6 +139,8 @@ def verify_attestation(
             "--certificate-oidc-issuer-regexp", ".*",
         ])
 
+    # Cosign v3 requires --output json for machine-readable output (trust rule).
+    cmd.extend(["--output", "json"])
     cmd.append(image_ref)
 
     try:
@@ -130,6 +148,7 @@ def verify_attestation(
         result.raw_output = r.stdout[:1000]
         if r.returncode == 0:
             result.verified = True
+            _parse_cosign_output(r.stdout, result)
         else:
             result.error = r.stderr.strip()[:200]
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:

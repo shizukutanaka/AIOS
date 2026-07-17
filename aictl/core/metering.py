@@ -33,11 +33,13 @@ class TokenBucket:
     quota_tokens_per_day: int = 0    # 0 = unlimited
     quota_tokens_per_month: int = 0
     quota_tokens_per_minute: int = 0
-    # Daily/monthly tracking
+    # Daily/monthly/minute tracking
     tokens_today: int = 0
     tokens_this_month: int = 0
+    tokens_this_minute: int = 0
     today_date: str = ""
     month_date: str = ""
+    minute_start: float = 0.0        # epoch seconds of the current 60s window
 
 
 @dataclass
@@ -70,6 +72,8 @@ class TokenMeter:
                latency_ms: float = 0.0,
                entity_type: str = "apikey") -> bool:
         """Record token usage. Returns False if quota exceeded."""
+        prompt_tokens = max(0, prompt_tokens)
+        completion_tokens = max(0, completion_tokens)
         total = prompt_tokens + completion_tokens
         now = time.time()
         today = time.strftime("%Y-%m-%d")
@@ -83,13 +87,16 @@ class TokenMeter:
                                  first_request_at=now)
             buckets[entity_id] = bucket
 
-        # Reset daily/monthly counters
+        # Reset daily/monthly/minute counters
         if bucket.today_date != today:
             bucket.tokens_today = 0
             bucket.today_date = today
         if bucket.month_date != month:
             bucket.tokens_this_month = 0
             bucket.month_date = month
+        if bucket.minute_start == 0.0 or now - bucket.minute_start >= 60:
+            bucket.minute_start = now
+            bucket.tokens_this_minute = 0
 
         # Check quotas BEFORE recording
         if bucket.quota_tokens_per_day > 0:
@@ -100,12 +107,17 @@ class TokenMeter:
             if bucket.tokens_this_month + total > bucket.quota_tokens_per_month:
                 return False  # Monthly quota exceeded
 
+        if bucket.quota_tokens_per_minute > 0:
+            if bucket.tokens_this_minute + total > bucket.quota_tokens_per_minute:
+                return False  # Per-minute rate limit exceeded
+
         # Record
         bucket.prompt_tokens += prompt_tokens
         bucket.completion_tokens += completion_tokens
         bucket.total_tokens += total
         bucket.tokens_today += total
         bucket.tokens_this_month += total
+        bucket.tokens_this_minute += total
         bucket.request_count += 1
         bucket.last_request_at = now
 
@@ -128,19 +140,19 @@ class TokenMeter:
         return buckets.get(entity_id)
 
     def set_quota(self, entity_id: str, *,
-                  per_day: int = 0, per_month: int = 0,
-                  per_minute: int = 0) -> None:
-        """Set token quotas for an entity."""
+                  per_day: int | None = None, per_month: int | None = None,
+                  per_minute: int | None = None) -> None:
+        """Set token quotas for an entity. Pass 0 to reset a quota to unlimited."""
         buckets = self._load_buckets()
         bucket = buckets.get(entity_id)
         if bucket is None:
             bucket = TokenBucket(entity_id=entity_id)
             buckets[entity_id] = bucket
-        if per_day:
+        if per_day is not None:
             bucket.quota_tokens_per_day = per_day
-        if per_month:
+        if per_month is not None:
             bucket.quota_tokens_per_month = per_month
-        if per_minute:
+        if per_minute is not None:
             bucket.quota_tokens_per_minute = per_minute
         self._save_buckets(buckets)
 
@@ -165,17 +177,26 @@ class TokenMeter:
             return {}
         try:
             data = json.loads(self._buckets_path.read_text())
+            # A list/scalar-rooted file parses cleanly but `data.items()` (or a
+            # non-dict per-entity value's `v.items()`) raises AttributeError —
+            # uncaught, surfaced as "report a bug" for a corrupt store. Same V7
+            # class as config.py/batch.py/etc.
+            if not isinstance(data, dict):
+                return {}
             return {
                 k: TokenBucket(**{
                     key: val for key, val in v.items()
                     if key in TokenBucket.__dataclass_fields__
                 })
-                for k, v in data.items()
+                for k, v in data.items() if isinstance(v, dict)
             }
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, AttributeError, TypeError):
             return {}
 
     def _save_buckets(self, buckets: dict[str, TokenBucket]) -> None:
         """Persist data to storage."""
+        from aictl.core.atomicio import atomic_write_text
         data = {k: asdict(v) for k, v in buckets.items()}
-        self._buckets_path.write_text(json.dumps(data, indent=2))
+        # Atomic: token buckets are billing state — a crash mid-write must not
+        # corrupt them.
+        atomic_write_text(self._buckets_path, json.dumps(data, indent=2))

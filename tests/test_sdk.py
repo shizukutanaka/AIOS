@@ -250,12 +250,18 @@ class TestSDKDegradation(unittest.TestCase):
     """Verify the SDK never crashes even when things go wrong."""
 
     def test_embed_with_unreachable_endpoint(self):
-        """ai.embed falls back to deterministic pseudo-vectors on failure."""
+        """ai.embed falls back to deterministic pseudo-vectors on failure.
+
+        Fallback width is rag's shared FALLBACK_DIM (64), NOT one raw
+        sha256 digest (32): the old 32-dim fallback made SDK-degraded
+        vectors indistinguishable from real-model output to rag/cache
+        status's FALLBACK_DIM-width detector (Pass 185, item A-2)."""
         from aictl.sdk import _embed
+        from aictl.core.rag import FALLBACK_DIM
         # Point at nowhere
         vectors = _embed("http://127.0.0.1:1", ["test"])
         self.assertEqual(len(vectors), 1)
-        self.assertEqual(len(vectors[0]), 32)  # SHA-256 bytes
+        self.assertEqual(len(vectors[0]), FALLBACK_DIM)
 
 
 if __name__ == "__main__":

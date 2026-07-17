@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.argtypes import positive_int
 
 
 # GPU VRAM catalog (April 2026)
@@ -46,8 +47,8 @@ def register(sub: Any) -> None:
     )
     p.add_argument("model", help="Model name (e.g. llama3:70b, qwen3:7b)")
     p.add_argument("--gpu", default="auto", help="GPU type override")
-    p.add_argument("--context", type=int, default=8192, help="Context length")
-    p.add_argument("--concurrent", type=int, default=1, help="Concurrent requests")
+    p.add_argument("--context", type=positive_int, default=8192, help="Context length")
+    p.add_argument("--concurrent", type=positive_int, default=1, help="Concurrent requests")
     p.add_argument("--use-case", default="", help="chat | code | embedding")
     p.set_defaults(func=run)
 
@@ -63,21 +64,38 @@ def run(args: argparse.Namespace) -> int:
         print("  Try: aictl fit qwen3:7b --gpu auto")
         return 1
 
+    # Context length and concurrency are physical quantities: a value < 1 is
+    # meaningless and (worse) yields a NEGATIVE KV-cache estimate that silently
+    # under-reports total VRAM, making a model falsely appear to fit.
+    if getattr(args, "context", 8192) < 1:
+        err(f"--context must be >= 1 (got {args.context}).")
+        return 1
+    if getattr(args, "concurrent", 1) < 1:
+        err(f"--concurrent must be >= 1 (got {args.concurrent}).")
+        return 1
+
     target = _find_model(args.model, MODELS)
     if target is None:
         err(f"Unknown model: {args.model}")
         print("  Try: aictl recommend  # see available models")
         return 1
 
+    unified = False
     if args.gpu == "auto":
         hw = full_detect()
         if not hw.gpus:
-            return _analyze_cpu(target, hw)
+            return _analyze_cpu(target, hw, getattr(args, "json", False))
         gpu_name = hw.gpus[0].name
         vram_mb = hw.gpus[0].vram_mb
+        unified = getattr(hw.gpus[0], "unified_memory", False)
     else:
         gpu_name = args.gpu
         vram_mb = _lookup_gpu_vram(gpu_name)
+        if vram_mb == 0:
+            # Apple Silicon chips have unified memory, not a fixed VRAM catalog.
+            from aictl.runtime.broker import lookup_apple_silicon_vram
+            vram_mb = lookup_apple_silicon_vram(gpu_name)
+            unified = vram_mb > 0
         if vram_mb == 0:
             err(f"Unknown GPU: {gpu_name}")
             print("  Known GPUs: " + ", ".join(sorted(GPU_VRAM_MB.keys())[:5]) + "...")
@@ -104,10 +122,24 @@ def run(args: argparse.Namespace) -> int:
         ]
 
     notes = []
+    if unified:
+        notes.append(
+            f"{gpu_name} uses unified memory: ~{vram_mb}MB of system RAM is "
+            f"addressable as VRAM (budgeted at 75%). Use MLX or Ollama (Metal)."
+        )
     if not fits_any:
         notes.append(
             f"{args.model} (FP16) needs {target.vram_required_mb}MB "
             f"but {gpu_name} has only {vram_mb}MB."
+        )
+        # vLLM v0.19+ can spill KV cache to system RAM, letting long-context
+        # workloads run on a GPU whose VRAM only barely holds the weights --
+        # a remedy alongside (not instead of) quantization when the weights
+        # themselves are the problem (IMPROVEMENTS.md item Q).
+        notes.append(
+            "If the weights fit but context doesn't: vLLM v0.19+ CPU KV-cache "
+            "offloading spills KV to system RAM "
+            "(--kv-cache-offloading, needs ample RAM; adds latency)."
         )
 
     if getattr(args, "json", False):
@@ -158,22 +190,47 @@ def _extract_param_billions(name: str) -> float:
     return float(m.group(1)) if m else 7.0
 
 
+# ── Shared VRAM/KV math (single source of truth for `fit` and `capacity`) ──
+# CUDA context / runtime overhead, and the fraction of VRAM we keep usable
+# (the rest is a safety margin against fragmentation / activation spikes).
+OVERHEAD_MB = 500
+VRAM_SAFETY = 0.90
+
+# Quantization table: name → (weight multiplier vs fp16, quality factor, notes).
+QUANT_CONFIGS: dict[str, tuple[float, float, str]] = {
+    "fp16": (1.00, 1.00, "Full precision"),
+    "fp8": (0.50, 0.99, "Hopper/Blackwell/Ada (CC≥89)"),
+    "q8_0": (0.55, 0.98, "GGUF Q8 (Ollama/llama.cpp)"),
+    "awq": (0.28, 0.95, "AWQ 4-bit (vLLM, best quality 4-bit)"),
+    "q4_K_M": (0.30, 0.92, "GGUF Q4 (recommended for Ollama)"),
+    "q3_K_M": (0.24, 0.88, "GGUF Q3 (aggressive)"),
+}
+
+
+def _fp16_weights_mb(model_b: float) -> int:
+    """fp16 weight footprint: params × 2 bytes/param (1024 MB per GB)."""
+    return int(model_b * 2 * 1024)
+
+
+def _kv_per_1k_mb(model_b: float) -> int:
+    """KV-cache MB per 1,000 tokens for a single sequence (scales with size)."""
+    return max(1, int(2 * (model_b / 7.0)))
+
+
 def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[str, Any]:
     """Calculate and return the numeric result."""
-    base_mb = model.vram_required_mb
     model_b = _extract_param_billions(model.name)
-    kv_per_1k = max(1, int(2 * (model_b / 7.0)))
+    # fp16 base = params × 2 bytes/param (1024 MB per GB). The quant multipliers
+    # below are fractions of fp16, so the base must be the fp16 weight size — NOT
+    # the DB's `vram_required_mb`, which is the model's *recommended-quantization*
+    # footprint (e.g. q4_K_M for llama3.1:8b). Using the quantized value as the
+    # fp16 base under-reported every row (an 8B model showed fp16 ≈ 6 GB instead
+    # of ~16 GB). Deriving from the param count also matches the DB's own fp16
+    # entries (e.g. Llama-3.2-8B fp16 = 16384 MB).
+    base_mb = _fp16_weights_mb(model_b)
+    kv_per_1k = _kv_per_1k_mb(model_b)
     kv_total = int(kv_per_1k * (context / 1000) * concurrent)
-    overhead = 500  # CUDA context
-
-    configs = {
-        "fp16": (1.00, 1.00, "Full precision"),
-        "fp8": (0.50, 0.99, "Hopper/Blackwell/Ada (CC≥89)"),
-        "q8_0": (0.55, 0.98, "GGUF Q8 (Ollama/llama.cpp)"),
-        "awq": (0.28, 0.95, "AWQ 4-bit (vLLM, best quality 4-bit)"),
-        "q4_K_M": (0.30, 0.92, "GGUF Q4 (recommended for Ollama)"),
-        "q3_K_M": (0.24, 0.88, "GGUF Q3 (aggressive)"),
-    }
+    overhead = OVERHEAD_MB
 
     return {
         name: {
@@ -185,7 +242,7 @@ def _calculate_quantizations(model: Any, context: int, concurrent: int) -> dict[
             "notes": notes_str,
             "fits": False,
         }
-        for name, (mult, quality, notes_str) in configs.items()
+        for name, (mult, quality, notes_str) in QUANT_CONFIGS.items()
     }
 
 
@@ -226,17 +283,27 @@ def _display(model: str, gpu: str, vram_mb: int, quants: dict[str, Any],
     print()
 
 
-def _analyze_cpu(model: Any, hw: Any) -> int:
+def _analyze_cpu(model: Any, hw: Any, as_json: bool = False) -> int:
     """Analyze CPU-only inference feasibility."""
     ram_mb = hw.system.ram_total_mb
+    q4_mb = int(model.vram_required_mb * 0.30) + 500
+    fits = q4_mb <= ram_mb * 0.70
+
+    if as_json:
+        print_json({
+            "model": model.name, "gpu": "CPU", "ram_mb_available": ram_mb,
+            "q4_mb_needed": q4_mb, "fits": fits,
+            "note": ("Q4_K_M should work — slow but functional CPU inference."
+                     if fits else "Not enough RAM even at Q4_K_M."),
+        })
+        return 0 if fits else 2
+
     warn(f"No GPU detected. Analyzing for CPU (RAM: {ram_mb}MB)")
     print()
     print(f"  Model: {model.name}")
-    q4_mb = int(model.vram_required_mb * 0.30) + 500
-    if q4_mb <= ram_mb * 0.70:
+    if fits:
         ok(f"Q4_K_M should work ({q4_mb}MB needed, {ram_mb*0.7:.0f}MB available)")
         print("  Expected: slow but functional CPU inference")
         return 0
-    else:
-        err(f"Not enough RAM even at Q4_K_M ({q4_mb}MB needed)")
-        return 2
+    err(f"Not enough RAM even at Q4_K_M ({q4_mb}MB needed)")
+    return 2

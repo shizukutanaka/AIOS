@@ -18,6 +18,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Any
 
+from aictl.core.constants import AICTL_VERSION
+
 # Mock model catalog
 MOCK_MODELS = [
     {"id": "mock-llama3-8b", "object": "model", "owned_by": "aios-mock"},
@@ -29,7 +31,7 @@ RESPONSES = {
     "hello": "Hello! I'm a mock inference engine running inside aictl. How can I help you today?",
     "what": "That's a great question. As a mock engine, I generate deterministic responses for testing the full aictl stack — daemon, proxy, router, and SLO governor.",
     "test": "Test confirmed. The mock engine is working correctly. All systems operational.",
-    "default": "This is a response from the aictl mock inference engine (v1.5.0). It demonstrates that the full request path works: client → proxy → router → engine → response.",
+    "default": f"This is a response from the aictl mock inference engine (v{AICTL_VERSION}). It demonstrates that the full request path works: client → proxy → router → engine → response.",
 }
 
 # Metrics state
@@ -47,9 +49,33 @@ _lock = threading.Lock()
 class MockEngineHandler(BaseHTTPRequestHandler):
     """OpenAI-compatible mock inference handler."""
 
+    # Cap the request body the mock will read (it only ever needs a small JSON
+    # payload). Matches the hardening in aiosd / proxy.
+    _MAX_BODY_BYTES = 10 * 1024 * 1024
+
     def log_message(self, format: Any, *args: Any) -> None:
         """Log message."""
         pass  # Silence request logs
+
+    def _read_json_body(self) -> dict[str, Any]:
+        """Read and JSON-decode the request body, robust to bad headers.
+
+        A malformed Content-Length must not crash the handler thread (a bare
+        `int(...)` would raise), and a NEGATIVE length must be treated as "no
+        body" — otherwise `rfile.read(-1)` reads until EOF, defeating the size
+        cap (the same trap fixed in proxy._read_body). Returns {} on any
+        non-positive/unparseable length or malformed JSON.
+        """
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            return {}
+        if length <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(min(length, self._MAX_BODY_BYTES)))
+        except (ValueError, OSError):
+            return {}
 
     def do_GET(self) -> None:
         """Do get."""
@@ -84,8 +110,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
     def _chat_completions(self) -> None:
         """Handle POST /v1/chat/completions requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(content_length)) if content_length else {}
+        body = self._read_json_body()
 
         model = body.get("model", "mock-llama3-8b")
         messages = body.get("messages", [])
@@ -121,7 +146,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
         # Tool calling support
         if tools and not schema:
             response_text, tool_calls = _generate_tool_call(tools, prompt)
-            tokens = len(response_text.split()) + sum(len(json.dumps(tc)) for tc in tool_calls)
+            tokens = len(response_text.split()) + sum(len(json.dumps(tc).split()) for tc in tool_calls)
         elif schema:
             response_text = _generate_structured(schema)
             tool_calls = []
@@ -189,8 +214,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
     def _ollama_generate(self) -> None:
         """Handle POST /api/generate (Ollama format) requests."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(content_length)) if content_length else {}
+        body = self._read_json_body()
         prompt = body.get("prompt", "")
         response_text = _generate_response(prompt, 100)
 
@@ -213,7 +237,7 @@ class MockEngineHandler(BaseHTTPRequestHandler):
                 f'vllm:num_generation_tokens_total {_metrics["tokens_generated"]}',
                 f'vllm:request_success_total {_metrics["requests_total"]}',
             ]
-        self.wfile.write("\n".join(lines).encode())
+        self.wfile.write(("\n".join(lines) + "\n").encode())
 
     def _json(self, data: Any, status: int = 200) -> None:
         """Serialize and send a JSON response."""
@@ -227,10 +251,11 @@ class MockEngineHandler(BaseHTTPRequestHandler):
 
 def _generate_response(prompt: str, max_tokens: int) -> str:
     """Generate a deterministic response based on prompt."""
-    if not prompt:
+    words = prompt.strip().split()
+    if not words:
         return RESPONSES["default"]
 
-    first_word = prompt.strip().split()[0].lower().rstrip(".,!?")
+    first_word = words[0].lower().rstrip(".,!?")
     text = RESPONSES.get(first_word, RESPONSES["default"])
 
     # Truncate to approximate max_tokens

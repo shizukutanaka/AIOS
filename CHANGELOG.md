@@ -1,6 +1,73 @@
 # Changelog
 
-## Unreleased — Quality & correctness fixes
+## v1.7.0 — 2026-07-16 — Retrieval quality, layered routing, fairness & guardrail hardening
+
+Highlights since v1.6.0 (all additive, off-by-default/opt-in — zero breaking changes,
+zero new external dependencies, still stdlib-only):
+
+- **Retrieval:** hybrid dense+BM25 RAG retrieval with Reciprocal Rank Fusion; pluggable
+  cross-encoder **reranker** (`rag search --rerank`, TEI-compatible `/rerank`, off by
+  default); embedding-provider **capability detection** so the hash fallback is truly
+  last-resort, with degraded-mode honesty flags in `rag status`/`cache status`.
+- **Routing:** the embedding-**kNN** confidence-gated tie-breaker (`route --knn`) completes
+  the rules → embedding → cascade layered-routing stack.
+- **Guardrails:** the content-policy + PII-redaction gate now runs on real proxy traffic
+  (opt-in, no-op by default); an optional Llama-Guard-style **model check** with an LRU
+  verdict cache (DoS hardening, arXiv:2606.14517).
+- **MCP:** 2026-07-28 spec compatibility (version negotiation, `server/discover`,
+  `ttlMs`/`cacheScope`) plus **progress notifications** for long-running tool calls.
+- **Fairness/cost:** `tco fairshare` advisory (Jain's fairness index over per-tenant token
+  usage); carbon/energy advisor (`tco carbon`).
+- **Catalog/advisors:** GLM-5.2 & Kimi K2.6 models, Medusa speculative-decoding method,
+  vLLM v0.19 KV-offload hints, NVFP4 quant sweet-spot notes, Apple-Silicon unified-memory
+  fit math, 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio).
+
+3433+ tests (all green), 80 Python + 29 Go commands, 19 MCP tools.
+
+### Added
+- **KV-budget hard filter in the router** (`aictl/runtime/router.py`): `SLOConfig.kv_cache_max`
+  was already used by the governor and `optimize.py`'s recommendations, but `BrokerRouter` —
+  the component that actually picks the next request's engine — never referenced it, only a
+  soft "headroom" factor that could still let a near-exhausted engine win. `route()` now
+  hard-rejects any engine over `kv_cache_max` with a `kv_cache_exhausted` reason code, the
+  same way unreachable/wrong-status engines already are. If every candidate is rejected this
+  way, the existing `_fallback` priority-order path still returns a reachable engine
+  (degraded, not an outage).
+- **LMDeploy, TensorRT-LLM, LM Studio engine adapters** (`aictl/runtime/adapters.py`):
+  `runtime/adapters.py` only detected vLLM/SGLang/Ollama; the 2026 field also treats
+  LMDeploy (TurboMind), TensorRT-LLM (`trtllm-serve`), and LM Studio as mainstream, all
+  OpenAI-compatible. Opt-in only — `EngineEndpoints.lmdeploy`/`tensorrt_llm`/`lm_studio`
+  default to `""` and are excluded from `to_dict()` until configured
+  (`aictl config set engines.lmdeploy <url>`), so zero-config discovery/status/demo/gate
+  is completely unaffected. `recommend`/`optimize`/`route` all consume `discover_engines()`
+  generically, so all three widen automatically.
+
+### Security
+- **Guard content-policy + PII redaction gate in the proxy** (`aictl/daemon/proxy.py`):
+  `core/guard.py` (9 PII types, 4 content policies, Unicode/homoglyph-hardened) was a
+  manual-only tool — `aictl guard scan` / the MCP tool — never consulted on real
+  inference traffic. A prompt-injection/jailbreak attempt sailed straight through to the
+  engine, and PII an upstream model leaked in its response reached the client untouched.
+  Two new `Config` fields, both default to a no-op (`guard_policy: off|warn|enforce`,
+  `guard_redact_output: bool = False`), gate two new proxy checks: `_check_guard`
+  (request-side content policy, before routing, both completions and embeddings) and
+  `_redact_response_pii` (response-side PII redaction, non-streaming only — SSE has no
+  buffering point today, documented not silently dropped). Redaction feeds the same
+  `aios_guard_redactions_total` counter added below. Config re-read per request, so
+  `aictl config set guard_policy enforce` takes effect without a proxy restart.
+
+### Observability
+- **Guard redactions metric** (`aictl/core/guard.py`, `aictl/metrics/prometheus.py`):
+  `/metrics` now emits `aios_guard_redactions_total` — the last of
+  `docs/IMPROVEMENTS.md` item J's value-prop counters that wasn't wired yet
+  (cache/metering/cascade counters already were). `scan()` gained an opt-in
+  `state_dir` kwarg to persist the lifetime tally; left at its default it
+  stays the exact pure function it always was, so existing callers/tests are
+  unaffected. `aictl guard scan --redact` always feeds the counter (resolves
+  a concrete state dir regardless of `--state-dir`); the MCP guard tool does
+  not yet (no state-dir plumbing there today — noted, not silently assumed).
+  Route-cost-saved (the other item-J leftover) needs a baseline-cost
+  methodology decision and remains future work.
 
 ### Fixed
 - **Quality gate** (`aictl/cmd/gate.py`): when `ruff`/`mypy` are invoked via
@@ -22,8 +89,8 @@
 
 ### Changed
 - Project source is now tracked in the repository (was shipped only as a zip).
-- Documentation counts reconciled with reality: 1380 tests, 65 CLI commands,
-  18 MCP tools, 147 modules.
+- Documentation counts reconciled with reality: 1840 tests, 66 CLI commands,
+  19 MCP tools, 150 modules.
 - Added `tests/test_improvements_v16.py` (7 regression tests).
 
 ## v1.6.0 (2026-04-25) — Competitor Gap Release

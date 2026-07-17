@@ -164,6 +164,20 @@ def format_for_user(e: BaseException) -> str:
             "    aictl doctor       # identify the slow component"
         )
 
+    # Input-validation failures (commands raise ValueError with the reason, e.g.
+    # "hours per day must be in (0, 24]"). These are the *user's* mistake, not a
+    # bug — present them as an input problem, never as "Unexpected error … report
+    # a bug", which would misdirect the user to file an issue for their own typo.
+    # UnicodeError is a ValueError subclass but is an encoding/environment fault,
+    # not the user's input — let it fall through to the generic handler.
+    if isinstance(e, (ValueError, KeyError)) and not isinstance(e, UnicodeError):
+        detail = str(e).strip("'") if isinstance(e, KeyError) else str(e)
+        return (
+            f"  Invalid input: {detail}\n"
+            "\n  Try this:\n"
+            "    Re-check your arguments (use <command> --help for valid values)"
+        )
+
     # Generic fallback — show the type, hide the traceback
     return (
         f"  Unexpected error: {type(e).__name__}: {e}\n"

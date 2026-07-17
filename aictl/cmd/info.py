@@ -18,7 +18,7 @@ def _count_commands() -> int:
                 return len(action.choices)
     except Exception:
         pass  # best-effort; failure is non-critical
-    return 58  # fallback
+    return 80  # fallback
 
 
 def _count_tests() -> str:
@@ -32,7 +32,8 @@ def _count_tests() -> str:
             if not f.startswith("test_") or not f.endswith(".py"):
                 continue
             try:
-                tree = ast.parse(open(os.path.join(tests_dir, f)).read())
+                with open(os.path.join(tests_dir, f)) as _fh:
+                    tree = ast.parse(_fh.read())
                 for node in ast.walk(tree):
                     if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                         count += 1
@@ -61,7 +62,7 @@ def run(args: argparse.Namespace) -> int:
         "version": VERSION,
         "python_commands": _count_commands(),
         "go_commands": 29,
-        "rest_endpoints": 22,
+        "rest_endpoints": 30,
         "recipes": len(list_recipes()),
         "model_db": len(MODELS),
         "skills": 8,
@@ -82,7 +83,7 @@ def run(args: argparse.Namespace) -> int:
             "bootc v1.15 (Fedora 42)", "Podman + Quadlet",
             "vLLM v0.19 / SGLang v0.5 / Ollama v0.20",
             "K3s v1.35 + KServe v0.17 + llm-d v0.5",
-            "NVIDIA Dynamo v0.8 (KVBM + NIXL)",
+            "NVIDIA Dynamo 1.0 GA (KVBM + NIXL)",
             "Gateway API InferencePool v1",
             "KEDA v2.19", "Cosign v3 + ORAS",
             "OTel GenAI SemConv v1.40 + Prometheus",

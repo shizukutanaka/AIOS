@@ -20,6 +20,17 @@ from pathlib import Path
 from typing import Any
 
 from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.atomicio import atomic_write_text
+
+
+def key_id_for(raw_key: str) -> str:
+    """Stable, non-secret id for a raw key (SHA-256 prefix).
+
+    This is the value to use for usage attribution / logging — never the raw key
+    itself, which would persist the secret in plaintext (e.g. the metering store).
+    Matches the key_id shown by `apikey list`.
+    """
+    return hashlib.sha256(raw_key.encode()).hexdigest()[:8]
 
 
 @dataclass
@@ -53,11 +64,12 @@ class KeyManager:
         self._rate_states: dict[str, RateLimitState] = {}
 
     def generate_key(self, name: str, rate_limit_rpm: int = 60,
+                     rate_limit_tpm: int = 100000,
                      expires_days: int = 0) -> tuple[str, APIKey]:
         """Generate a new API key. Returns (raw_key, key_record)."""
         raw_key = f"aios-{secrets.token_urlsafe(32)}"
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
-        key_id = key_hash[:8]
+        key_id = key_id_for(raw_key)
 
         key = APIKey(
             key_id=key_id,
@@ -67,6 +79,7 @@ class KeyManager:
             expires_at=time.time() + (expires_days * 86400) if expires_days > 0 else 0,
             active=True,
             rate_limit_rpm=rate_limit_rpm,
+            rate_limit_tpm=rate_limit_tpm,
         )
 
         keys = self._load_keys()
@@ -83,9 +96,10 @@ class KeyManager:
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         keys = self._load_keys()
 
-        # Find by hash
+        # Find by hash — use constant-time comparison to prevent timing attacks
         for kid, kdata in keys.items():
-            if kdata.get("key_hash") == key_hash:
+            stored_hash = kdata.get("key_hash", "")
+            if stored_hash and secrets.compare_digest(stored_hash, key_hash):
                 key = APIKey(**{k: v for k, v in kdata.items() if k in APIKey.__dataclass_fields__})
 
                 if not key.active:
@@ -165,5 +179,7 @@ class KeyManager:
 
     def _save_keys(self, keys: dict[str, dict[str, Any]]) -> None:
         """Persist data to storage."""
-        self._keys_path.parent.mkdir(parents=True, exist_ok=True)
-        self._keys_path.write_text(json.dumps(keys, indent=2))
+        # Atomic (crash-safe) AND 0o600: the API-keys file is a secret — a plain
+        # write_text left it world-readable (0o644, the umask default), so any
+        # local user could read every key's hash and metadata.
+        atomic_write_text(self._keys_path, json.dumps(keys, indent=2), mode=0o600)

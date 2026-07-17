@@ -19,7 +19,145 @@ def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("doctor", help="Comprehensive system diagnosis")
     p.add_argument("--deep", action="store_true", help="Include security + fabric + network")
+    p.add_argument("--fix", action="store_true",
+                   help="Suggest remediation for detected issues and auto-apply safe fixes")
     p.set_defaults(func=run)
+
+
+def build_remediations(report: Any, store: Any) -> list[dict]:
+    """Build a list of remediation actions for detected problems.
+
+    Each entry: {issue, command, auto (bool — safe to auto-apply in-process)}.
+    """
+    fixes: list[dict] = []
+
+    if not store.is_initialized():
+        fixes.append({
+            "issue": "Node not initialized",
+            "command": "aictl init",
+            "auto": True,
+        })
+
+    if report.container_runtime == "none":
+        fixes.append({
+            "issue": "No container runtime found",
+            "command": "sudo dnf install -y podman  # or: apt install podman",
+            "auto": False,
+        })
+
+    if not report.system.cgroup_v2:
+        fixes.append({
+            "issue": "cgroup v2 not enabled (needed for resource limits)",
+            "command": "Add 'systemd.unified_cgroup_hierarchy=1' to kernel cmdline, then reboot",
+            "auto": False,
+        })
+
+    if not report.system.psi_enabled:
+        fixes.append({
+            "issue": "PSI (pressure stall info) unavailable",
+            "command": "Add 'psi=1' to kernel cmdline, then reboot",
+            "auto": False,
+        })
+
+    # Map any free-form issues from the detector to generic guidance
+    for issue in (report.issues or []):
+        if not any(f["issue"] == issue for f in fixes):
+            fixes.append({"issue": issue, "command": "", "auto": False})
+
+    fixes.extend(_trust_baseline_remediations(store))
+
+    return fixes
+
+
+# Cap individually-listed drifted files so a large baseline set doesn't spam
+# the remediation plan; the remainder is folded into one summary entry.
+_MAX_DRIFT_REMEDIATIONS = 5
+
+
+def _trust_baseline_remediations(store: Any) -> list[dict]:
+    """Remediation entries for trust-baseline drift (Pass 162 `doctor --deep`
+    integration exists to REPORT drift; `--fix` must also surface it, but must
+    NEVER auto-remediate it — silently re-baselining a changed file is exactly
+    the "just trust the new hash" mistake that defeats drift detection. Every
+    entry here points at manual investigation, auto=False always.
+    """
+    from aictl.trust.baseline import BaselineStore
+    results = BaselineStore(store.dir).check_all()
+    drifted = [r for r in results if r["status"] in ("changed", "missing")]
+    if not drifted:
+        return []
+
+    fixes = []
+    for r in drifted[:_MAX_DRIFT_REMEDIATIONS]:
+        fixes.append({
+            "issue": f"Trust baseline {r['status']}: {r['path']}",
+            "command": (f"aictl trust check {r['path']}  # investigate; if the "
+                       f"change is legitimate, re-baseline: aictl trust baseline {r['path']}"),
+            "auto": False,
+        })
+    remaining = len(drifted) - _MAX_DRIFT_REMEDIATIONS
+    if remaining > 0:
+        fixes.append({
+            "issue": f"...and {remaining} more drifted baseline(s)",
+            "command": "aictl trust check  # see all",
+            "auto": False,
+        })
+    return fixes
+
+
+def run_fix(args: argparse.Namespace, store: Any, report: Any) -> int:
+    """Print remediation plan and auto-apply safe in-process fixes."""
+    fixes = build_remediations(report, store)
+
+    if getattr(args, "json", False):
+        applied = []
+        for f in fixes:
+            if f["auto"] and f["command"] == "aictl init":
+                _auto_init(store)
+                applied.append(f["issue"])
+        print_json({"remediations": fixes, "applied": applied})
+        return 0
+
+    if not fixes:
+        print("\n✓ No issues detected — nothing to fix")
+        return 0
+
+    print("\nRemediation plan")
+    applied = []
+    for f in fixes:
+        if f["auto"] and f["command"] == "aictl init":
+            _auto_init(store)
+            applied.append(f["issue"])
+            print(f"  ✓ Fixed: {f['issue']} (ran: {f['command']})")
+        elif f["command"]:
+            print(f"  → {f['issue']}")
+            print(f"      Run: {f['command']}")
+        else:
+            print(f"  ✗ {f['issue']} (no automatic remediation available)")
+
+    if applied:
+        print(f"\n  Auto-applied {len(applied)} safe fix(es). Re-run 'aictl doctor' to confirm.")
+    return 0
+
+
+def _auto_init(store: Any) -> None:
+    """Initialize the node in-process (safe auto-fix)."""
+    if store.is_initialized():
+        return
+    from aictl.core.state import NodeState
+    import socket
+    import time
+    report = full_detect()
+    ns = NodeState(
+        node_id=__import__("uuid").uuid4().hex[:6],
+        hostname=socket.gethostname(),
+        initialized_at=time.time(),
+        profile=report.profile,
+        gpu_count=len(report.gpus),
+        vram_total_mb=sum(g.vram_mb for g in report.gpus),
+        ram_total_mb=report.system.ram_total_mb,
+    )
+    store.save_node(ns)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -28,14 +166,24 @@ def run(args: argparse.Namespace) -> int:
     report = full_detect()
     deep = getattr(args, "deep", False)
 
+    # --fix short-circuits to the remediation flow (handles its own json output)
+    if getattr(args, "fix", False):
+        return run_fix(args, store, report)
+
     if getattr(args, "json", False):
         result = {"hardware": report.__dict__}
         if deep:
             from aictl.core.security import scan
             from aictl.runtime.fabric import detect_memory_fabric
+            from aictl.trust.baseline import BaselineStore, worst_status
             from dataclasses import asdict
             result["security"] = asdict(scan(store.dir))
             result["fabric"] = asdict(detect_memory_fabric())
+            trust_results = BaselineStore(store.dir).check_all()
+            result["trust_baseline"] = {
+                "status": worst_status(trust_results) if trust_results else "ok",
+                "results": trust_results,
+            }
         print_json(result)
         return 0
 
@@ -113,8 +261,10 @@ def run(args: argparse.Namespace) -> int:
         import socket
         import time
         for name, url in endpoints.items():
-            host = url.replace("http://", "").replace("https://", "").split(":")[0]
-            port_str = url.replace("http://", "").replace("https://", "").split(":")[-1].split("/")[0]
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(url)
+            host = _parsed.hostname or url
+            port_str = str(_parsed.port or (443 if url.startswith("https://") else 80))
             try:
                 port = int(port_str)
                 t0 = time.monotonic()
@@ -168,6 +318,34 @@ def run(args: argparse.Namespace) -> int:
             checks_pass += 1
         except Exception as e:
             print(f"  \u2717 RAG error: {e}")
+        checks_total += 1
+
+        # Trust baseline drift \u2014 routine surfacing of `aictl trust check`, so an
+        # operator doesn't have to remember to run it separately per model.
+        # Baselining is opt-in (CLAUDE.md: "verification is optional by
+        # default"), so having none recorded is informational, not a failure.
+        print("\nTrust Baseline")
+        try:
+            from aictl.trust.baseline import BaselineStore, worst_status
+            results = BaselineStore(store.dir).check_all()
+            drifted = bool(results) and worst_status(results) in ("changed", "missing")
+            if not results:
+                print("  \u25cb No baselines recorded "
+                      "(run: aictl trust baseline <model-path>)")
+            elif drifted:
+                n_bad = sum(1 for r in results if r["status"] in ("changed", "missing"))
+                print(f"  \u2717 Integrity drift: {n_bad}/{len(results)} "
+                      f"file(s) differ from their trusted baseline")
+                for r in results:
+                    if r["status"] in ("changed", "missing"):
+                        print(f"      {r['status']:8s} {r['path']}")
+            else:
+                print(f"  \u2713 {len(results)} baselined file(s), all match "
+                      f"(run: aictl trust check for details)")
+            if not drifted:
+                checks_pass += 1
+        except Exception as e:
+            print(f"  \u2717 Trust baseline check error: {e}")
         checks_total += 1
 
     # ── Summary ───────────────────────────────────────

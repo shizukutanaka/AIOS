@@ -94,6 +94,14 @@ MODELS: list[ModelRec] = [
     # GLM-5 (April 2026)
     ModelRec("glm5:9b", "ollama", 6500, 8192, "chat", "q4_K_M", 131072,
              "GLM-5 9B — Zhipu AI, strong multilingual"),
+    # GLM-5.2 (June 2026) — leading open-weights on the Artificial Analysis index
+    ModelRec("glm5.2:9b", "ollama", 6500, 8192, "chat", "q4_K_M", 131072,
+             "GLM-5.2 9B — refreshed GLM family, permissive license"),
+    ModelRec("zai-org/GLM-5.2", "vllm", 64000, 81920, "chat", "fp8", 131072,
+             "GLM-5.2 flagship FP8 — top open-weights on AA index (June 2026)"),
+    # Kimi K2.6 (April 2026) — long-horizon agentic execution, Ollama-integrated
+    ModelRec("kimi-k2.6", "ollama", 22000, 32768, "chat", "q4_K_M", 262144,
+             "Kimi K2.6 (1T MoE, 32B active) — long-horizon agentic tasks"),
 
     # ── Reasoning models (dedicated use_case for CoT workloads) ──────
     ModelRec("qwen3:7b-thinking", "ollama", 5500, 8192, "reasoning", "q4_K_M", 32768,
@@ -136,7 +144,8 @@ def recommend(
             # CPU-only: only ollama models with small VRAM req
             if m.runtime != "ollama":
                 continue
-            if m.ram_required_mb > ram_mb:
+            # ram_mb <= 0 means "unknown" — don't filter every model out.
+            if ram_mb > 0 and m.ram_required_mb > ram_mb:
                 continue
 
         # Use case filter
@@ -147,8 +156,9 @@ def recommend(
         headroom = 1.0
         if vram_mb > 0:
             headroom = 1.0 - (m.vram_required_mb / vram_mb)
-        else:
-            headroom = 1.0 - (m.ram_required_mb / max(ram_mb, 1))
+        elif ram_mb > 0:
+            headroom = 1.0 - (m.ram_required_mb / ram_mb)
+        # else: ram_mb unknown → keep headroom=1.0 (neutral; model passed RAM filter)
 
         # Prefer models that use 50-90% of available resources
         utilization = 1.0 - headroom
@@ -166,6 +176,11 @@ def recommend(
         candidates.append((score, m))
 
     candidates.sort(key=lambda x: x[0], reverse=True)
+    # Guard the slice: a negative max_results turns `[:max_results]` into the
+    # inverted `[:-3]` (all but the last 3) — the opposite of "top N". A
+    # non-positive request means no recommendations.
+    if max_results <= 0:
+        return []
     return [m for _, m in candidates[:max_results]]
 
 

@@ -117,7 +117,7 @@ def cloud_completion(
         "model": target_model,
         "messages": messages,
         "max_tokens": max_tokens or config.max_tokens,
-        "stream": False,  # Streaming requires chunked response handling
+        "stream": stream,
     }
 
     url = f"{provider.base_url.rstrip('/')}/chat/completions"
@@ -147,22 +147,18 @@ def cloud_completion(
 
 
 def load_fallback_config(state_dir: Any) -> FallbackConfig:
-    """Load fallback config from config.json."""
-    from pathlib import Path
-    config_path = Path(state_dir) / "config.json" if state_dir else None
-    if not config_path or not config_path.exists():
-        return FallbackConfig()
+    """Load fallback config from config.json.
 
-    try:
-        data = json.loads(config_path.read_text())
-        fb = data.get("fallback", {})
-        return FallbackConfig(
-            enabled=fb.get("enabled", False),
-            provider=fb.get("provider", ""),
-            api_key=fb.get("api_key", ""),
-            model=fb.get("model", ""),
-            max_tokens=fb.get("max_tokens", 1000),
-            timeout_s=fb.get("timeout_s", 30),
-        )
-    except (json.JSONDecodeError, OSError):
-        return FallbackConfig()
+    Delegates to `aictl.core.config.load_config` (the project's single,
+    V7-hardened config loader) instead of re-parsing config.json here. The
+    duplicate parse this replaced had the same "report a bug" crash class as
+    every other loader fixed under V7: a list/scalar-rooted config.json passed
+    `data.get("fallback", {})` and raised AttributeError, uncaught.
+    """
+    from pathlib import Path
+    from aictl.core.config import load_config
+    fb = load_config(Path(state_dir) if state_dir else None).fallback
+    return FallbackConfig(
+        enabled=fb.enabled, provider=fb.provider, api_key=fb.api_key,
+        model=fb.model, max_tokens=fb.max_tokens, timeout_s=fb.timeout_s,
+    )

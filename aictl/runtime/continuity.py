@@ -67,7 +67,12 @@ class ContextContinuityEngine:
             except Exception:
                 pass  # best-effort; failure is non-critical
 
-        self._save_index(snapshots)
+        # Merge with any existing index by engine (latest wins) so saving one
+        # engine's context never wipes another's pending snapshot.
+        by_engine = {s.engine: s for s in self._load_index()}
+        for s in snapshots:
+            by_engine[s.engine] = s
+        self._save_index(list(by_engine.values()))
         return snapshots
 
     def post_upgrade_restore(self, engines: dict[str, str]) -> list[ContextSnapshot]:
@@ -101,14 +106,19 @@ class ContextContinuityEngine:
     def gc(self, max_age_hours: int = 24) -> int:
         """Garbage collect stale snapshots. Returns number removed."""
         snapshots = self._load_index()
+        # A NEGATIVE max-age would make the cutoff a FUTURE timestamp, so
+        # `snap.created_at < cutoff` matches EVERY snapshot — even ones saved
+        # this second — silently wiping all live context. Floor at 0 ("GC
+        # everything stale up to now"), matching the audit-purge guard.
+        max_age_hours = max(0, max_age_hours)
         cutoff = time.time() - (max_age_hours * 3600)
         kept: list[ContextSnapshot] = []
         removed = 0
 
         for snap in snapshots:
             if snap.created_at < cutoff or snap.status in ("expired", "failed"):
-                # Delete data file
-                data_path = self.dir / f"{snap.snapshot_id}.bin"
+                # Delete data file (snapshots are persisted as .json, not .bin)
+                data_path = self.dir / f"{snap.snapshot_id}.json"
                 data_path.unlink(missing_ok=True)
                 removed += 1
             else:
@@ -190,9 +200,11 @@ class ContextContinuityEngine:
                 snap.status = "failed"
                 snap.metadata["error"] = str(e)[:200]
 
-        # Save metadata
+        # Save metadata atomically
         meta_path = self.dir / f"{snap_id}.json"
-        meta_path.write_text(json.dumps(asdict(snap), indent=2))
+        meta_tmp = meta_path.with_suffix(".tmp")
+        meta_tmp.write_text(json.dumps(asdict(snap), indent=2))
+        meta_tmp.replace(meta_path)
 
         return snap
 
@@ -219,7 +231,8 @@ class ContextContinuityEngine:
                         data=body,
                         headers={"Content-Type": "application/json"},
                     )
-                    urllib.request.urlopen(req, timeout=120)
+                    with urllib.request.urlopen(req, timeout=120) as _resp:
+                        _resp.read()
                 except Exception:
                     pass  # best-effort; failure is non-critical
 
@@ -237,6 +250,8 @@ class ContextContinuityEngine:
             return []
 
     def _save_index(self, snapshots: list[ContextSnapshot]) -> None:
-        """Persist data to storage."""
+        """Persist data to storage (atomic write via temp-file rename)."""
         data = [asdict(s) for s in snapshots]
-        self._index_path.write_text(json.dumps(data, indent=2))
+        tmp = self._index_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(self._index_path)

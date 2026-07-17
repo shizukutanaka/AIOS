@@ -15,7 +15,7 @@ help:  ## Show this help
 
 # ── Python ──────────────────────────────────────
 
-test:  ## Run all 1380+ tests
+test:  ## Run all 1840+ tests
 	python3 -m unittest discover -s tests -q 2>&1 | tail -3
 
 test-quick:  ## Run tests, quiet
@@ -53,7 +53,7 @@ lint:  ## Compile-check all Python modules
 install:  ## Install as editable package
 	pip install -e . --break-system-packages 2>/dev/null || pip install -e .
 
-# ── v1.6.0 feature checks ───────────────────────
+# ── v1.7.0 feature checks ───────────────────────
 
 rag-check:  ## Verify RAG pipeline works end-to-end
 	@echo "Testing RAG pipeline..."

@@ -6,7 +6,8 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, print_json, print_table
+from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.argtypes import positive_int
 from aictl.runtime.broker import full_detect
 from aictl.runtime.recommend import recommend
 
@@ -16,12 +17,19 @@ def register(sub: Any) -> None:
     p = sub.add_parser("recommend", help="Recommend models for your hardware")
     p.add_argument("--use-case", default="", choices=["chat", "code", "embedding", "vision", "stt", ""],
                    help="Filter by use case")
-    p.add_argument("--top", type=int, default=5, help="Max results")
+    p.add_argument("--top", type=positive_int, default=5, help="Max results")
     p.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> int:
     """Execute the recommend command."""
+    # --top is a result count: a value < 1 is meaningless and would otherwise
+    # hit the negative-slice trap (returning catalog_size - N models).
+    top = getattr(args, "top", 5)
+    if top < 1:
+        err(f"--top must be >= 1 (got {top}).")
+        return 1
+
     report = full_detect()
     vram = sum(g.vram_mb for g in report.gpus)
     ram = report.system.ram_total_mb

@@ -175,6 +175,8 @@ def list_referrers(reference: str, timeout: int = 30) -> list[ModelArtifact]:
             return []
 
         data = json.loads(r.stdout)
+        if not isinstance(data, dict):
+            return []
         results: list[ModelArtifact] = []
         for ref in data.get("referrers", []):
             results.append(ModelArtifact(

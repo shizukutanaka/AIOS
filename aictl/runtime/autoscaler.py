@@ -36,6 +36,26 @@ class ScalePolicy:
     scale_up_step: int = 1              # Replicas to add per scale-up
     scale_down_step: int = 1            # Replicas to remove per scale-down
 
+    def __post_init__(self) -> None:
+        """Reject replica bounds that produce an invalid autoscaler manifest.
+
+        These values are written straight into KEDA ScaledObject / K8s HPA
+        manifests, where the API server rejects min > max and negative counts.
+        Catch it here — at policy construction — so `scale keda/hpa` never emit
+        a manifest that `kubectl apply` would refuse. min_replicas may be 0
+        (KEDA scale-to-zero); max_replicas must be >= 1; min must be <= max.
+        """
+        if self.min_replicas < 0:
+            raise ValueError(
+                f"min_replicas must be >= 0, got {self.min_replicas}")
+        if self.max_replicas < 1:
+            raise ValueError(
+                f"max_replicas must be >= 1, got {self.max_replicas}")
+        if self.min_replicas > self.max_replicas:
+            raise ValueError(
+                f"min_replicas ({self.min_replicas}) must be <= "
+                f"max_replicas ({self.max_replicas})")
+
 
 @dataclass
 class ScaleDecision:

@@ -15,6 +15,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from aictl.core.atomicio import atomic_write_text
+from aictl.core.filelock import file_lock
+
 
 DEFAULT_STATE_DIR = Path.home() / ".aios"
 
@@ -44,9 +47,15 @@ class StackEntry:
 class StateStore:
     """Filesystem + SQLite state store."""
 
-    def __init__(self, state_dir: Path | None = None):
-        """Initialize state store with directory path."""
-        self.dir = state_dir or DEFAULT_STATE_DIR
+    def __init__(self, state_dir: Path | str | None = None):
+        """Initialize state store with directory path.
+
+        Accepts either a Path or a str: the global `--state-dir` flag delivers a
+        string, and ~24 commands pass it straight through as
+        `StateStore(args.state_dir)`. Coerce to Path here so every caller works
+        uniformly instead of crashing on `str.mkdir`.
+        """
+        self.dir = Path(state_dir) if state_dir else DEFAULT_STATE_DIR
         self.dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self.dir / "state.json"
         self._stacks_path = self.dir / "stacks.json"
@@ -59,48 +68,72 @@ class StateStore:
 
     def save_node(self, ns: NodeState) -> None:
         """Save node."""
-        self._state_path.write_text(json.dumps(asdict(ns), indent=2))
+        atomic_write_text(self._state_path, json.dumps(asdict(ns), indent=2))
 
     def load_node(self) -> NodeState:
         """Load node."""
         if not self._state_path.exists():
             return NodeState()
-        d = json.loads(self._state_path.read_text())
-        return NodeState(**{k: v for k, v in d.items() if k in NodeState.__dataclass_fields__})
+        try:
+            d = json.loads(self._state_path.read_text())
+            return NodeState(**{k: v for k, v in d.items() if k in NodeState.__dataclass_fields__})
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return NodeState()  # graceful fallback on corrupted state file
 
     # ── stacks ──────────────────────────────────────────
     def save_stacks(self, entries: list[StackEntry]) -> None:
         """Save stacks."""
-        self._stacks_path.write_text(
-            json.dumps([asdict(e) for e in entries], indent=2)
+        atomic_write_text(
+            self._stacks_path, json.dumps([asdict(e) for e in entries], indent=2)
         )
 
     def load_stacks(self) -> list[StackEntry]:
         """Load stacks."""
         if not self._stacks_path.exists():
             return []
-        data = json.loads(self._stacks_path.read_text())
-        return [StackEntry(**d) for d in data]
+        try:
+            data = json.loads(self._stacks_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return []  # graceful fallback on a corrupted stacks file
+        # Filter unknown keys (forward-compat with newer schemas) and skip any
+        # individual malformed entry — one bad row must not drop every stack.
+        # Raw StackEntry(**d) would raise TypeError on an unknown field and the
+        # whole list would be lost.
+        entries: list[StackEntry] = []
+        for d in data if isinstance(data, list) else []:
+            if not isinstance(d, dict):
+                continue
+            try:
+                entries.append(StackEntry(**{
+                    k: v for k, v in d.items() if k in StackEntry.__dataclass_fields__
+                }))
+            except (TypeError, ValueError):
+                continue  # skip just this entry
+        return entries
 
     def upsert_stack(self, entry: StackEntry) -> None:
         """Upsert stack."""
-        stacks = self.load_stacks()
-        for i, s in enumerate(stacks):
-            if s.name == entry.name:
-                stacks[i] = entry
-                self.save_stacks(stacks)
-                return
-        stacks.append(entry)
-        self.save_stacks(stacks)
+        # Serialize load→modify→save so concurrent apply/down of different stacks
+        # don't clobber each other in the shared stacks.json (lost-update race).
+        with file_lock(self._stacks_path):
+            stacks = self.load_stacks()
+            for i, s in enumerate(stacks):
+                if s.name == entry.name:
+                    stacks[i] = entry
+                    self.save_stacks(stacks)
+                    return
+            stacks.append(entry)
+            self.save_stacks(stacks)
 
     def remove_stack(self, name: str) -> bool:
         """Remove stack."""
-        stacks = self.load_stacks()
-        new = [s for s in stacks if s.name != name]
-        if len(new) == len(stacks):
-            return False
-        self.save_stacks(new)
-        return True
+        with file_lock(self._stacks_path):
+            stacks = self.load_stacks()
+            new = [s for s in stacks if s.name != name]
+            if len(new) == len(stacks):
+                return False
+            self.save_stacks(new)
+            return True
 
     # ── model DB (SQLite) ───────────────────────────────
     def _db(self) -> sqlite3.Connection:
@@ -125,22 +158,27 @@ class StateStore:
 
     def register_model(self, model_id: str, name: str, digest: str,
                        size_bytes: int = 0, fmt: str = "gguf",
-                       signed: bool = False, signer: str = "") -> None:
-        """Register model."""
+                       signed: bool = False, signer: str = "",
+                       registered_at: float = 0.0,
+                       status: str = "available") -> None:
+        """Register model. registered_at<=0 → now (preserves order on restore)."""
         db = self._db()
-        db.execute(
-            "INSERT OR REPLACE INTO models VALUES (?,?,?,?,?,?,?,?,?)",
-            (model_id, name, digest, size_bytes, fmt, int(signed), signer,
-             time.time(), "available"),
-        )
-        db.commit()
-        db.close()
+        try:
+            db.execute(
+                "INSERT OR REPLACE INTO models VALUES (?,?,?,?,?,?,?,?,?)",
+                (model_id, name, digest, size_bytes, fmt, int(signed), signer,
+                 registered_at if registered_at > 0 else time.time(), status),
+            )
+            db.commit()
+        finally:
+            db.close()
 
     def list_models(self) -> list[dict[str, Any]]:
         """List models."""
         db = self._db()
-        cur = db.execute("SELECT * FROM models ORDER BY registered_at DESC")
-        cols = [d[0] for d in cur.description]
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        db.close()
-        return rows
+        try:
+            cur = db.execute("SELECT * FROM models ORDER BY registered_at DESC")
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+        finally:
+            db.close()

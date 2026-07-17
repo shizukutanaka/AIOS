@@ -44,6 +44,7 @@ class GovernorDaemon:
         self.interval = interval_s
         self.on_action = on_action
         self.state = GovernorState()
+        self._state_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._max_history = 200
@@ -71,25 +72,39 @@ class GovernorDaemon:
         while not self._stop.is_set():
             try:
                 action = self._tick()
-                self.state.tick_count += 1
-                self.state.last_tick = time.time()
-                self.state.last_action = action
+                with self._state_lock:
+                    self.state.tick_count += 1
+                    self.state.last_tick = time.time()
+                    self.state.last_action = action
 
-                self.state.history.append(action)
-                if len(self.state.history) > self._max_history:
-                    self.state.history = self.state.history[-self._max_history:]
+                    self.state.history.append(action)
+                    if len(self.state.history) > self._max_history:
+                        self.state.history = self.state.history[-self._max_history:]
 
-                if action.action != "none":
-                    self.state.consecutive_violations += 1
-                    logger.warning(
-                        "SLO violation #%d: %s on %s — %s",
-                        self.state.consecutive_violations,
-                        action.action, action.engine, action.reason,
-                    )
-                    if self.on_action:
-                        self.on_action(action)
-                else:
-                    self.state.consecutive_violations = 0
+                    if action.action != "none":
+                        self.state.consecutive_violations += 1
+                        logger.warning(
+                            "SLO violation #%d: %s on %s — %s",
+                            self.state.consecutive_violations,
+                            action.action, action.engine, action.reason,
+                        )
+                        if self.on_action:
+                            self.on_action(action)
+                        # Governor aggregates possibly-multiple violated
+                        # metrics into one human-readable reason string
+                        # (check_slo never returns discrete metric/value/
+                        # threshold triples) — pass the reason through as
+                        # `metric` so audit/dispatch still carry the full
+                        # detail, rather than picking one metric arbitrarily.
+                        from aictl.core.hooks import on_slo_violation
+                        on_slo_violation(
+                            action.engine, metric=action.reason,
+                            value=float(self.state.consecutive_violations),
+                            threshold=0.0, action=action.action,
+                            state_dir=self.store.dir,
+                        )
+                    else:
+                        self.state.consecutive_violations = 0
 
                 # Export metrics to OTel (best effort)
                 self._export_otel()
@@ -151,28 +166,31 @@ class GovernorDaemon:
                 "consecutive": self.state.consecutive_violations,
             }
 
-            # Escalate if consecutive violations exceed threshold
-            if self.state.consecutive_violations >= 5 and action.action == "scale_batch":
-                action.action = "drain"
-                action.reason += " [escalated: 5+ consecutive violations]"
-            elif self.state.consecutive_violations >= 10:
+            # Escalate if consecutive violations exceed threshold.
+            # Check the more severe threshold first so violations>=10 always
+            # reach failover regardless of the current action type.
+            if self.state.consecutive_violations >= 10:
                 action.action = "failover"
                 action.reason += " [escalated: 10+ consecutive violations]"
+            elif self.state.consecutive_violations >= 5 and action.action == "scale_batch":
+                action.action = "drain"
+                action.reason += " [escalated: 5+ consecutive violations]"
 
         return action
 
     def get_status(self) -> dict[str, Any]:
         """Get status."""
-        return {
-            "running": self.state.running,
-            "tick_count": self.state.tick_count,
-            "last_tick": self.state.last_tick,
-            "consecutive_violations": self.state.consecutive_violations,
-            "last_action": asdict(self.state.last_action) if self.state.last_action else None,
-            "recent_violations": [
-                asdict(a) for a in self.state.history if a.action != "none"
-            ][-10:],
-        }
+        with self._state_lock:
+            return {
+                "running": self.state.running,
+                "tick_count": self.state.tick_count,
+                "last_tick": self.state.last_tick,
+                "consecutive_violations": self.state.consecutive_violations,
+                "last_action": asdict(self.state.last_action) if self.state.last_action else None,
+                "recent_violations": [
+                    asdict(a) for a in self.state.history if a.action != "none"
+                ][-10:],
+            }
 
     def _export_otel(self) -> None:
         """Best-effort export of latest metrics to OTel Collector."""

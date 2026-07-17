@@ -392,7 +392,9 @@ class _AI:
 
         # 3. Post-inference: usage tracking, cache store, cost
         ctx.note_usage(tokens)
-        if not private:
+        # Don't cache empty/garbage responses — a cached "" would poison every
+        # identical prompt for the full TTL.
+        if not private and text.strip():
             _cache_store(full, text, chosen_model, tokens)
         cost = _compute_call_cost(chosen_model, full, tokens, ctx.endpoint)
 
@@ -478,7 +480,6 @@ class _AI:
         else:
             instruction = f"{instruction}\n\nTask: {prompt}"
 
-        time.perf_counter()
         text, tokens = _complete(
             endpoint=ctx.endpoint,
             model=chosen_model,
@@ -678,14 +679,36 @@ def _compute_call_cost(
     """Return (cost_usd, cost_jpy) for one inference call."""
     try:
         from aictl.core.cost_per_call import compute
-        is_local = endpoint.startswith(("http://localhost", "http://127."))
+        is_local = _is_local_endpoint(endpoint)
+        # `tokens` is the API's total (prompt + completion); split it so input
+        # tokens aren't billed twice (once via the char heuristic, once in total).
+        input_tokens = max(1, len(prompt) // 4)
+        output_tokens = max(1, tokens - input_tokens)
         cc = compute(model,
-                     input_tokens=max(1, len(prompt) // 4),
-                     output_tokens=max(1, tokens),
+                     input_tokens=input_tokens,
+                     output_tokens=output_tokens,
                      is_local=is_local)
         return (cc.cost_usd, cc.cost_jpy)
     except Exception:
         return (0.0, 0.0)
+
+
+def _is_local_endpoint(endpoint: str) -> bool:
+    """True for loopback or RFC-1918 / link-local hosts (self-hosted engines)."""
+    from urllib.parse import urlparse
+    host = (urlparse(endpoint).hostname or "").lower()
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    if host in ("0.0.0.0", "::1"):
+        return True
+    if host.startswith(("127.", "10.", "192.168.", "169.254.")):
+        return True
+    # 172.16.0.0/12
+    if host.startswith("172."):
+        parts = host.split(".")
+        if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+            return True
+    return False
 
 
 def _complete(
@@ -732,10 +755,11 @@ def _complete(
                 raise RuntimeError("cloud fallback returned no response")
             text = resp.get("text", "")
             tokens = int(resp.get("tokens", 0))
-            out: tuple[str, int] = (text, tokens)
-            return out
-        except Exception:
-            raise RuntimeError(f"Inference failed: {e}")
+            return text, tokens
+        except Exception as fallback_exc:
+            raise RuntimeError(
+                f"Inference failed (local: {e}; cloud fallback: {fallback_exc})"
+            ) from fallback_exc
 
 
 def _stream_complete(
@@ -765,9 +789,11 @@ def _stream_complete(
     with urllib.request.urlopen(req, timeout=60) as r:
         for line in r:
             line = line.decode().strip()
-            if not line or not line.startswith("data: "):
+            # SSE allows "data:" with or without a trailing space; some engines
+            # (vLLM/SGLang) omit it. Match the prefix, then strip leading space.
+            if not line or not line.startswith("data:"):
                 continue
-            payload = line[6:]
+            payload = line[5:].lstrip()
             if payload == "[DONE]":
                 break
             try:
@@ -779,33 +805,128 @@ def _stream_complete(
                 continue
 
 
+# Known embedding-capable model name substrings, ranked by the 2026 local
+# consensus (docs/IMPROVEMENTS.md item A-2, Pass 181 research: Milvus/
+# BentoML/apidog embedding guides). Matched case-insensitively as a
+# substring against whatever the engine's /v1/models actually reports --
+# real tags vary ("nomic-embed-text", "nomic-embed-text:latest",
+# "nomic-embed-text-v1.5", etc.
+_EMBEDDING_MODEL_PRIORITY = (
+    "nomic-embed-text", "bge-m3", "qwen3-embedding", "bge-large",
+    "bge-small", "all-minilm",
+)
+
+# Per-endpoint capability-detection cache: detected once per process, not
+# re-probed on every embed() call. embed_text() is on the hot path (every
+# semantic-cache lookup/store, every RAG query) -- an extra /v1/models
+# round-trip per call would add real latency for no benefit once an
+# endpoint's model roster is known. Matches _AmbientContext's own
+# detect-once-per-process convention (hardware/default-model are cached
+# the same way).
+_embedding_model_cache: dict[str, str | None] = {}
+_embedding_model_cache_lock = threading.Lock()
+
+
+def _detect_embedding_model(endpoint: str) -> str | None:
+    """Probe `endpoint`'s model list and return the best available
+    embedding-capable model name, or None if none is found.
+
+    Capability detection instead of blindly guessing "nomic-embed-text" on
+    every call regardless of what's actually pulled (IMPROVEMENTS.md item
+    A-2) -- a wrong guess wastes a network round-trip on a call that's
+    virtually guaranteed to fail, right before falling back anyway.
+    Best-effort: any probe failure (unreachable, malformed response) is
+    cached as "no embedding model detected" for this endpoint, same as a
+    genuine empty roster -- not re-attempted every call, since a transient
+    probe failure and a genuinely absent model both correctly result in
+    the hash fallback either way.
+    """
+    with _embedding_model_cache_lock:
+        if endpoint in _embedding_model_cache:
+            return _embedding_model_cache[endpoint]
+
+    detected: str | None = None
+    try:
+        import urllib.request
+        from aictl.core.constants import EMBEDDING_MODEL_DETECT_TIMEOUT
+        req = urllib.request.Request(f"{endpoint.rstrip('/')}/v1/models")
+        with urllib.request.urlopen(req, timeout=EMBEDDING_MODEL_DETECT_TIMEOUT) as r:
+            data = json.loads(r.read())
+        available = [m.get("id", "") for m in data.get("data", [])
+                    if isinstance(m, dict) and m.get("id")]
+        for candidate in _EMBEDDING_MODEL_PRIORITY:
+            for name in available:
+                if candidate in name.lower():
+                    detected = name
+                    break
+            if detected:
+                break
+    except Exception:
+        detected = None
+
+    with _embedding_model_cache_lock:
+        _embedding_model_cache[endpoint] = detected
+    return detected
+
+
+def _reset_embedding_model_cache_for_testing() -> None:
+    """Test-only: clear the per-endpoint detection cache."""
+    with _embedding_model_cache_lock:
+        _embedding_model_cache.clear()
+
+
 def _embed(endpoint: str, texts: list[str]) -> list[list[float]]:
-    """Embed text(s) into vectors."""
+    """Embed text(s) into vectors.
+
+    Uses capability detection (_detect_embedding_model) rather than
+    blindly assuming "nomic-embed-text" is pulled -- if no known
+    embedding-capable model is found on the endpoint, this skips the
+    doomed network round-trip entirely and degrades straight to the hash
+    fallback.
+
+    Degraded mode falls back for the WHOLE batch, using the same
+    FALLBACK_DIM-width hash embedding as aictl.core.rag. Two bugs lived in
+    the old per-text fallback (IMPROVEMENTS.md item A-2):
+      1. It emitted 32-dim vectors (one sha256 digest) while rag's fallback
+         and its "is this semantic?" detector use FALLBACK_DIM (64) -- so an
+         SDK-level fallback (engine reachable but the embedding model not
+         pulled, the most common real degradation) produced vectors that
+         `rag status` misreported as SEMANTIC. False success, silently.
+      2. A partially-failing batch mixed real-model dims with hash dims;
+         cosine() between mismatched dims returns 0.0, silently zeroing
+         similarity for the failed subset instead of degrading uniformly.
+    Batch-level fallback with the shared FALLBACK_DIM fixes both: vectors
+    are always either all-real or all-hash(64), and the 64-width marker is
+    what rag/cache status use to flag degraded retrieval.
+    """
     import urllib.request
+    from aictl.core.rag import _fallback_embedding
+
+    model = _detect_embedding_model(endpoint)
+    if model is None:
+        return [_fallback_embedding(t) for t in texts]
 
     vectors: list[list[float]] = []
-    for text in texts:
-        body = json.dumps({
-            "model": "nomic-embed-text",
-            "input": text,
-        }).encode()
-        req = urllib.request.Request(
-            f"{endpoint}/v1/embeddings",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
+    try:
+        for text in texts:
+            body = json.dumps({
+                "model": model,
+                "input": text,
+            }).encode()
+            req = urllib.request.Request(
+                f"{endpoint}/v1/embeddings",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.loads(r.read())
-            vec = data["data"][0]["embedding"]
-            vectors.append(vec)
-        except Exception:
-            # Degraded mode: deterministic hash-based pseudo-embedding
-            # So downstream code doesn't crash in dev environments
-            import hashlib
-            h = hashlib.sha256(text.encode()).digest()
-            vectors.append([(b - 128) / 128 for b in h])
-    return vectors
+            vectors.append(data["data"][0]["embedding"])
+        return vectors
+    except Exception:
+        # Degraded mode: deterministic hash-based pseudo-embedding so
+        # downstream code doesn't crash in dev environments. Whole batch,
+        # shared implementation -- see docstring.
+        return [_fallback_embedding(t) for t in texts]
 
 
 # ── The public `ai` object ───────────────────────────

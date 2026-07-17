@@ -8,7 +8,9 @@ de facto standard for LLM ↔ tool integration. This server lets
 any MCP-compatible AI assistant manage local inference infrastructure.
 
 Transport: JSON-RPC 2.0 over stdio (stdin/stdout)
-Spec: https://modelcontextprotocol.io/specification/2025-11-25
+Spec: https://modelcontextprotocol.io/specification/2025-11-25 (default
+negotiated version; also speaks 2025-06-18 and the 2026-07-28 release
+candidate on request — see SUPPORTED_MCP_VERSIONS)
 
 Tools exposed:
   aictl_health       — System health check
@@ -32,17 +34,38 @@ Usage:
 
 from __future__ import annotations
 
-
 import json
+import os
 import sys
+import time
+from collections import deque
 from typing import Any
+
+from aictl.core.constants import AICTL_VERSION
 
 
 # ── MCP Protocol Constants ──
 JSONRPC_VERSION = "2.0"
+# Default/fallback version when a client doesn't specify one -- kept at the
+# original baseline so any pre-existing client that omits protocolVersion
+# sees unchanged behavior. Clients that explicitly request a newer version
+# we also speak (see SUPPORTED_MCP_VERSIONS) get that version echoed back.
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# 2026-07-28 is the release-candidate version (final ships 2026-07-28): a
+# stateless core (no session/initialize requirement -- this server never
+# tracked session state anyway), server/discover, and tools/list gaining
+# ttlMs/cacheScope. We advertise it without dropping the legacy handshake,
+# since existing clients still send initialize and nothing here requires
+# removing that path to be RC-compliant.
+SUPPORTED_MCP_VERSIONS = ("2024-11-05", "2025-06-18", "2026-07-28")
 SERVER_NAME = "aictl"
-SERVER_VERSION = "1.6.0"
+SERVER_VERSION = AICTL_VERSION
+# How long a client may cache tools/list before re-fetching, and at what
+# scope: aictl's TOOLS list is static for the lifetime of one server
+# process (no dynamic tool registration), so a long, server-scoped TTL is
+# accurate, not just a placeholder.
+TOOLS_LIST_TTL_MS = 300_000
+TOOLS_LIST_CACHE_SCOPE = "server"
 
 
 # ── Tool Definitions ──
@@ -232,20 +255,164 @@ TOOLS = [
     },
     {
         "name": "aictl_tco",
-        "description": "True Cost of Ownership: GPU depreciation + electricity vs cloud API pricing.",
+        "description": "True Cost of Ownership: GPU depreciation + electricity + CO₂e emissions vs cloud API pricing. Includes GPU power-cap advisory from FREESH (arXiv:2511.00807).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "period_days": {"type": "integer", "default": 30},
+                "carbon_intensity": {"type": "number", "description": "Grid carbon intensity in gCO₂e/kWh (default: 500 world avg)"},
+                "region": {"type": "string", "description": "Grid region shortcode for automatic carbon intensity (e.g. jp, us, eu, fr, cn)", "default": "global"},
+            },
+        },
+    },
+    {
+        "name": "aictl_guided",
+        "description": "Recommend a structured/guided-decoding backend (XGrammar/Outlines/llguidance) and ready-to-paste serve flags so a model emits valid JSON. Optionally validate a JSON instance against a JSON Schema locally.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "engine": {"type": "string", "enum": ["vllm", "sglang", "tensorrt-llm", "ollama"], "default": "vllm"},
+                "instance": {"type": "object", "description": "Optional JSON instance to validate against `schema`"},
+                "schema": {"type": "object", "description": "Optional JSON Schema; if given with `instance`, returns validation errors"},
             },
         },
     },
 ]
 
 
+# ── Tool Span Ring Buffer ──
+# Bounded ring of the 200 most-recent MCP tool spans; never grows unboundedly.
+_TOOL_SPANS: deque = deque(maxlen=200)
+
+
+def get_tool_spans() -> list:
+    """Return a snapshot of the recent MCP tool-call spans (for testing/inspection)."""
+    return list(_TOOL_SPANS)
+
+
+def _make_progress_emitter(progress_token: Any):
+    """Build an on_progress(progress, total, message) callback that writes a
+    spec-shaped `notifications/progress` JSON-RPC line to stdout and flushes it.
+
+    Progress is opt-in per MCP request (params._meta.progressToken) -- this is
+    only ever constructed when a client actually sent a token. A write failure
+    (closed pipe, non-serializable message) must never abort the tool call in
+    progress, matching handle_tool's existing "observability must never break
+    the serving path" convention for ToolSpan export.
+    """
+    def emit(progress: int, total: int, message: str) -> None:
+        try:
+            sys.stdout.write(json.dumps({
+                "jsonrpc": JSONRPC_VERSION,
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": progress_token,
+                    "progress": progress,
+                    "total": total,
+                    "message": message,
+                },
+            }) + "\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+    return emit
+
+
+def _first_text(result: dict) -> str:
+    """Extract the first text content fragment from an MCP result dict."""
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            return item.get("text", "")[:200]
+    return ""
+
+
+def _int_arg(args: dict[str, Any], key: str, default: Any) -> Any:
+    """Coerce an MCP tool argument to int, tolerating numeric JSON strings.
+
+    MCP tool calls are frequently LLM-generated, where a numeric field arrives as
+    a string (``"10"``) rather than a JSON number. Passing that straight through
+    made the underlying function raise an opaque ``TypeError`` (e.g.
+    ``'<=' not supported between 'str' and 'int'``) surfaced to the client as a
+    cryptic internal error. Coerce here at the boundary; reject genuinely
+    non-numeric input with a clear message (handle_tool turns it into isError).
+    A JSON bool is *not* a count, so it is rejected rather than silently 0/1.
+    """
+    if key not in args or args[key] is None:
+        return default
+    val = args[key]
+    if isinstance(val, bool):
+        raise ValueError(f"{key} must be an integer, got boolean {val!r}")
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got {val!r}")
+
+
+def _float_arg(args: dict[str, Any], key: str, default: Any) -> Any:
+    """Coerce an MCP tool argument to float, tolerating numeric JSON strings.
+
+    Same rationale as :func:`_int_arg` for real-valued fields (e.g. model size).
+    """
+    if key not in args or args[key] is None:
+        return default
+    val = args[key]
+    if isinstance(val, bool):
+        raise ValueError(f"{key} must be a number, got boolean {val!r}")
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, got {val!r}")
+
+
+def handle_tool(
+    name: str, arguments: dict[str, Any], progress_token: Any = None,
+) -> dict[str, Any]:
+    """Execute a tool, record an OTel ToolSpan, and return the MCP result.
+
+    The span is always appended to the in-process ring buffer.  If the env var
+    AIOS_OTEL_ENDPOINT is set the span is also fire-and-forget exported via
+    OTLP/HTTP.  Observability failures never propagate to the caller.
+
+    progress_token: the client's params._meta.progressToken, if it sent one.
+    None (the default) means the client didn't opt in to progress notifications
+    -- no on_progress callback is built and no tool emits anything extra, so
+    behavior is byte-identical to before this feature existed.
+    """
+    on_progress = _make_progress_emitter(progress_token) if progress_token is not None else None
+    start_ns = time.monotonic_ns()
+    result = _dispatch_tool(name, arguments, on_progress=on_progress)
+    end_ns = time.monotonic_ns()
+
+    try:
+        from aictl.metrics.genai_spans import ToolSpan, export_tool_spans
+        span = ToolSpan(
+            tool_name=name,
+            success=not result.get("isError", False),
+            start_time_ns=start_ns,
+            end_time_ns=end_ns,
+            error="" if not result.get("isError") else _first_text(result),
+        )
+        _TOOL_SPANS.append(span)
+        endpoint = os.environ.get("AIOS_OTEL_ENDPOINT", "")
+        if endpoint:
+            export_tool_spans([span], endpoint=endpoint)
+    except Exception:
+        pass  # observability must never break the serving path
+
+    return result
+
+
 # ── Tool Handlers ──
-def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Execute a tool and return MCP result."""
+def _dispatch_tool(
+    name: str, arguments: dict[str, Any], on_progress: Any = None,
+) -> dict[str, Any]:
+    """Dispatch to a specific tool implementation and return MCP result.
+
+    on_progress, if given, is a Callable[[int, int, str], None] for a tool
+    handler to report incremental progress. Only handlers with genuinely
+    slow, multi-step work (currently: aictl_eval's per-case LLM calls) accept
+    it; every other branch ignores the parameter entirely.
+    """
     try:
         if name == "aictl_health":
             return _tool_health()
@@ -270,7 +437,7 @@ def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         elif name == "aictl_fit":
             return _tool_fit(arguments)
         elif name == "aictl_eval":
-            return _tool_eval(arguments)
+            return _tool_eval(arguments, on_progress=on_progress)
         elif name == "aictl_spec_recommend":
             return _tool_spec_recommend(arguments)
         elif name == "aictl_quant":
@@ -283,10 +450,14 @@ def handle_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return _tool_troubleshoot(arguments)
         elif name == "aictl_tco":
             return _tool_tco(arguments)
+        elif name == "aictl_guided":
+            return _tool_guided(arguments)
         else:
             return {"content": [{"type": "text", "text": f"Unknown tool: {name}"}], "isError": True}
     except Exception as e:
-        return {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True}
+        # Truncate to avoid leaking file paths or secrets from tracebacks
+        msg = str(e)[:200]
+        return {"content": [{"type": "text", "text": f"Error: {msg}"}], "isError": True}
 
 
 def _tool_health() -> dict[str, Any]:
@@ -316,7 +487,7 @@ def _tool_recommend(args: dict[str, Any]) -> dict[str, Any]:
         vram_mb=vram,
         ram_mb=hw.system.ram_total_mb,
         use_case=args.get("use_case", ""),
-        max_results=args.get("max_results", 5),
+        max_results=_int_arg(args, "max_results", 5),
     )
     return {"content": [{"type": "text", "text": json.dumps([
         {"name": r.name, "runtime": r.runtime, "vram_mb": r.vram_required_mb,
@@ -345,14 +516,25 @@ def _tool_optimize(args: dict[str, Any]) -> dict[str, Any]:
     gpu = args.get("gpu", "H100")
     profile = HardwareProfile(
         gpu_name=gpu,
-        gpu_count=args.get("gpu_count", 1),
-        vram_per_gpu_mb={"H100": 81920, "B200": 196608, "A100": 81920,
-                         "RTX 4090": 24576}.get(gpu, 24576),
+        gpu_count=_int_arg(args, "gpu_count", 1),
+        vram_per_gpu_mb={
+            "A100": 81920, "A100 80GB": 81920,
+            "H100": 81920, "H100 SXM": 81920,
+            "H200": 144384, "H200 SXM": 144384,
+            "B200": 196608, "GB200": 196608,
+            "RTX 3090": 24576, "RTX 4090": 24576, "RTX 5090": 32768,
+            "L40S": 49152, "L4": 24576,
+        }.get(gpu, 24576),
         compute_capability=GPU_CC.get(gpu, 90),
     )
+    model = args.get("model")
+    model_size_b = _float_arg(args, "model_size_b", None)
+    if not model or model_size_b is None:
+        return {"isError": True, "content": [{"type": "text",
+                "text": "model and model_size_b are required"}]}
     result = optimize_vllm_flags(
-        model=args["model"],
-        model_size_b=args["model_size_b"],
+        model=model,
+        model_size_b=model_size_b,
         hardware=profile,
         objective=args.get("objective", "balanced"),
     )
@@ -455,8 +637,14 @@ def _tool_fabric() -> dict[str, Any]:
 # ── v1.6.0 Tool Handlers ──
 
 
-def _tool_eval(args: dict[str, Any]) -> dict[str, Any]:
-    """Run eval cases inline."""
+def _tool_eval(args: dict[str, Any], on_progress: Any = None) -> dict[str, Any]:
+    """Run eval cases inline.
+
+    Each case is a real inference call (aictl.cmd.eval._run_case -> aictl.ai.ask),
+    the one genuinely slow, multi-step tool in this server -- if the caller
+    opted into progress notifications (on_progress is not None), one
+    notification is emitted per completed case with total=len(cases).
+    """
     cases = args.get("cases", [])
     model = args.get("model", "auto")
     if not cases:
@@ -464,7 +652,15 @@ def _tool_eval(args: dict[str, Any]) -> dict[str, Any]:
     from aictl.sdk import _AmbientContext
     _AmbientContext.reset_for_testing()
     from aictl.cmd.eval import _run_case
-    results = [_run_case(c, model) for c in cases]
+    results = []
+    for i, c in enumerate(cases):
+        results.append(_run_case(c, model))
+        if on_progress is not None:
+            try:
+                case_id = c.get("id", f"case-{i}") if isinstance(c, dict) else f"case-{i}"
+                on_progress(i + 1, len(cases), f"Ran case {i + 1}/{len(cases)}: {case_id}")
+            except Exception:
+                pass  # progress reporting must never break the eval run itself
     passed = sum(1 for r in results if r["passed"])
     lines = [f"Eval: {passed}/{len(results)} passed", ""]
     for r in results:
@@ -525,6 +721,8 @@ def _tool_fit(args: dict[str, Any]) -> dict[str, Any]:
 def _tool_quant(args: dict[str, Any]) -> dict[str, Any]:
     """Compare quantization formats."""
     model = args.get("model", "")
+    if not model:
+        return {"content": [{"type": "text", "text": "model required"}], "isError": True}
     use_case = args.get("use_case", "chat")
     from aictl.cmd.quant import QUANT_DATA
     qk = f"q_{use_case}"
@@ -607,13 +805,18 @@ def _tool_troubleshoot(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
-    """True cost of ownership."""
+    """True cost of ownership + carbon/energy advisory."""
     import io as _io
     from contextlib import redirect_stdout
-    from aictl.cmd.tco import run_summary
+    from aictl.cmd.tco import run_summary, CARBON_INTENSITY_BY_REGION
+    # Resolve carbon intensity: explicit value takes precedence over region shortcode.
+    # Use 'in' check so that an explicit 0 is honoured rather than treated as falsy.
+    ci = args["carbon_intensity"] if "carbon_intensity" in args else CARBON_INTENSITY_BY_REGION.get(
+        args.get("region", "global"), 500)
     class _A:
         json = False
-        period_days = args.get("period_days", 30)
+        period_days = _int_arg(args, "period_days", 30)
+        carbon_intensity = ci
         command = "tco"
     buf = _io.StringIO()
     with redirect_stdout(buf):
@@ -621,17 +824,72 @@ def _tool_tco(args: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": buf.getvalue().strip()}]}
 
 
+def _tool_guided(args: dict[str, Any]) -> dict[str, Any]:
+    """Recommend a guided-decoding backend and/or validate against a schema."""
+    from aictl.runtime.guided import (
+        recommend_backend, vllm_flags, sglang_flags, ENGINE_BACKENDS,
+        validate_json_schema,
+    )
+    engine = args.get("engine", "vllm").lower()
+    out: dict[str, Any] = {}
+
+    # Optional local JSON-Schema validation.
+    if "schema" in args and "instance" in args:
+        errors = validate_json_schema(args["instance"], args["schema"])
+        out["validation"] = {"valid": not errors, "errors": errors}
+
+    if engine not in ENGINE_BACKENDS:
+        return {"content": [{"type": "text", "text": f"Unknown engine: {engine}"}],
+                "isError": True}
+    backend = recommend_backend(engine)
+    if backend is None:
+        out["engine"] = engine
+        out["backend"] = None
+        out["native"] = True
+        out["note"] = "Ollama enforces JSON via its `format` field — no serve flag."
+    else:
+        flags = vllm_flags(backend) if engine in ("vllm", "tensorrt-llm") else sglang_flags(backend)
+        out["engine"] = engine
+        out["backend"] = backend
+        out["serve_flags"] = flags
+        out["alternatives"] = ENGINE_BACKENDS[engine][1:]
+    return {"content": [{"type": "text", "text": json.dumps(out, indent=2)}]}
+
+
 # ── JSON-RPC 2.0 Handler ──
 def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
     """Handle a single JSON-RPC 2.0 request."""
     method = request.get("method", "")
+    if not isinstance(method, str):
+        method = ""
     req_id = request.get("id")
     params = request.get("params", {})
 
     if method == "initialize":
+        # Version negotiation: echo back the client's requested version if
+        # we speak it (keeps a client pinned to an older spec working
+        # unchanged); otherwise fall back to our own default. A client that
+        # sends no protocolVersion at all also gets the default, identical
+        # to this server's behavior before the 2026-07-28 RC existed.
+        requested = params.get("protocolVersion", MCP_PROTOCOL_VERSION)
+        negotiated = (requested if requested in SUPPORTED_MCP_VERSIONS
+                     else MCP_PROTOCOL_VERSION)
+        return _response(req_id, {
+            "protocolVersion": negotiated,
+            "capabilities": {"tools": {"listChanged": False}, "progress": {}},
+            "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        })
+
+    elif method == "server/discover":
+        # The 2026-07-28 RC's stateless replacement for initialize: a client
+        # can call this without any prior handshake to learn what the
+        # server supports. This server has no session state either way, so
+        # it's safe to expose identical info without requiring initialize
+        # first.
         return _response(req_id, {
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {"tools": {"listChanged": False}},
+            "supportedVersions": list(SUPPORTED_MCP_VERSIONS),
+            "capabilities": {"tools": {"listChanged": False}, "progress": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })
 
@@ -639,12 +897,23 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
         return None  # Notification, no response needed
 
     elif method == "tools/list":
-        return _response(req_id, {"tools": TOOLS})
+        return _response(req_id, {
+            "tools": TOOLS,
+            "ttlMs": TOOLS_LIST_TTL_MS,
+            "cacheScope": TOOLS_LIST_CACHE_SCOPE,
+        })
 
     elif method == "tools/call":
         name = params.get("name", "")
+        if not name:
+            # Missing tool name is a protocol error, not a tool error.
+            return _error(req_id, -32602, "Invalid params: missing tool name")
         arguments = params.get("arguments", {})
-        result = handle_tool(name, arguments)
+        # Progress notifications are opt-in per MCP spec (params._meta.progressToken);
+        # a client that never sends one gets no on_progress callback anywhere downstream.
+        meta = params.get("_meta", {})
+        progress_token = meta.get("progressToken") if isinstance(meta, dict) else None
+        result = handle_tool(name, arguments, progress_token=progress_token)
         return _response(req_id, result)
 
     elif method == "ping":

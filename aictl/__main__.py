@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
         gate, spec,
     )
     from aictl.cmd import log as log_cmd
-    from aictl.cmd import fit, quant, troubleshoot
+    from aictl.cmd import fit, quant, troubleshoot, capacity, trust, scheduler
     from aictl.cmd import perf, rag, guard, cache_cmd, dash, update
     from aictl.cmd import tco, quota, batch, diff
     from aictl.cmd import prompt as prompt_cmd
@@ -120,6 +120,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Competitor-gap fills (no other tool offers these)
     fit.register(sub)
+    capacity.register(sub)
+    trust.register(sub)
+    scheduler.register(sub)
     quant.register(sub)
     troubleshoot.register(sub)
 
@@ -159,6 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Complexity-aware smart routing (saves 2-5x on cost)
     route.register(sub)
 
+    # Structured / guided-decoding advisor + local JSON-Schema validator
+    from aictl.cmd import guided
+    guided.register(sub)
+
     # LLM regression testing — v1.7.0
     from aictl.cmd import eval as eval_cmd
     eval_cmd.register(sub)
@@ -166,6 +173,50 @@ def build_parser() -> argparse.ArgumentParser:
     # User-friendly discovery (Apple-style progressive disclosure)
     from aictl.cmd import help as help_cmd
     help_cmd.register(sub)
+
+    # Plugin management
+    from aictl.cmd import plugin as plugin_cmd
+    plugin_cmd.register(sub)
+
+    # Export (portable bundle)
+    from aictl.cmd import export as export_cmd
+    export_cmd.register(sub)
+
+    # Import (restore from bundle)
+    from aictl.cmd import import_cmd
+    import_cmd.register(sub)
+
+    # Live resource monitor
+    from aictl.cmd import top as top_cmd
+    top_cmd.register(sub)
+
+    # Event bus query and streaming
+    from aictl.cmd import events as events_cmd
+    events_cmd.register(sub)
+
+    # Daemon lifecycle management
+    from aictl.cmd import daemon as daemon_cmd
+    daemon_cmd.register(sub)
+
+    # Engine discovery and health
+    from aictl.cmd import engines as engines_cmd
+    engines_cmd.register(sub)
+
+    # Performance tuning advisor
+    from aictl.cmd import optimize as optimize_cmd
+    optimize_cmd.register(sub)
+
+    # Integration hooks inspection
+    from aictl.cmd import hooks as hooks_cmd
+    hooks_cmd.register(sub)
+
+    # cgroup v2 process isolation for inference workloads
+    from aictl.cmd import isolation as isolation_cmd
+    isolation_cmd.register(sub)
+
+    # Prometheus SLO alert rules management
+    from aictl.cmd import alert as alert_cmd
+    alert_cmd.register(sub)
 
     # Plugins (user-defined extensions)
     try:
@@ -177,8 +228,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _harden_stdio() -> None:
+    """Make output never crash on its own decorative glyphs (✓/✗/—).
+
+    Under a limited stdout encoding (ASCII / C locale — common in minimal
+    containers, cron, and some CI) printing a Unicode glyph raises
+    UnicodeEncodeError, killing the command. Switch the error handler to
+    'backslashreplace' so glyphs degrade (e.g. \\u2713) instead of crashing;
+    on the normal UTF-8 terminal this changes nothing.
+    """
+    import sys as _sys
+    for stream in (_sys.stdout, _sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main() -> int:
     """Main."""
+    _harden_stdio()
     # Fast path: --version without loading 61 command modules
     if len(sys.argv) == 2 and sys.argv[1] in ("--version", "-V"):
         print(f"aictl {VERSION}")
@@ -191,7 +260,45 @@ def main() -> int:
         return show_welcome()
 
     parser = build_parser()
-    args = parser.parse_args()
+    # Make the global flags `--json` and `--state-dir` positionally uniform.
+    # argparse otherwise rejects them when they trail a subcommand that doesn't
+    # redefine them (e.g. `aictl cost forecast --json`, `aictl snapshot list
+    # --state-dir DIR` both error), even though the leading forms work — an
+    # inconsistent surface for documented global flags. Pull both out of argv
+    # before parsing (re-deriving --json, capturing --state-dir's value) so they
+    # are accepted in leading, middle, or trailing position; subcommands that DO
+    # declare --json still parse cleanly.
+    json_requested = "--json" in sys.argv
+    state_dir_override = None
+    argv_for_parse: list[str] = []
+    raw = sys.argv[1:]
+    i = 0
+    while i < len(raw):
+        tok = raw[i]
+        if tok == "--json":
+            i += 1
+            continue
+        if tok == "--state-dir":
+            if i + 1 < len(raw):
+                state_dir_override = raw[i + 1]
+                i += 2
+            else:
+                i += 1  # dangling flag; let argparse report it
+            continue
+        if tok.startswith("--state-dir="):
+            state_dir_override = tok.split("=", 1)[1]
+            i += 1
+            continue
+        argv_for_parse.append(tok)
+        i += 1
+    args = parser.parse_args(argv_for_parse)
+    # A subcommand that defines its own `--json` resets the dest to its local
+    # default (False) during subparser parsing, and the strip above removes the
+    # globals from argparse's view, so set them explicitly from the raw argv.
+    if json_requested:
+        args.json = True
+    if state_dir_override is not None:
+        args.state_dir = state_dir_override
     if args.command is None:
         parser.print_help()
         return 0
@@ -202,7 +309,10 @@ def main() -> int:
     try:
         with measure(cmd_name) as perf_ctx:
             rc = args.func(args)
-            perf_ctx["exit_code"] = rc if isinstance(rc, int) else 0
+            # G2: a handler that returns None (no explicit return) means success;
+            # always hand sys.exit a well-defined int.
+            rc = rc if isinstance(rc, int) else 0
+            perf_ctx["exit_code"] = rc
             return rc
     except KeyboardInterrupt:
         print("\n  Cancelled.", file=sys.stderr)

@@ -42,6 +42,29 @@ class LLMISvcConfig:
     speculative_model: str = ""
     speculative_tokens: int = 0
 
+    def __post_init__(self) -> None:
+        # Validate physical quantities (mirrors DisaggConfig / ModelServiceConfig).
+        # Without this an SDK caller's negative field flowed straight into the
+        # generated KServe LLMInferenceService as `replicas: -2` / a negative
+        # `parallelism.tensorParallel` — a manifest that looks valid but is
+        # rejected at apply time. replicas allows 0 (scale-to-zero); the
+        # parallelism factors are divisor/group sizes meaningless below 1;
+        # max_model_len/speculative_tokens use 0 as "auto/disabled".
+        if self.replicas < 0:
+            raise ValueError(f"replicas must be >= 0, got {self.replicas}")
+        if self.tensor_parallel < 1:
+            raise ValueError(f"tensor_parallel must be >= 1, got {self.tensor_parallel}")
+        if self.pipeline_parallel < 1:
+            raise ValueError(f"pipeline_parallel must be >= 1, got {self.pipeline_parallel}")
+        if self.max_model_len < 0:
+            raise ValueError(f"max_model_len must be >= 0, got {self.max_model_len}")
+        if self.speculative_tokens < 0:
+            raise ValueError(f"speculative_tokens must be >= 0, got {self.speculative_tokens}")
+        if not (0 < self.gpu_memory_utilization <= 1.0):
+            raise ValueError(
+                f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}"
+            )
+
 
 def stack_to_llmisvc(
     manifest: StackManifest,
@@ -107,7 +130,7 @@ def _build_llmisvc(svc: ServiceDef, stack_name: str, namespace: str,
             "namespace": namespace,
             "labels": {
                 "aios.stack": stack_name,
-                "aios.service": svc.name,
+                "aios.service": f"{stack_name}-{svc.name}",  # matches gateway InferencePool selector
                 "aios.runtime": svc.runtime,
             },
         },
@@ -158,11 +181,15 @@ def _build_llmisvc(svc: ServiceDef, stack_name: str, namespace: str,
             llmisvc["spec"]["parallelism"]["pipelineParallel"] = config.pipeline_parallel
 
     # P/D disaggregation (llm-d v0.5: hierarchical KV offloading)
-    if config.enable_pd_disagg:
+    # Requires at least 2 replicas; with only 1, both prefill and decode
+    # cannot each get a replica without exceeding the total allocation.
+    if config.enable_pd_disagg and config.replicas >= 2:
+        prefill = max(1, config.replicas // 3)
+        decode = max(1, config.replicas - prefill)
         llmisvc["spec"]["disaggregation"] = {
             "enabled": True,
-            "prefillReplicas": max(1, config.replicas // 3),
-            "decodeReplicas": config.replicas - max(1, config.replicas // 3),
+            "prefillReplicas": prefill,
+            "decodeReplicas": decode,
             "kvOffloading": "hierarchical",  # llm-d v0.5
         }
 
@@ -190,7 +217,7 @@ def _to_deployment(svc: ServiceDef, stack_name: str, namespace: str) -> list[dic
         "metadata": {
             "name": name,
             "namespace": namespace,
-            "labels": {"aios.stack": stack_name, "aios.service": svc.name},
+            "labels": {"aios.stack": stack_name, "aios.service": f"{stack_name}-{svc.name}"},
         },
         "spec": {
             "replicas": svc.replicas,

@@ -36,6 +36,16 @@ import time
 from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
+from aictl.core.atomicio import atomic_write_text
+
+
+def _slugify(name: str) -> str:
+    """Canonical prompt key. A prompt is stored under a slug (spaces→'_',
+    lowercased), so the *same* transform must be applied on every lookup —
+    otherwise `prompt get "My Greeting"` can't find what `prompt save --name
+    "My Greeting"` stored as `my_greeting`. Canonicalize once, use everywhere
+    (leading/trailing whitespace is never part of the identity either)."""
+    return name.strip().replace(" ", "_").lower()
 
 
 def register(sub: Any) -> None:
@@ -58,20 +68,20 @@ def register(sub: Any) -> None:
 
     # list
     li = sp.add_parser("list", help="List all saved prompts.")
-    li.add_argument("--json", action="store_true")
+    li.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     li.set_defaults(func=run_list)
 
     # get
     g = sp.add_parser("get", help="Get a prompt (latest or specific version).")
     g.add_argument("name", help="Prompt name")
     g.add_argument("--version", type=int, default=0, help="Version number (0 = latest)")
-    g.add_argument("--json", action="store_true")
+    g.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     g.set_defaults(func=run_get)
 
     # history
     h = sp.add_parser("history", help="Show version history of a prompt.")
     h.add_argument("name", help="Prompt name")
-    h.add_argument("--json", action="store_true")
+    h.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     h.set_defaults(func=run_history)
 
     # delete
@@ -91,13 +101,16 @@ def register(sub: Any) -> None:
     r.add_argument("--name", required=True, help="Prompt name")
     r.add_argument("--input", default="", help="Fill {input} variable")
     r.add_argument("--model", default="", help="Override model")
-    r.add_argument("--json", action="store_true")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     r.set_defaults(func=run_run)
 
 
 def run_save(args: argparse.Namespace) -> int:
     """Save or update a prompt."""
-    name = args.name.replace(" ", "_").lower()
+    name = _slugify(args.name)
+    if not name:
+        err("Prompt name is required (empty or whitespace-only is not allowed).")
+        return 1
 
     # Get text
     text = getattr(args, "text", "") or ""
@@ -188,7 +201,7 @@ def run_list(args: argparse.Namespace) -> int:
 def run_get(args: argparse.Namespace) -> int:
     """Get a prompt."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -234,7 +247,7 @@ def run_get(args: argparse.Namespace) -> int:
 def run_history(args: argparse.Namespace) -> int:
     """Show version history."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -257,7 +270,7 @@ def run_history(args: argparse.Namespace) -> int:
 def run_delete(args: argparse.Namespace) -> int:
     """Delete a prompt."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -277,7 +290,7 @@ def run_delete(args: argparse.Namespace) -> int:
 def run_export(args: argparse.Namespace) -> int:
     """Export to eval suite format."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -316,7 +329,7 @@ def run_export(args: argparse.Namespace) -> int:
 def run_run(args: argparse.Namespace) -> int:
     """Run a saved prompt with optional {input} substitution."""
     db = _load()
-    name = args.name
+    name = _slugify(args.name)
     if name not in db:
         err(f"Unknown prompt: {name}")
         return 1
@@ -384,7 +397,10 @@ def _load() -> dict[str, Any]:
     path = _db_path()
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # A list/scalar-rooted file parses but then `db[name]` would raise.
+            if isinstance(data, dict):
+                return data
         except Exception:
             pass  # best-effort; failure is non-critical
     return {}
@@ -394,4 +410,5 @@ def _save(db: dict[str, Any]) -> None:
     """Persist data to storage."""
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(db, indent=2, ensure_ascii=False))
+    # Atomic write: a crash mid-save must not corrupt the prompt store.
+    atomic_write_text(path, json.dumps(db, indent=2, ensure_ascii=False))

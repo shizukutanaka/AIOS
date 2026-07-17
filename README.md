@@ -17,7 +17,7 @@ print(answer.cost)  # '$0.000047' — per-call cost, always visible
 設定不要。モデル選定不要。aictl が自動で適切なモデルを選び、起動し、結果を返します。
 
 ```
-1380 tests | 147 modules | 25,000+ lines | zero external Python deps
+1840 tests | 150 modules | 25,000+ lines | zero external Python deps
 ```
 
 ## What aictl does that competitors don't
@@ -66,7 +66,7 @@ aictl deploy modelservice qwen3:32b           # → llm-d Helm values
 ```bash
 git clone https://github.com/shizukutanaka/aios.git
 cd aios
-python3 -m aictl --version   # aictl 1.6.0
+python3 -m aictl --version   # aictl 1.7.0
 ```
 
 ## Quick Start
@@ -114,7 +114,7 @@ python3 -m aictl recommend     # HW適合モデル推薦
 | **K8sエクスポート** | KServe, Gateway API, KEDA, HPA, Dynamo, P/D Disagg, ModelService (7形式) |
 | **コスト最適化** | 7 GPU実勢価格比較, vLLMフラグ自動チューニング |
 | **セキュリティ** | Cosign v3署名, セキュリティスキャナ, APIキー管理, 監査ログ |
-| **MCP Server** | Claude Desktop/Cursor/VS Codeから直接操作 (16ツール) |
+| **MCP Server** | Claude Desktop/Cursor/VS Codeから直接操作 (19ツール) |
 | **OS機能** | KVキャッシュ永続化, cgroup v2 OOM保護, メモリファブリック |
 | **モニタリング** | OTel GenAI SemConv, Prometheus, Grafana ダッシュボード |
 | **ローカルRAG** | `aictl rag index/ask/search` — SQLite、ゼロ外部依存 |
@@ -156,6 +156,11 @@ aictl guard scan "text with email"     # PII検出
 aictl tco                              # 今月の真のAIコスト
 aictl quota create team-eng --tokens-per-month 10000000
 
+# v1.7.0 — 検索品質・ルーティング・公平性
+aictl rag search "query" --rerank      # クロスエンコーダで再ランキング (TEI互換)
+aictl route show "your question" --knn # 埋め込みkNNで境界付近を判定
+aictl tco fairshare                    # テナント間の公平性 (Jain指数)
+
 # K8s
 aictl cluster gateway <stack>          # Gateway API InferencePool
 aictl scale keda <stack>               # KEDA ScaledObject
@@ -164,15 +169,16 @@ aictl scale keda <stack>               # KEDA ScaledObject
 ## Architecture
 
 ```
-CLI (65 Python + 29 Go)
+CLI (66 Python + 29 Go)
 ├── Runtime   Broker → Router → AutoScaler → Fabric → Isolation
-├── Daemon    22 REST API + Proxy + SLO Governor + Mock Engine
+├── Daemon    30 REST API + Proxy + SLO Governor + Mock Engine
 ├── Stack     10 Recipes + Quadlet + KServe + Gateway API + llm-d
 ├── Core      Metering + Security + Cost + API Keys + Audit
 ├── Trust     Cosign v3 + ORAS
 ├── Metrics   OTel GenAI SemConv + Prometheus
-├── MCP       18 tools (stdio JSON-RPC 2.0)
-└── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
+├── MCP       19 tools (stdio JSON-RPC 2.0, progress notifications)
+├── v1.6.0    RAG + Guard + TCO + Quota + Batch + Eval + Diff + Prompt + Route
+└── v1.7.0    Reranker + kNN Route + Fair-Share + Guard Model-Check + Embeddings
 ```
 
 ## Technology Stack
@@ -183,7 +189,7 @@ CLI (65 Python + 29 Go)
 | Container | Podman + Quadlet (systemd) |
 | Inference | vLLM v0.19 / SGLang v0.5 / Ollama v0.20 |
 | K8s | K3s v1.35 + KServe v0.17 + llm-d v0.5 (CNCF) |
-| GPU | NVIDIA Dynamo v0.8 (KVBM + NIXL) |
+| GPU | NVIDIA Dynamo 1.0 GA (KVBM + NIXL) |
 | NPU | NVIDIA, Intel, AMD, Huawei Ascend, Qualcomm |
 | Signing | Cosign v3 + ORAS |
 | Monitoring | OTel GenAI SemConv + Prometheus + Grafana |
@@ -212,7 +218,7 @@ curl http://localhost:9999/v1/models   # Mock engine
 ## Testing
 
 ```bash
-make test       # 1380 Python tests
+make test       # 1840 Python tests
 make go-test    # 17 Go tests
 make gate       # Full quality gate
 make demo       # E2E demo
@@ -230,7 +236,7 @@ MIT
 
 ## MCP Server — use aictl from Claude Desktop, Cursor, VS Code
 
-aictl exposes 18 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
+aictl exposes 19 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
 
 ```json
 // Claude Desktop config (~/.config/claude/mcp_servers.json):

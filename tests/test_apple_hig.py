@@ -29,7 +29,7 @@ class TestStartupPerformance(unittest.TestCase):
     def test_version_flag_fast(self):
         """--version must respond without building the full parser."""
         from aictl.core.constants import AICTL_VERSION
-        self.assertEqual(AICTL_VERSION, "1.6.0")
+        self.assertEqual(AICTL_VERSION, "1.7.0")
 
     def test_build_parser_completes(self):
         """Parser build must succeed (imports all 61 commands)."""

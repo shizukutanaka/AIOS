@@ -1,4 +1,4 @@
-"""Final tests: update, doctor --deep enhancements, info v1.6.0."""
+"""Final tests: update, doctor --deep enhancements, info v1.7.0."""
 
 import io
 import re
@@ -85,7 +85,7 @@ class TestInfoCommand(unittest.TestCase):
             rc = run(args)
         self.assertEqual(rc, 0)
         output = buf.getvalue()
-        self.assertIn("1.6.0", output)
+        self.assertIn("1.7.0", output)
         # Test count is dynamic — check it's a 3-or-4 digit number
         self.assertTrue(re.search(r'\b\d{3,4}\b', output),
                         "Test count should appear as a 3-or-4-digit number")
@@ -111,7 +111,7 @@ class TestInfoCommand(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(buf.getvalue())
         self.assertIn("version", data)
-        self.assertEqual(data["version"], "1.6.0")
+        self.assertEqual(data["version"], "1.7.0")
 
 
 class TestDashboard(unittest.TestCase):

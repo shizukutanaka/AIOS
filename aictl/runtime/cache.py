@@ -81,6 +81,10 @@ def scan_cache(extra_dirs: list[Path] | None = None) -> CacheReport:
 
 def find_stale(report: CacheReport, days: int = 30) -> list[CacheEntry]:
     """Find cache entries not accessed in N days."""
+    # A NEGATIVE days makes the cutoff a FUTURE timestamp, so `last_accessed <
+    # cutoff` matches EVERY entry — clean_stale would then wipe the whole cache,
+    # including just-touched files. Floor at 0 ("stale up to now").
+    days = max(0, days)
     cutoff = time.time() - (days * 86400)
     return [e for e in report.entries if e.last_accessed < cutoff]
 

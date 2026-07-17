@@ -1,11 +1,17 @@
-"""aictl tco — True Cost of Ownership.
+"""aictl tco — True Cost of Ownership + Carbon/Energy Advisor.
 
 No competitor shows this. Ollama shows nothing. LiteLLM shows aggregate.
-We show the real cost: electricity + hardware depreciation + cloud fallback.
+We show the real cost: electricity + hardware depreciation + cloud fallback,
+and now also kWh consumed and CO₂e emitted with GPU power-cap advice.
 
-  aictl tco              Summary for this month
-  aictl tco --period 7d  Last 7 days
-  aictl tco setup        Configure GPU price and electricity rate
+  aictl tco                                  Summary (30 days)
+  aictl tco --carbon-intensity 460           Override grid intensity (gCO₂e/kWh)
+  aictl tco carbon                           Full energy + carbon advisory
+  aictl tco carbon --region jp               Regional grid intensity
+  aictl tco setup                            Configure GPU price, electricity rate
+
+FREESH (arXiv:2511.00807): LLF scheduling + GPU frequency scaling → 28.6% energy
+savings, 45.5% emissions reduction without quality loss.
 """
 
 from __future__ import annotations
@@ -18,7 +24,8 @@ import os
 import time
 from pathlib import Path
 
-from aictl.core.output import ok, warn, print_kv, print_json
+from aictl.core.output import ok, warn, err, print_kv, print_json
+from aictl.core.argtypes import positive_int
 
 
 # ── Default configuration ──────────────────────────────────
@@ -32,19 +39,108 @@ _DEFAULTS = {
     "purchase_date": "",
 }
 
+# Grid carbon intensity by region (gCO₂e/kWh, IEA 2024 data).
+CARBON_INTENSITY_BY_REGION: dict[str, int] = {
+    "global": 500,   # IEA world average
+    "jp":     460,   # Japan
+    "us":     380,   # United States
+    "eu":     255,   # EU average
+    "de":     350,   # Germany
+    "fr":      55,   # France (nuclear-heavy)
+    "ca":     130,   # Canada (hydro-heavy)
+    "cn":     550,   # China (coal-heavy)
+    "au":     490,   # Australia
+    "uk":     175,   # United Kingdom
+}
+_DEFAULT_CARBON_INTENSITY = 500  # global average
+
+# GPU power-cap advisory (TDP → conservative cap → aggressive cap in Watts).
+# Conservative: ~15% energy reduction, <2% throughput loss.
+# Aggressive:   ~35% energy reduction, ~8% throughput loss (batch-workload friendly).
+_GPU_POWER_CAPS: dict[str, dict[str, int]] = {
+    "RTX 4090":  {"tdp": 450, "conservative": 350, "aggressive": 280},
+    "RTX 5090":  {"tdp": 575, "conservative": 450, "aggressive": 360},
+    "RTX 3090":  {"tdp": 350, "conservative": 280, "aggressive": 220},
+    "H100":      {"tdp": 700, "conservative": 550, "aggressive": 400},
+    "H200":      {"tdp": 700, "conservative": 550, "aggressive": 420},
+    "B200":      {"tdp": 1000,"conservative": 800, "aggressive": 650},
+    "A100":      {"tdp": 400, "conservative": 310, "aggressive": 250},
+    "A100 80GB": {"tdp": 400, "conservative": 310, "aggressive": 250},
+}
+# CO₂e equivalences for tangible comparisons
+_KM_PER_KG_CO2E = 8.3   # driving 1 km ≈ 120 gCO₂e (average petrol car)
+
 
 def register(sub: Any) -> None:
     """Register CLI subcommand."""
     p = sub.add_parser(
         "tco",
-        help="True cost: electricity + depreciation (no competitor shows this).",
+        help="True cost: electricity + depreciation + carbon (no competitor shows this).",
     )
+    p.add_argument("--period-days", type=int, default=30, dest="period_days",
+                   help="Period to analyse in days (default: 30).")
+    p.add_argument("--carbon-intensity", type=float, default=None,
+                   dest="carbon_intensity",
+                   help=("Grid carbon intensity in gCO₂e/kWh. "
+                         f"Default: {_DEFAULT_CARBON_INTENSITY} (world avg). "
+                         f"Regions: {', '.join(CARBON_INTENSITY_BY_REGION)}."))
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     sp = p.add_subparsers(dest="tco_cmd", required=False)
 
     sp.add_parser("setup", help="Configure GPU price, electricity rate.").set_defaults(func=run_setup)
     sp.add_parser("history", help="Cost history by day/week.").set_defaults(func=run_history)
 
+    fc = sp.add_parser("forecast",
+                       help="Project next 30-day cost based on recent trend.")
+    # positive_int: the window feeds `sorted_dates[-days:]`. --days 0 makes
+    # `[-0:]` == `[:]` (silently "all history", not "0 days"), and a negative
+    # inverts the slice (`[2:]` for -2 — an arbitrary wrong subset). >= 1 only.
+    fc.add_argument("--days", type=positive_int, default=14,
+                    help="Historical window for trend extrapolation (default: 14, >= 1)")
+    fc.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    fc.set_defaults(func=run_forecast)
+
+    carbon = sp.add_parser("carbon",
+                           help="Energy + carbon advisor: kWh, CO₂e, GPU power-cap flags.")
+    carbon.add_argument("--region", default="global",
+                        choices=list(CARBON_INTENSITY_BY_REGION),
+                        help="Grid region for carbon intensity.")
+    carbon.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    carbon.set_defaults(func=run_carbon)
+
+    fairshare = sp.add_parser(
+        "fairshare",
+        help="Fair-share advisory: Jain's fairness index over per-entity token usage.",
+    )
+    fairshare.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    fairshare.set_defaults(func=run_fairshare)
+
     p.set_defaults(func=run_summary)
+
+
+def _check_period_days(args: argparse.Namespace) -> int | None:
+    """Reject a sub-1 --period-days; return an exit code if invalid, else None.
+
+    period_days is an analysis window. A value < 1 is meaningless and (worse) a
+    negative value drives `usage_fraction = min(1.0, period_days / 30)` negative,
+    yielding a NEGATIVE hardware-depreciation cost and an inverted total TCO
+    (e.g. --period-days -30 reported total_usd = -51.84). Reject it up front,
+    matching the established physical-quantity convention.
+    """
+    period_days = getattr(args, "period_days", 30)
+    if period_days < 1:
+        err(f"--period-days must be >= 1 (got {period_days}).")
+        return 1
+    return None
+
+
+def _compute_energy(cfg: dict, period_days: int, records: list) -> tuple[float, float]:
+    """Return (estimated_gpu_hours, kwh) for the period."""
+    active_seconds = sum(r.duration_ms / 1000 for r in records
+                         if r.command in ("serve", "chat", "demo", "bench"))
+    estimated_gpu_hours = max(active_seconds / 3600, 0.1)
+    kwh = (cfg["gpu_watts"] / 1000) * estimated_gpu_hours
+    return estimated_gpu_hours, kwh
 
 
 def run_summary(args: argparse.Namespace) -> int:
@@ -52,36 +148,35 @@ def run_summary(args: argparse.Namespace) -> int:
     from aictl.core.perf import read_recent
     from aictl.core.sem_cache import get_default_cache
 
+    rc = _check_period_days(args)
+    if rc is not None:
+        return rc
+
     cfg = _load_config()
     period_days = getattr(args, "period_days", 30)
+    ci = getattr(args, "carbon_intensity", None) or _DEFAULT_CARBON_INTENSITY
 
-    print()
-    print(f"  True Cost of Ownership — last {period_days} days")
-    print()
-
-    # Hardware cost
-    monthly_depreciation = cfg["gpu_price_jpy"] / cfg["depreciation_months"]
+    # Hardware cost — guard against depreciation_months=0 (user-settable via setup)
+    monthly_depreciation = cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)
     usage_fraction = min(1.0, period_days / 30)
     depreciation_jpy = monthly_depreciation * usage_fraction
 
     # Electricity cost — estimate from perf records
     records = read_recent(limit=10000)
-    active_seconds = sum(r.duration_ms / 1000 for r in records
-                         if r.command in ("serve", "chat", "demo", "bench"))
-    # Assume GPU is running ~8 hours/day when active
-    estimated_gpu_hours = max(active_seconds / 3600, 0.1) * 8
-    electricity_jpy = (cfg["gpu_watts"] / 1000) * estimated_gpu_hours * cfg["kwh_rate_jpy"]
+    estimated_gpu_hours, kwh = _compute_energy(cfg, period_days, records)
+    electricity_jpy = kwh * cfg["kwh_rate_jpy"]
+
+    # Carbon
+    co2e_kg = kwh * ci / 1000
 
     # Cache savings (tokens not sent to inference)
     cache_stats = get_default_cache().stats()
     tokens_saved = cache_stats.get("total_tokens_saved", 0)
-    # Estimate cloud cost avoided: ¥0.75/1K tokens (GPT-4o-mini equivalent)
     cloud_savings_jpy = tokens_saved / 1000 * 0.75
 
-    # Cloud fallback cost (from audit log approximation)
-    # Cloud fallback cost: estimated from perf records (commands that used cloud)
+    # Cloud fallback cost
     cloud_cmds = sum(1 for r in records if "cloud" in str(getattr(r, "error_type", "")))
-    cloud_fallback_jpy = cloud_cmds * 15.0  # ~¥15 per cloud fallback call estimate
+    cloud_fallback_jpy = cloud_cmds * 15.0
 
     total_jpy = depreciation_jpy + electricity_jpy + cloud_fallback_jpy
     total_usd = total_jpy / 150
@@ -97,9 +192,15 @@ def run_summary(args: argparse.Namespace) -> int:
             "total_usd": round(total_usd, 2),
             "cache_tokens_saved": tokens_saved,
             "cloud_savings_jpy": round(cloud_savings_jpy),
+            "kwh": round(kwh, 2),
+            "co2e_kg": round(co2e_kg, 3),
+            "carbon_intensity_gco2_kwh": ci,
         })
         return 0
 
+    print()
+    print(f"  True Cost of Ownership — last {period_days} days")
+    print()
     print_kv([
         ("Hardware",  cfg["gpu_name"]),
         ("Period",    f"{period_days} days"),
@@ -116,19 +217,158 @@ def run_summary(args: argparse.Namespace) -> int:
     print(f"    Total          ¥{total_jpy:>8,.0f}  (≈ ${total_usd:.2f})")
     print()
 
+    print(f"  Energy:  {kwh:.1f} kWh  →  {co2e_kg:.2f} kg CO₂e "
+          f"(@ {ci:.0f} gCO₂e/kWh)")
+    equiv_km = co2e_kg * _KM_PER_KG_CO2E
+    print(f"           ≈ driving {equiv_km:.0f} km (petrol car)")
+    print()
+
     if cloud_savings_jpy > 0:
         ok(f"Cache saved ≈ ¥{cloud_savings_jpy:,.0f} in cloud inference costs "
            f"({tokens_saved:,} tokens)")
         print()
 
     # Comparison with cloud equivalent
-    cloud_equiv_jpy = total_jpy * 3  # rough estimate: cloud 3x more expensive
+    cloud_equiv_jpy = total_jpy * 3
     savings_jpy = cloud_equiv_jpy - total_jpy
     if savings_jpy > 0:
         print(f"  vs. Cloud equivalent: ≈ ¥{cloud_equiv_jpy:,.0f}")
         ok(f"  Saving: ≈ ¥{savings_jpy:,.0f} vs. equivalent cloud usage")
     print()
     print("  Configure:  aictl tco setup")
+    print("  Carbon details: aictl tco carbon")
+    print()
+    return 0
+
+
+def run_carbon(args: argparse.Namespace) -> int:
+    """Energy + carbon advisor with GPU power-cap recommendations."""
+    from aictl.core.perf import read_recent
+
+    rc = _check_period_days(args)
+    if rc is not None:
+        return rc
+
+    cfg = _load_config()
+    region = getattr(args, "region", "global")
+    ci = CARBON_INTENSITY_BY_REGION.get(region, _DEFAULT_CARBON_INTENSITY)
+    period_days = getattr(args, "period_days", 30)
+    use_json = getattr(args, "json", False)
+
+    records = read_recent(limit=10000)
+    _gpu_hours, kwh = _compute_energy(cfg, period_days, records)
+    co2e_kg = kwh * ci / 1000
+    equiv_km = co2e_kg * _KM_PER_KG_CO2E
+
+    # Power-cap advice for detected GPU
+    gpu_name = cfg["gpu_name"]
+    caps = None
+    for key in _GPU_POWER_CAPS:
+        if key.lower() in gpu_name.lower() or gpu_name.lower() in key.lower():
+            caps = _GPU_POWER_CAPS[key]
+            gpu_name = key
+            break
+
+    # Savings projections (FREESH paper benchmarks)
+    conservative_kwh = kwh * 0.85    # ~15% reduction with conservative cap
+    aggressive_kwh = kwh * 0.714     # ~28.6% reduction (FREESH result)
+    conservative_co2 = conservative_kwh * ci / 1000
+    aggressive_co2 = aggressive_kwh * ci / 1000
+
+    if use_json:
+        result = {
+            "region": region,
+            "carbon_intensity_gco2_kwh": ci,
+            "period_days": period_days,
+            "kwh": round(kwh, 2),
+            "co2e_kg": round(co2e_kg, 3),
+            "co2e_equiv_km_driven": round(equiv_km, 1),
+            "gpu": gpu_name,
+            "power_cap": caps,
+            "projected": {
+                "conservative_kwh": round(conservative_kwh, 2),
+                "conservative_co2e_kg": round(conservative_co2, 3),
+                "aggressive_kwh": round(aggressive_kwh, 2),
+                "aggressive_co2e_kg": round(aggressive_co2, 3),
+            },
+        }
+        print_json(result)
+        return 0
+
+    print()
+    print("  Energy & Carbon Advisor")
+    print()
+    print(f"  Region: {region}  ({ci} gCO₂e/kWh, IEA 2024)")
+    print()
+    print(f"  Estimated last {period_days} days:")
+    print(f"    Energy:    {kwh:.1f} kWh")
+    print(f"    CO₂e:      {co2e_kg:.2f} kg  (≈ {equiv_km:.0f} km driven)")
+    print()
+
+    if caps:
+        print(f"  GPU power-cap options for {gpu_name} (TDP: {caps['tdp']}W):")
+        cons_save = round((1 - 0.85) * 100)
+        agg_save = round((1 - 0.714) * 100)
+        print(f"    Conservative  {caps['conservative']}W  → ~{cons_save}% energy, <2% throughput loss")
+        print(f"    Aggressive    {caps['aggressive']}W  → ~{agg_save}% energy, ~8% throughput loss")
+        print()
+        print(f"  Apply (requires root / nvidia-smi):")
+        print(f"    nvidia-smi -pm 1                        # persistence mode")
+        print(f"    nvidia-smi -i 0 -pl {caps['conservative']}          # conservative cap")
+        print(f"    nvidia-smi -i 0 -pl {caps['aggressive']}          # aggressive cap")
+        print()
+        print(f"  Projected savings with conservative cap:")
+        print(f"    Energy: {conservative_kwh:.1f} kWh  (was {kwh:.1f})")
+        print(f"    CO₂e:   {conservative_co2:.2f} kg  (was {co2e_kg:.2f})")
+    else:
+        print(f"  No power-cap profile for {gpu_name}.")
+        print(f"  Run: nvidia-smi -q -d POWER to check supported range.")
+    print()
+    print("  FREESH scheduling (arXiv:2511.00807):")
+    print(f"    LLF + dynamic frequency scaling → 28.6% energy, 45.5% CO₂e reduction")
+    print(f"    Projected aggressive: {aggressive_kwh:.1f} kWh / {aggressive_co2:.2f} kg CO₂e")
+    print()
+    print(f"  Region intensities (gCO₂e/kWh): " +
+          "  ".join(f"{k}={v}" for k, v in CARBON_INTENSITY_BY_REGION.items()))
+    print("  Source: IEA 2024, arXiv:2511.00807 (FREESH)\n")
+    return 0
+
+
+def run_fairshare(args: argparse.Namespace) -> int:
+    """Fair-share advisory: Jain's fairness index over per-entity token usage.
+
+    Advisory only -- reads existing metering.py data, makes no scheduling or
+    admission decisions. See core/fairness.py for the metric and its
+    rationale (IMPROVEMENTS.md item M).
+    """
+    from dataclasses import asdict
+    from aictl.core.metering import TokenMeter
+    from aictl.core.fairness import compute_fairness
+
+    report = compute_fairness(TokenMeter().list_usage())
+    use_json = getattr(args, "json", False)
+
+    if use_json:
+        print_json(asdict(report))
+        return 0
+
+    if report.entity_count == 0:
+        warn("No metered entities yet — run some requests through aictl and retry.")
+        return 0
+
+    print()
+    print("  Fair-Share Advisor")
+    print()
+    print(f"  Jain's fairness index: {report.jains_index:.3f}  "
+          f"(1.0 = perfectly equal, 1/{report.entity_count} = maximally unfair)")
+    print(f"  Entities: {report.entity_count}   Total tokens: {report.total_tokens:,}")
+    print()
+    for e in report.entities:
+        tag = {"starved": "▼ starved", "over_share": "▲ over-share", "fair": "  fair"}[e["classification"]]
+        print(f"    {tag:<14} {e['entity_id']:<20} {e['share']*100:>5.1f}%  "
+              f"({e['total_tokens']:,} tokens, {e['entity_type']})")
+    print()
+    print(f"  Note: {report.locality_note}")
     print()
     return 0
 
@@ -187,7 +427,7 @@ def run_history(args: argparse.Namespace) -> int:
         by_date[date_str] += 1
 
     cfg = _load_config()
-    daily_fixed = (cfg["gpu_price_jpy"] / cfg["depreciation_months"]) / 30
+    daily_fixed = (cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)) / 30
 
     print()
     print("  Daily activity and cost estimate")
@@ -203,6 +443,92 @@ def run_history(args: argparse.Namespace) -> int:
         total = elec + daily_fixed
         print(f"  {date_str:<12}  {cmds:>5}  {elec:>8.0f}  {daily_fixed:>8.0f}  {total:>9.0f}")
 
+    print()
+    return 0
+
+
+def run_forecast(args: argparse.Namespace) -> int:
+    """Project next 30-day cost by extrapolating the recent daily trend."""
+    from aictl.core.perf import read_recent
+    from aictl.core.output import ok, warn, print_json
+    from collections import defaultdict
+
+    # Defense-in-depth (SDK callers bypass the positive_int parser type): floor
+    # the window at 1 so `sorted_dates[-window:]` can't degrade into the
+    # all-history (`[-0:]`) or inverted-slice (negative) trap.
+    window = max(1, getattr(args, "days", 14))
+    records = read_recent(limit=5000)
+
+    if not records:
+        warn("No activity recorded. Run some commands first.")
+        return 0
+
+    cfg = _load_config()
+    daily_fixed = (cfg["gpu_price_jpy"] / max(cfg.get("depreciation_months", 36), 1)) / 30
+
+    # Build per-day cost using same model as run_history()
+    by_date: dict[str, int] = defaultdict(int)
+    for r in records:
+        date_str = time.strftime("%Y-%m-%d", time.localtime(r.timestamp))
+        by_date[date_str] += 1
+
+    sorted_dates = sorted(by_date.keys())[-window:]
+    if not sorted_dates:
+        warn("Not enough data for forecast.")
+        return 0
+
+    daily_costs: list[float] = []
+    for date_str in sorted_dates:
+        cmds = by_date[date_str]
+        gpu_hours = cmds / 100 * 2
+        elec = (cfg["gpu_watts"] / 1000) * gpu_hours * cfg["kwh_rate_jpy"]
+        daily_costs.append(elec + daily_fixed)
+
+    n = len(daily_costs)
+    avg_daily = sum(daily_costs) / n
+    projected_monthly = avg_daily * 30
+
+    # Simple trend: compare first half vs second half
+    if n >= 4:
+        first_half = sum(daily_costs[: n // 2]) / (n // 2)
+        second_half = sum(daily_costs[n // 2 :]) / (n - n // 2)
+        delta_pct = ((second_half - first_half) / max(first_half, 1)) * 100
+        if abs(delta_pct) < 5:
+            trend = "flat"
+        elif delta_pct > 0:
+            trend = f"up {delta_pct:.0f}%"
+        else:
+            trend = f"down {abs(delta_pct):.0f}%"
+    else:
+        delta_pct = 0.0
+        trend = "insufficient data"
+
+    # Trend-adjusted projection (simple linear extrapolation)
+    trend_multiplier = 1.0 + (delta_pct / 100)
+    adjusted_monthly = projected_monthly * trend_multiplier
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print_json({
+            "window_days": n,
+            "avg_daily_jpy": round(avg_daily, 0),
+            "projected_monthly_jpy": round(projected_monthly, 0),
+            "trend": trend,
+            "trend_adjusted_monthly_jpy": round(adjusted_monthly, 0),
+            "currency": "JPY",
+        })
+        return 0
+
+    print()
+    print(f"  ── 30-Day Cost Forecast  (based on last {n} days) ──────")
+    print()
+    print(f"  Average daily cost:       ¥{avg_daily:>10,.0f}")
+    print(f"  Trend (vs prior half):    {trend}")
+    print()
+    print(f"  Flat projection:          ¥{projected_monthly:>10,.0f}/month")
+    print(f"  Trend-adjusted:           ¥{adjusted_monthly:>10,.0f}/month")
+    print()
+    ok("Forecast complete")
     print()
     return 0
 

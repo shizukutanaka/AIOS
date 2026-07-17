@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aictl.stack.manifest import StackManifest, ServiceDef
+from aictl.core.constants import VLLM_DEFAULT_PORT
 
 
 @dataclass
@@ -69,8 +70,10 @@ def stack_to_gateway_api(
                 "labels": {"aios.stack": manifest.name},
             },
             "spec": {
-                "targetPorts": [{"number": svc.port or 8000}],
-                "selector": {"app": pool_name},
+                "targetPorts": [{"number": svc.port or VLLM_DEFAULT_PORT}],
+                # Must match the pod label the workloads actually carry
+                # (kserve/orchestrator emit `aios.service`, not `app`).
+                "selector": {"aios.service": pool_name},
                 "extensionRef": {
                     "name": f"{pool_name}-epp",
                     "port": config.epp_port,

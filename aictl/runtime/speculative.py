@@ -36,7 +36,7 @@ from typing import Any
 
 @dataclass
 class SpeculativeConfig:
-    method: str = "none"         # none | eagle3 | p-eagle | mtp | ngram | standalone
+    method: str = "none"         # none | eagle3 | p-eagle | mtp | medusa | ngram | standalone
     draft_model: str = ""        # HF path for EAGLE3/STANDALONE draft model
     num_speculative_tokens: int = 5
     # EAGLE3-specific
@@ -107,7 +107,12 @@ def generate_vllm_args(config: SpeculativeConfig) -> list[str]:
     if config.method == "none":
         return []
 
+    if config.num_speculative_tokens <= 0:
+        raise ValueError(f"num_speculative_tokens must be > 0, got {config.num_speculative_tokens}")
+
     if config.method in ("eagle3", "p-eagle"):
+        if not config.draft_model:
+            raise ValueError(f"draft_model is required for method={config.method}")
         spec_config: dict[str, Any] = {
             "method": "eagle3",
             "num_speculative_tokens": config.num_speculative_tokens,
@@ -138,15 +143,23 @@ def generate_sglang_args(config: SpeculativeConfig) -> list[str]:
     if config.method == "none":
         return []
 
+    if config.num_speculative_tokens <= 0:
+        raise ValueError(f"num_speculative_tokens must be > 0, got {config.num_speculative_tokens}")
+
     args = []
 
-    if config.method == "eagle3":
+    # SGLang's EAGLE3 algorithm covers both classic EAGLE-3 and the parallel
+    # (p-eagle) variant; map both so an explicit p-eagle config still emits
+    # speculative flags instead of silently returning an empty list.
+    if config.method in ("eagle3", "p-eagle"):
+        if not config.draft_model:
+            raise ValueError(f"draft_model is required for method={config.method}")
         args.append("--speculative-algorithm=EAGLE3")
         if config.draft_model:
             args.append(f"--speculative-draft-model-path={config.draft_model}")
         args.append(f"--speculative-num-steps={config.num_steps}")
         args.append(f"--speculative-eagle-topk={config.eagle_topk}")
-        args.append(f"--speculative-num-draft-tokens={config.num_speculative_tokens * config.eagle_topk}")
+        args.append(f"--speculative-num-draft-tokens={config.num_speculative_tokens}")
 
     elif config.method == "mtp":
         args.append("--speculative-algorithm=MTP")
@@ -170,6 +183,8 @@ def estimate_speedup(config: SpeculativeConfig) -> dict[str, Any]:
         "eagle3": {"latency": 1.3, "throughput": 1.7, "note": "EAGLE3 draft head"},
         "p-eagle": {"latency": 1.5, "throughput": 2.1, "note": "P-EAGLE parallel drafting"},
         "mtp": {"latency": 1.2, "throughput": 1.4, "note": "Native MTP (DeepSeek/Qwen3)"},
+        "medusa": {"latency": 1.2, "throughput": 1.9,
+                   "note": "Medusa multi-head drafting — prefer EAGLE3 where a head exists"},
         "ngram": {"latency": 1.1, "throughput": 1.2, "note": "GPU N-gram matching, no extra model"},
         "none": {"latency": 1.0, "throughput": 1.0, "note": "Standard autoregressive"},
     }

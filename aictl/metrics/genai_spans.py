@@ -29,6 +29,88 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from aictl.core.constants import AICTL_VERSION
+
+
+@dataclass
+class ToolSpan:
+    """A single MCP tool call span following OTel SemConv conventions."""
+    tool_name: str = ""
+    success: bool = True
+    start_time_ns: int = 0
+    end_time_ns: int = 0
+    error: str = ""  # First 200 chars of error text, empty on success
+
+    def duration_ms(self) -> float:
+        if self.start_time_ns and self.end_time_ns:
+            return (self.end_time_ns - self.start_time_ns) / 1_000_000
+        return 0.0
+
+    def to_otel_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {
+            "gen_ai.operation.name": "tool",
+            "aios.mcp.tool_name": self.tool_name,
+            "aios.mcp.success": self.success,
+            "aios.mcp.duration_ms": self.duration_ms(),
+        }
+        if self.error:
+            attrs["aios.mcp.error"] = self.error
+        return attrs
+
+    def to_otlp_span(self, service_name: str = "aictl") -> dict[str, Any]:
+        import hashlib
+        span_id = hashlib.sha256(
+            f"{self.start_time_ns}{self.tool_name}".encode()
+        ).hexdigest()[:16]
+        trace_id = hashlib.sha256(
+            f"{self.start_time_ns}{service_name}".encode()
+        ).hexdigest()[:32]
+        return {
+            "traceId": trace_id,
+            "spanId": span_id,
+            "name": f"mcp {self.tool_name}",
+            "kind": 3,  # SPAN_KIND_CLIENT
+            "startTimeUnixNano": str(self.start_time_ns),
+            "endTimeUnixNano": str(self.end_time_ns),
+            "attributes": [
+                {"key": k, "value": _otel_value(v)}
+                for k, v in self.to_otel_attributes().items()
+            ],
+            "status": {"code": 1 if self.success else 2},
+        }
+
+
+def export_tool_spans(spans: list[ToolSpan],
+                      endpoint: str = "http://localhost:4318/v1/traces",
+                      service_name: str = "aictl") -> bool:
+    """Export MCP tool spans to an OTel collector via OTLP/HTTP JSON."""
+    if not spans:
+        return True
+    payload = {
+        "resourceSpans": [{
+            "resource": {
+                "attributes": [
+                    {"key": "service.name", "value": {"stringValue": service_name}},
+                    {"key": "service.version", "value": {"stringValue": AICTL_VERSION}},
+                ],
+            },
+            "scopeSpans": [{
+                "scope": {"name": "aictl.mcp", "version": AICTL_VERSION},
+                "spans": [s.to_otlp_span(service_name) for s in spans],
+            }],
+        }],
+    }
+    try:
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            endpoint, data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status in (200, 202)
+    except Exception:
+        return False
+
 
 @dataclass
 class GenAISpan:
@@ -142,11 +224,11 @@ def export_spans(spans: list[GenAISpan],
             "resource": {
                 "attributes": [
                     {"key": "service.name", "value": {"stringValue": service_name}},
-                    {"key": "service.version", "value": {"stringValue": "1.5.0"}},
+                    {"key": "service.version", "value": {"stringValue": AICTL_VERSION}},
                 ],
             },
             "scopeSpans": [{
-                "scope": {"name": "aictl.genai", "version": "1.5.0"},
+                "scope": {"name": "aictl.genai", "version": AICTL_VERSION},
                 "spans": [s.to_otlp_span(service_name) for s in spans],
             }],
         }],
@@ -159,7 +241,7 @@ def export_spans(spans: list[GenAISpan],
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return resp.status in (200, 202)
     except Exception:
         return False
 

@@ -36,6 +36,13 @@ DEFAULT_OVERLAP = 200
 # Top-K retrieval default
 DEFAULT_K = 5
 
+# Minimum RRF-fused candidate pool size handed to an optional reranker
+# (IMPROVEMENTS.md item A-3) before the final top-K slice. Reranking only the
+# already-sliced top-K defeats the purpose -- RRF's top-K may already exclude
+# a chunk the reranker would have preferred -- so the pool is always at least
+# this wide (or 4x K, whichever is larger) when a reranker is configured.
+RERANK_POOL_MIN = 20
+
 # Hybrid retrieval (dense cosine + lexical BM25, fused with Reciprocal Rank
 # Fusion). Dense+sparse hybrid is the field-standard quality lever (Haystack,
 # txtai) and—crucially—keeps retrieval useful even when only the non-semantic
@@ -68,6 +75,11 @@ SKIP_EXTENSIONS = {
     ".exe", ".dll", ".so", ".dylib", ".bin",
     ".class", ".pyc", ".o", ".a",
 }
+
+# Cap per-file size for indexing: read_text() pulls the whole file into memory,
+# so a multi-GB log/dump in a directory would OOM the process. 10 MB is far more
+# than any real document and already yields thousands of chunks.
+MAX_INDEX_FILE_BYTES = 10 * 1024 * 1024
 
 
 @dataclass
@@ -231,6 +243,11 @@ def read_file(path: Path) -> str | None:
     ext = path.suffix.lower()
     if ext in SKIP_EXTENSIONS:
         return None
+    try:
+        if path.stat().st_size > MAX_INDEX_FILE_BYTES:
+            return None  # too large to index — don't read GBs into memory
+    except OSError:
+        return None
     if ext in TEXT_EXTENSIONS or ext == "":
         try:
             return path.read_text(encoding="utf-8", errors="replace")
@@ -391,7 +408,8 @@ def index_directory(
         # Treat as a single file
         files = [root]
     else:
-        files = [f for f in root.rglob("*") if f.is_file()]
+        # Sorted so indexing order (and thus chunk ordering) is reproducible.
+        files = sorted(f for f in root.rglob("*") if f.is_file())
 
     indexed = 0
     skipped = 0
@@ -533,14 +551,27 @@ def search(
     query: str,
     store: RagStore,
     k: int = DEFAULT_K,
+    config: Any = None,
 ) -> list[tuple[Chunk, float]]:
     """Return top-K chunks for the query via hybrid dense+lexical retrieval.
 
     Dense cosine and BM25 rankings are fused with Reciprocal Rank Fusion. If the
     query has no lexical tokens, this degrades cleanly to dense-only ranking; if
     embeddings are the non-semantic fallback, BM25 still carries the retrieval.
+
+    `config`, if given and its `rerank_endpoint` is set, reranks a widened
+    RRF-fused candidate pool via `core.rerank.rerank()` before the final
+    top-K slice (IMPROVEMENTS.md item A-3). `config=None` (the default) is a
+    true no-op: no reranker import, no extra network call, byte-identical to
+    the pre-existing RRF-only behavior.
     """
     if not query.strip():
+        return []
+
+    # Guard the final `[:k]` slice: a negative k turns it into `[:-3]`, which
+    # returns *all but the last 3* fused results — the inverse of "top-k" — and
+    # k == 0 should mean "no results", not the whole list via some other path.
+    if k <= 0:
         return []
 
     chunks = [c for c in store.all_chunks_with_embeddings() if c.embedding is not None]
@@ -558,16 +589,28 @@ def search(
     # Lexical ranking (BM25 over chunk text).
     lexical_ranking = bm25_rank(query, chunks)
 
-    return reciprocal_rank_fusion([dense_ranking, lexical_ranking])[:k]
+    fused = reciprocal_rank_fusion([dense_ranking, lexical_ranking])
+
+    rerank_endpoint = getattr(config, "rerank_endpoint", "") if config is not None else ""
+    if rerank_endpoint:
+        from aictl.core.rerank import rerank as _rerank
+        pool_size = max(k * 4, RERANK_POOL_MIN)
+        pool = fused[:pool_size]
+        reranked = _rerank(rerank_endpoint, getattr(config, "rerank_model", ""), query, pool)
+        if reranked is not None:
+            return reranked[:k]
+
+    return fused[:k]
 
 
 def answer(
     question: str,
     store: RagStore,
     k: int = DEFAULT_K,
+    config: Any = None,
 ) -> tuple[str, list[tuple[Chunk, float]]]:
     """Retrieve context, then ask the model. Returns (answer, sources)."""
-    matches = search(question, store, k=k)
+    matches = search(question, store, k=k, config=config)
     if not matches:
         return ("No relevant documents found in the index.", [])
 

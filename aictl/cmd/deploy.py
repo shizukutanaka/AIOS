@@ -12,6 +12,7 @@ import argparse
 import json
 from aictl.core.constants import VLLM_IMAGE
 from aictl.core.output import ok, print_json, print_kv
+from aictl.runtime.broker import full_detect
 from aictl.runtime.dynamo import (
     DGDRSpec, detect_dynamo, generate_dgdr_yaml,
     estimate_dgdr_resources, generate_kvbm_config,
@@ -65,6 +66,18 @@ def register(sub: Any) -> None:
     opt.add_argument("--speculative", action="store_true")
     opt.set_defaults(func=run_optimize)
 
+    strat = dsub.add_parser(
+        "strategy",
+        help="Advise serving topology: aggregated vs P/D-disagg vs AFD.")
+    strat.add_argument("model", help="Model name")
+    strat.add_argument("--gpu-count", type=int, default=1)
+    strat.add_argument("--objective", default="balanced",
+                       choices=["balanced", "latency", "throughput"])
+    strat.add_argument("--model-type", default="auto",
+                       choices=["auto", "dense", "moe"],
+                       help="Override dense/MoE detection.")
+    strat.set_defaults(func=run_strategy)
+
     ms = dsub.add_parser("modelservice", help="Generate llm-d ModelService Helm values")
     ms.add_argument("model", help="Model name")
     ms.add_argument("--preset", default="balanced", choices=["balanced", "latency", "throughput"])
@@ -74,7 +87,74 @@ def register(sub: Any) -> None:
     ms.add_argument("--lora", nargs="*", default=[], help="LoRA adapter names")
     ms.set_defaults(func=run_modelservice)
 
+    dryrun = dsub.add_parser("dry-run", help="Preview deployment plan with risk analysis (no changes)")
+    dryrun.add_argument("model", help="Model name")
+    dryrun.add_argument("--hardware", default="auto", help="GPU type")
+    dryrun.add_argument("--ttft", type=int, default=500, help="Target TTFT p95 (ms)")
+    dryrun.add_argument("--tps", type=int, default=100, help="Target throughput (tokens/sec)")
+    dryrun.add_argument("--max-gpus", type=int, default=8, help="Max GPUs")
+    dryrun.add_argument("--quant", default="auto", help="Quantization")
+    dryrun.set_defaults(func=run_dryrun)
+
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
+
+
+def run_dryrun(args: argparse.Namespace) -> int:
+    """Preview deployment plan with risk analysis — no changes made."""
+    from aictl.core.output import warn
+
+    spec = DGDRSpec(
+        model=args.model, hardware=args.hardware,
+        sla_ttft_ms=args.ttft, sla_throughput_tps=args.tps,
+        max_gpus=args.max_gpus, quantization=args.quant,
+    )
+    est = estimate_dgdr_resources(spec)
+
+    # Risk analysis
+    hw = full_detect()
+    available_vram_gb = sum(g.vram_mb for g in hw.gpus) / 1024
+    available_gpus = len(hw.gpus)
+
+    risks = []
+    if est["total_vram_gb"] > available_vram_gb:
+        risks.append(f"VRAM: need {est['total_vram_gb']:.1f} GB, have {available_vram_gb:.1f} GB")
+    if est["gpus_needed"] > available_gpus:
+        risks.append(f"GPU count: need {est['gpus_needed']}, have {available_gpus}")
+    if not est["meets_sla"]:
+        risks.append(f"SLA: estimated TPS {est['estimated_tps']} < target {args.tps}")
+
+    safe = len(risks) == 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "dry_run": True,
+            "model": args.model,
+            "safe": safe,
+            "risks": risks,
+            "plan": est,
+        })
+        return 0 if safe else 1
+
+    ok(f"[DRY-RUN] Deployment preview: {args.model}")
+    print()
+    print_kv([
+        ("Parameters", f"{est['model_params_b']:.0f}B"),
+        ("Model VRAM", f"{est['model_vram_gb']:.1f} GB"),
+        ("Total VRAM", f"{est['total_vram_gb']:.1f} GB (model + KV cache)"),
+        ("GPUs needed", f"{est['gpus_needed']}x {est['gpu_type']}"),
+        ("Est. TPS",    f"{est['estimated_tps']} tokens/sec"),
+        ("P/D disagg",  "recommended" if est["disagg_recommended"] else "not needed"),
+    ], indent=2)
+    print()
+    if safe:
+        ok("Risk analysis: SAFE — no conflicts detected")
+    else:
+        for r in risks:
+            warn(f"Risk: {r}")
+        print()
+        from aictl.core.output import err
+        err("Deployment would FAIL — resolve risks above before deploying")
+    return 0 if safe else 1
 
 
 def run_plan(args: argparse.Namespace) -> int:
@@ -247,6 +327,46 @@ def run_optimize(args: argparse.Namespace) -> int:
     if result.estimated_throughput_tps:
         print(f"\n  Estimated: ~{result.estimated_throughput_tps} tokens/sec")
 
+    return 0
+
+
+def run_strategy(args: argparse.Namespace) -> int:
+    """Advise on serving topology (aggregated / P/D-disagg / AFD)."""
+    from aictl.runtime.serving_strategy import recommend_strategy
+
+    model_type = None if args.model_type == "auto" else args.model_type
+    rec = recommend_strategy(
+        model=args.model,
+        gpu_count=args.gpu_count,
+        objective=args.objective,
+        model_type=model_type,
+    )
+
+    if getattr(args, "json", False):
+        print_json(rec.to_dict())
+        return 0
+
+    ok(f"Recommended serving strategy: {rec.strategy.upper()}")
+    print()
+    print_kv([
+        ("Model",      args.model),
+        ("Model type", rec.model_type),
+        ("GPUs",       str(rec.gpu_count)),
+        ("Objective",  rec.objective),
+    ])
+    print()
+    print(f"  Why: {rec.rationale}")
+    print()
+    if rec.vllm_flags:
+        print("  vLLM flags:")
+        for f in rec.vllm_flags:
+            print(f"    {f}")
+        print()
+    print(f"  Materialize:  {rec.next_command}")
+    print()
+    for ref in rec.references:
+        print(f"  Source: {ref}")
+    print()
     return 0
 
 

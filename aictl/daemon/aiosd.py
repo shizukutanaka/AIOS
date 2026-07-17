@@ -32,7 +32,7 @@ from aictl.stack.orchestrator import apply_stack, stop_stack, list_running
 from aictl.metrics.slo import read_psi, InferenceMetrics, SLOTarget, check_slo
 
 
-from aictl.core.constants import DAEMON_HOST, DAEMON_PORT
+from aictl.core.constants import DAEMON_HOST, DAEMON_PORT, MAX_REQUEST_BODY
 
 DEFAULT_HOST = DAEMON_HOST
 DEFAULT_PORT = DAEMON_PORT
@@ -44,6 +44,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
     store: StateStore
     _report_cache: RuntimeReport | None = None
     _report_ts: float = 0.0
+    _report_lock: threading.Lock = threading.Lock()
 
     def log_message(self, format: Any, *args: Any) -> None:
         """Log message."""
@@ -62,19 +63,26 @@ class AIOSHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> dict[str, Any]:
         """Read and return data from the source."""
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
             return {}
+        if length > MAX_REQUEST_BODY:
+            self._json_response({"error": "request body too large"}, 413)
+            raise ValueError(f"request body {length} exceeds {MAX_REQUEST_BODY}")
         raw = self.rfile.read(length)
         return json.loads(raw)
 
     def _get_report(self) -> RuntimeReport:
         """Retrieve and return the requested value."""
         now = time.time()
-        if self._report_cache is None or now - self._report_ts > 30:
-            AIOSHandler._report_cache = full_detect()
-            AIOSHandler._report_ts = now
-        return self._report_cache  # type: ignore
+        with AIOSHandler._report_lock:
+            if self._report_cache is None or now - self._report_ts > 30:
+                AIOSHandler._report_cache = full_detect()
+                AIOSHandler._report_ts = now
+            return self._report_cache  # type: ignore
 
     # ── Routing ─────────────────────────────────────────
 
@@ -94,6 +102,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "/v1/upgrade/plan": self._upgrade_plan,
             "/v1/broker/engines": self._broker_engines,
             "/v1/broker/governor": self._broker_governor,
+            "/v1/scheduler": self._scheduler_status,
             "/v1/cluster": self._cluster_status,
             "/metrics": self._prometheus_metrics,
             "/v1/events": self._events,
@@ -126,7 +135,11 @@ class AIOSHandler(BaseHTTPRequestHandler):
         }
         handler = routes.get(path)
         if handler:
-            handler()
+            try:
+                handler()
+            except json.JSONDecodeError:
+                # Malformed request body — a client error, not a server crash.
+                self._json_response({"error": "invalid JSON in request body"}, 400)
         else:
             self._json_response({"error": "not found", "path": path}, 404)
 
@@ -151,7 +164,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "uptime_seconds": time.time() - getattr(self.server, '_start_time', time.time()),
         })
 
-    def _node_status(self) -> dict[str, Any]:
+    def _node_status(self) -> None:
         """Return current node status as a dict."""
         node = self.store.load_node()
         report = self._get_report()
@@ -163,7 +176,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "issues": report.issues,
         })
 
-    def _runtime_info(self) -> dict[str, Any]:
+    def _runtime_info(self) -> None:
         """Return runtime engine information dict."""
         report = self._get_report()
         self._json_response({
@@ -175,17 +188,17 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "recommendations": report.recommendations,
         })
 
-    def _list_stacks(self) -> list[Any]:
+    def _list_stacks(self) -> None:
         """Return list of running stack names."""
         stacks = self.store.load_stacks()
         self._json_response({"stacks": [asdict(s) for s in stacks]})
 
-    def _list_services(self) -> list[Any]:
+    def _list_services(self) -> None:
         """Return list of running service names."""
         services = list_running()
         self._json_response({"services": services})
 
-    def _list_models(self) -> list[Any]:
+    def _list_models(self) -> None:
         """Return list of loaded model names."""
         models = self.store.list_models()
         self._json_response({"models": models})
@@ -379,7 +392,7 @@ class AIOSHandler(BaseHTTPRequestHandler):
                     "degraded_mode": h.status == "DEGRADED",
                 })
                 return
-        self._json_response({"fallback_target": "", "endpoint": "", "degraded_mode": True})
+        self._json_response({"error": "no healthy engines available"}, 503)
 
     def _broker_drain(self) -> None:
         """Drain traffic from an engine before shutdown."""
@@ -425,6 +438,21 @@ class AIOSHandler(BaseHTTPRequestHandler):
             "reason": action.reason,
             "timestamp": action.timestamp,
         })
+
+    def _scheduler_status(self) -> None:
+        """Return the background scheduler's status: whether it's running,
+        how many ticks it has done, and the result of its last tick (which
+        batch jobs / warmup ran)."""
+        sched = getattr(self.__class__, '_scheduler', None)
+        if sched:
+            self._json_response(sched.get_status())
+            return
+
+        # Not running as a daemon (or scheduler never started) — do a
+        # one-shot tick so the endpoint is still useful standalone.
+        from aictl.core.scheduler import run_due_all
+        result = run_due_all(self.store.dir)
+        self._json_response({"running": False, "last_result": result})
 
     # ── Cluster handlers ────────────────────────────────
 
@@ -552,19 +580,42 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     store = StateStore(state_dir)
     AIOSHandler.store = store
 
-    # Start SLO Governor
+    # Bind FIRST so a port conflict fails fast with a clean, actionable message —
+    # before spinning up the governor thread (which would otherwise leak when the
+    # bind raises). HTTPServer sets allow_reuse_address, so a fresh restart after
+    # TIME_WAIT still binds.
+    try:
+        server = ThreadedHTTPServer((host, port), AIOSHandler)
+    except OSError as e:
+        import errno
+        import sys as _sys
+        if e.errno == errno.EADDRINUSE:
+            print(f"aiosd: port {port} is already in use — is the daemon already "
+                  f"running?  Check: aictl daemon status", file=_sys.stderr)
+        else:
+            print(f"aiosd: cannot bind {host}:{port}: {e}", file=_sys.stderr)
+        raise SystemExit(1)
+    server._start_time = time.time()  # type: ignore
+
+    # Start SLO Governor (only now that we own the port)
     from aictl.daemon.governor import GovernorDaemon
     governor = GovernorDaemon(store, interval_s=15.0)
     AIOSHandler._governor = governor  # type: ignore
     governor.start()
 
-    server = ThreadedHTTPServer((host, port), AIOSHandler)
-    server._start_time = time.time()  # type: ignore
+    # Start the scheduler daemon: fires due `batch add --schedule` jobs and
+    # `warmup schedule` on their own timing (docs/FEATURE_GAP_AUDIT.md
+    # P3/P4/M3) — previously nothing executed a persisted schedule at all.
+    from aictl.daemon.scheduler_daemon import SchedulerDaemon
+    scheduler = SchedulerDaemon(store, interval_s=60.0)
+    AIOSHandler._scheduler = scheduler  # type: ignore
+    scheduler.start()
 
     def shutdown(sig: Any, frame: Any) -> None:
         """Shutdown."""
         print("\naiosd shutting down...")
         governor.stop()
+        scheduler.stop()
         threading.Thread(target=server.shutdown).start()
 
     signal.signal(signal.SIGINT, shutdown)
@@ -573,6 +624,7 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     print(f"aiosd listening on http://{host}:{port}")
     print(f"State dir: {store.dir}")
     print("SLO Governor: active (15s interval)")
+    print("Scheduler: active (60s interval, batch jobs + warmup schedules)")
     server.serve_forever()
 
 

@@ -374,12 +374,12 @@ class TestGateChecks(unittest.TestCase):
             cfg = tomllib.load(f)
         toml_version = cfg["project"]["version"]
         self.assertEqual(AICTL_VERSION, toml_version)
-        self.assertEqual(AICTL_VERSION, "1.6.0")
+        self.assertEqual(AICTL_VERSION, "1.7.0")
         self.assertRegex(AICTL_VERSION, r'^\d+\.\d+\.\d+$')
 
     def test_mcp_tool_count(self):
         from aictl.mcp_server import TOOLS
-        self.assertEqual(len(TOOLS), 18)
+        self.assertEqual(len(TOOLS), 19)
         names = {t["name"] for t in TOOLS}
         for required in ["aictl_fit", "aictl_quant", "aictl_guard_scan",
                          "aictl_rag_ask", "aictl_troubleshoot", "aictl_tco"]:

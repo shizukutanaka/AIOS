@@ -50,7 +50,8 @@ def run(args: argparse.Namespace) -> int:
     vram_mb = sum(g.vram_mb for g in hw.gpus)
 
     if hw.gpus:
-        ok(f"{hw.gpus[0].name} ({vram_mb // 1024}GB VRAM)  •  {hw.system.ram_total_mb // 1024}GB RAM")
+        gpu_label = f"{len(hw.gpus)}× {hw.gpus[0].name}" if len(hw.gpus) > 1 else hw.gpus[0].name
+        ok(f"{gpu_label} ({vram_mb // 1024}GB VRAM)  •  {hw.system.ram_total_mb // 1024}GB RAM")
     else:
         ok(f"CPU only  •  {hw.system.ram_total_mb // 1024}GB RAM")
         warn("No GPU found — inference will be slow on CPU.")
@@ -62,7 +63,7 @@ def run(args: argparse.Namespace) -> int:
     candidates = recommend(vram_mb=vram_mb, ram_mb=hw.system.ram_total_mb, max_results=4)
 
     if not candidates:
-        err("No models fit your hardware. Try: aictl configure --engine cloud")
+        err("No models fit your hardware. Try: aictl cost compare  # evaluate cloud GPUs")
         return 1
 
     print()
@@ -164,8 +165,10 @@ def _check_engine(runtime: str) -> bool:
             return subprocess.run(["ollama", "list"], capture_output=True, timeout=5).returncode == 0
         if runtime == "vllm":
             import urllib.request
-            urllib.request.urlopen("http://localhost:8000/health", timeout=3)
-            return True
+            # 'with' closes the response (and its socket); a bare urlopen leaks
+            # the connection/FD until GC.
+            with urllib.request.urlopen("http://localhost:8000/health", timeout=3):
+                return True
         return False
     except Exception:
         return False

@@ -1,6 +1,6 @@
 """NVIDIA Dynamo integration: KVBM, NIXL, ModelExpress, Planner.
 
-NVIDIA Dynamo (v0.8+, April 2026) is the "inference OS for AI factories".
+NVIDIA Dynamo (1.0 GA, March 2026 — GTC) is the "inference OS for AI factories".
 This module provides integration points for aictl to work with Dynamo components:
 
   KVBM (KV Block Manager):
@@ -33,6 +33,7 @@ This module provides integration points for aictl to work with Dynamo components
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,14 @@ def detect_dynamo() -> dict[str, Any]:
         Path("/opt/nvidia/dynamo/lib/libnixl.so"),
     ]
     result["nixl_available"] = any(p.exists() for p in nixl_paths)
+
+    # Check for KVBM (KV Block Manager) library — co-located with NIXL in Dynamo
+    kvbm_paths = [
+        Path("/usr/lib/libkvbm.so"),
+        Path("/usr/local/lib/libkvbm.so"),
+        Path("/opt/nvidia/dynamo/lib/libkvbm.so"),
+    ]
+    result["kvbm_available"] = any(p.exists() for p in kvbm_paths)
 
     # Check for Grove K8s operator
     if shutil.which("kubectl"):
@@ -208,12 +217,24 @@ def estimate_dgdr_resources(spec: DGDRSpec) -> dict[str, Any]:
     # GPU count
     vram_per_gpu = {"H100": 80, "H200": 141, "A100": 80, "RTX4090": 24, "auto": 80}
     gpu_vram = vram_per_gpu.get(spec.hardware, 80)
-    gpus_needed = max(1, int((total_vram_gb + gpu_vram - 1) // gpu_vram))
+    if spec.max_gpus <= 0:
+        raise ValueError(f"max_gpus must be > 0, got {spec.max_gpus}")
+    # total_vram_gb is a float, so the integer-ceil idiom (a+b-1)//b is invalid
+    # (// floors and under-counts fractional remainders) — use math.ceil.
+    gpus_needed = max(1, math.ceil(total_vram_gb / gpu_vram))
     gpus_needed = min(gpus_needed, spec.max_gpus)
 
-    # Throughput estimation
+    # Throughput estimation. Decode is memory-bandwidth bound, so single-replica
+    # throughput scales (roughly) inversely with model size; the per-GPU figures
+    # below are calibrated for an ~8B reference model. The previous formula
+    # multiplied by gpus_needed, but gpus_needed grows with VRAM — so a 70B model
+    # (2 GPUs) reported 2x the throughput of an 8B (1 GPU), i.e. "bigger = faster".
+    # Scale by model size instead, so a larger model never appears faster on equal
+    # hardware.
+    REFERENCE_B = 8.0
     tps_per_gpu = {"H100": 280, "H200": 450, "A100": 130, "RTX4090": 80, "auto": 200}
-    est_tps = tps_per_gpu.get(spec.hardware, 200) * gpus_needed
+    base_tps = tps_per_gpu.get(spec.hardware, 200)
+    est_tps = max(1, int(base_tps * REFERENCE_B / max(params_b, 1)))
 
     return {
         "model_params_b": params_b,

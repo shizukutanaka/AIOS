@@ -7,8 +7,9 @@ Research: same model family pairs achieve 80-90% acceptance rate → 2-3x speedu
 Implementation: built into vLLM v0.20, SGLang v0.5.
 
 Usage:
-  aictl spec recommend llama3.1:70b   # best draft model
+  aictl spec recommend llama3.1:70b   # best draft model (classic pairing)
   aictl spec recommend --all           # full pairing table
+  aictl spec methods <model>           # EAGLE-3 / MTP / NGRAM method advisor
   aictl spec bench llama3.1:70b --draft llama3.2:1b
   aictl spec auto <model>              # legacy compat
 """
@@ -18,6 +19,8 @@ from __future__ import annotations
 from typing import Any
 
 import argparse
+
+from aictl.runtime.benchmark import run_benchmark, BenchResult
 
 
 class _Pair:
@@ -68,21 +71,42 @@ PAIRS = [
 def register(sub: Any) -> None:
     """Register CLI subcommand."""
     p = sub.add_parser("spec", help="Speculative decoding: 2-3x faster inference, zero quality loss.")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     sp = p.add_subparsers(dest="spec_cmd", required=False)
 
     r = sp.add_parser("recommend", help="Best draft model for a target model.")
     r.add_argument("model", nargs="?", default=None)
     r.add_argument("--all", action="store_true", help="Show full table.")
-    r.add_argument("--json", action="store_true")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     r.set_defaults(func=run_recommend)
+
+    m = sp.add_parser("methods", help="EAGLE-3 / P-EAGLE / MTP / NGRAM method advisor.")
+    m.add_argument("model", nargs="?", default=None)
+    m.add_argument("--all", action="store_true", help="Show the full method matrix.")
+    m.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    m.set_defaults(func=run_methods)
 
     b = sp.add_parser("bench", help="Estimate speedup for a pair.")
     b.add_argument("target")
     b.add_argument("--draft", required=True)
     b.add_argument("--gamma", type=int, default=5)
-    b.add_argument("--json", action="store_true")
+    b.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     b.set_defaults(func=run_bench)
+
+    prof = sp.add_parser("profile", help="Profile live speculative decoding on a running engine.")
+    prof.add_argument("target", help="Target model name")
+    prof.add_argument("--draft", default="", help="Draft model (empty = auto-select)")
+    prof.add_argument("--endpoint", default="http://localhost:8000",
+                      help="vLLM/SGLang endpoint URL")
+    prof.add_argument("-n", "--requests", type=int, default=5, help="Number of test requests")
+    prof.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    prof.set_defaults(func=run_profile)
+
+    exp = sp.add_parser("export", help="Export speculative decoding metrics as Prometheus text.")
+    exp.add_argument("target", help="Target model name")
+    exp.add_argument("--draft", default="", help="Draft model name")
+    exp.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    exp.set_defaults(func=run_export)
 
     # Legacy compat
     for name in ("auto", "vllm", "sglang", "drafts"):
@@ -114,6 +138,7 @@ def run_default(args: argparse.Namespace) -> int:
     print()
     print("    aictl spec recommend llama3.1:70b   # best draft model")
     print("    aictl spec recommend --all           # full pairing table")
+    print("    aictl spec methods <model>           # EAGLE-3 / MTP / NGRAM advisor")
     print("    aictl spec bench llama3.1:70b --draft llama3.2:1b")
     print()
     return 0
@@ -179,7 +204,121 @@ def run_recommend(args: argparse.Namespace) -> int:
         print(f"    {line}")
     print()
     print(f"  Notes: {best.notes}")
-    print("\n  Source: arxiv.org/abs/2402.01528 · blog.premai.io/speculative-decoding-2026\n")
+    print(f"\n  ↑ classic draft pairing. For EAGLE-3 (often faster): "
+          f"aictl spec methods {model}")
+    print("  Source: arxiv.org/abs/2402.01528 · arxiv.org/abs/2503.01840 (EAGLE-3)\n")
+    return 0
+
+
+# ── Modern method advisor (EAGLE-3 / P-EAGLE / MTP / NGRAM) ─────────
+# Classic draft-pairing (PAIRS, above) is one method; the 2026 frontier is
+# EAGLE-3 (de-facto standard, up to ~4.8x on large models). This advisor
+# surfaces the method dimension, backed by runtime/speculative.py so the CLI
+# and the actual arg-generation never drift.
+
+# method → (engines, requirement, when_to_use)
+_METHOD_INFO: list[tuple[str, str, str, str]] = [
+    ("eagle3",     "vLLM + SGLang", "trained EAGLE-3 head (~277MB)",
+     "Best general choice when a head exists for the model family."),
+    ("p-eagle",    "vLLM",          "EAGLE-3 head + parallel drafting",
+     "Extra latency win on supported models (e.g. GPT-OSS)."),
+    ("mtp",        "SGLang",        "model-native MTP weights",
+     "DeepSeek-V3/R1 and Qwen3 — no separate draft model."),
+    ("medusa",     "vLLM + TRT-LLM", "trained Medusa heads",
+     "Multi-head drafting; prefer EAGLE-3 where a head exists (better accept rate)."),
+    ("ngram",      "vLLM + SGLang", "none (GPU n-gram matching)",
+     "Any model, zero setup; modest gain on repetitive output."),
+    ("standalone", "SGLang",        "any smaller same-family model",
+     "No EAGLE head available but you have a small draft."),
+]
+
+
+def run_methods(args: argparse.Namespace) -> int:
+    """Advise on the speculative *method* (EAGLE-3/MTP/NGRAM), with engine flags."""
+    from aictl.runtime.speculative import (
+        auto_select_method, generate_vllm_args, generate_sglang_args,
+        estimate_speedup, EAGLE3_DRAFTS, MTP_MODELS, SpeculativeConfig,
+    )
+    model = getattr(args, "model", None)
+    show_all = getattr(args, "all", False)
+    use_json = getattr(args, "json", False)
+
+    def _est(method: str) -> dict[str, Any]:
+        cfg = SpeculativeConfig(method=method, parallel_drafting=(method == "p-eagle"))
+        return estimate_speedup(cfg)
+
+    if show_all or not model:
+        matrix = []
+        for method, engines, requirement, when in _METHOD_INFO:
+            est = _est(method)
+            matrix.append({
+                "method": method, "engines": engines, "requirement": requirement,
+                "latency_speedup": est["estimated_latency_speedup"],
+                "throughput_speedup": est["estimated_throughput_speedup"],
+                "when_to_use": when,
+            })
+        if use_json:
+            from aictl.core.output import print_json
+            print_json(matrix)
+            return 0
+        print()
+        print(f"  {'METHOD':<11} {'ENGINES':<15} {'LAT':>5} {'THRPUT':>7}  REQUIREMENT")
+        print(f"  {'-'*11} {'-'*15} {'-'*5} {'-'*7}  {'-'*30}")
+        for r in matrix:
+            print(f"  {r['method']:<11} {r['engines']:<15} "
+                  f"{r['latency_speedup']:>4.1f}x {r['throughput_speedup']:>6.1f}x  {r['requirement']}")
+        print()
+        print("  EAGLE-3 is the 2026 de-facto standard (vLLM + SGLang).")
+        print("  aictl spec methods <model>   # auto-select + ready-to-paste flags\n")
+        return 0
+
+    cfg = auto_select_method(model)
+    est = estimate_speedup(cfg)
+    vllm = generate_vllm_args(cfg)
+    sglang = generate_sglang_args(cfg)
+    native_mtp = model in MTP_MODELS or any(
+        m in model for m in ["DeepSeek-R1", "DeepSeek-V3", "Qwen3"])
+    eagle_draft = EAGLE3_DRAFTS.get(model)
+
+    if use_json:
+        from aictl.core.output import print_json
+        print_json({
+            "model": model,
+            "method": est["method"],
+            "draft_model": cfg.draft_model or None,
+            "estimated_latency_speedup": est["estimated_latency_speedup"],
+            "estimated_throughput_speedup": est["estimated_throughput_speedup"],
+            "vllm_args": vllm,
+            "sglang_args": sglang,
+            "note": est["note"],
+        })
+        return 0
+
+    print()
+    print(f"  Speculative method for: {model}")
+    print()
+    print(f"  Selected: {est['method'].upper()}   ({est['note']})")
+    if eagle_draft:
+        print(f"  EAGLE-3 draft head: {eagle_draft}")
+    elif native_mtp:
+        print("  Native multi-token-prediction weights (no separate draft).")
+    else:
+        print("  No EAGLE-3 head known → NGRAM fallback (zero setup).")
+    print(f"  Expected: ~{est['estimated_latency_speedup']:.1f}x latency / "
+          f"~{est['estimated_throughput_speedup']:.1f}x throughput")
+    print()
+    if vllm:
+        print("  vLLM:")
+        for a in vllm:
+            print(f"    vllm serve {model} \\\n      {a}")
+    if sglang:
+        print("  SGLang:")
+        print(f"    python -m sglang.launch_server --model {model} \\")
+        print("      " + " ".join(sglang))
+    print()
+    print("  Tip: 'aictl spec methods --all' for the full matrix; "
+          "'aictl spec recommend' for classic draft pairing.")
+    print("  Source: arxiv.org/abs/2503.01840 (EAGLE-3)\n")
     return 0
 
 
@@ -192,9 +331,13 @@ def run_bench(args: argparse.Namespace) -> int:
 
     def _pb(name: Any) -> float:
         """Return the parameter count in billions parsed from a model name."""
-        for s, b in [("1b",1),("3b",3),("7b",7),("8b",8),("9b",9),("14b",14),
-                     ("27b",27),("32b",32),("70b",70),("72b",72)]:
-            if s in name.lower():
+        import re
+        # Match longer suffixes before shorter ones (e.g. "14b" before "1b")
+        # to avoid "1b" matching inside "14b" or "3b" matching inside "13b".
+        for s, b in sorted([("1b",1),("3b",3),("7b",7),("8b",8),("9b",9),("14b",14),
+                             ("27b",27),("32b",32),("70b",70),("72b",72)],
+                            key=lambda x: -len(x[0])):
+            if re.search(r'(?<!\d)' + re.escape(s) + r'(?!\d)', name.lower()):
                 return float(b)
         return 7.0
 
@@ -229,4 +372,113 @@ def run_bench(args: argparse.Namespace) -> int:
     for line in pair.vllm_flags().splitlines():
         print(f"    {line}")
     print()
+    return 0
+
+
+def run_profile(args: argparse.Namespace) -> int:
+    """Profile speculative decoding on a live engine via benchmark sampling."""
+    from aictl.core.output import ok, warn, print_json, print_kv
+
+    target = args.target
+    draft = getattr(args, "draft", "") or ""
+    endpoint = getattr(args, "endpoint", "http://localhost:8000")
+    n = getattr(args, "requests", 5)
+    use_json = getattr(args, "json", False)
+
+    try:
+        result = run_benchmark(endpoint=endpoint, model=target, num_requests=n)
+    except Exception as exc:
+        from aictl.core.output import err
+        err(f"Profile failed: {exc}")
+        return 1
+
+    acc_rate = 0.80  # default heuristic
+    gamma = 5
+    known = (next((p for p in PAIRS if p.target == target and p.draft == draft), None)
+             if draft else None)
+    if known:
+        acc_rate = known.acceptance_rate
+        gamma = known.gamma
+        # Reuse the canonical pair model so `spec profile` agrees with
+        # `spec recommend` for the same pair (previously profile reported 2.73x
+        # while the table reported 3.0x — two numbers for one physical quantity,
+        # and profile even dropped the guaranteed bonus token).
+        observed_speedup = known.speedup()
+    else:
+        # Same shape as _Pair.speedup() for unknown pairs: accepted tokens over
+        # draft overhead, plus the guaranteed target ("bonus") token, capped at
+        # the 3.0x ceiling the rest of the module uses.
+        draft_overhead_ratio = 0.1
+        observed_speedup = min(
+            acc_rate * gamma / (1 + draft_overhead_ratio * gamma) + 1.0, 3.0)
+
+    profile = {
+        "target_model": target,
+        "draft_model": draft or "(auto-selected)",
+        "endpoint": endpoint,
+        "requests": n,
+        "baseline_ttft_ms_p95": round(result.ttft_ms_p95, 1),
+        "baseline_tokens_per_sec": round(result.tokens_per_sec, 1),
+        "estimated_acceptance_rate": round(acc_rate, 3),
+        "estimated_gamma": gamma,
+        "estimated_speedup": round(observed_speedup, 2),
+    }
+
+    if use_json:
+        print_json(profile)
+        return 0
+
+    ok(f"Speculative profiling: {target}")
+    print_kv([
+        ("endpoint",        endpoint),
+        ("draft model",     profile["draft_model"]),
+        ("TTFT p95",        f"{profile['baseline_ttft_ms_p95']:.0f} ms"),
+        ("throughput",      f"{profile['baseline_tokens_per_sec']:.1f} tok/s"),
+        ("acceptance rate", f"{acc_rate*100:.0f}%"),
+        ("est. speedup",    f"{observed_speedup:.2f}x"),
+    ], indent=2)
+    return 0
+
+
+def run_export(args: argparse.Namespace) -> int:
+    """Export speculative decoding metrics in Prometheus text format."""
+    from aictl.core.output import print_json
+
+    target = args.target
+    draft = getattr(args, "draft", "") or ""
+    use_json = getattr(args, "json", False)
+
+    pair = next((p for p in PAIRS if p.target == target), None)
+    if not pair and draft:
+        pair = next((p for p in PAIRS if p.draft == draft), None)
+
+    acc_rate = pair.acceptance_rate if pair else 0.80
+    speedup = pair.speedup() if pair else 1.5
+    gamma = pair.gamma if pair else 5
+    draft_name = draft or (pair.draft if pair else "unknown")
+
+    labels = f'target="{target}",draft="{draft_name}"'
+
+    if use_json:
+        print_json({
+            "target_model": target,
+            "draft_model": draft_name,
+            "acceptance_rate": acc_rate,
+            "estimated_speedup": round(speedup, 2),
+            "gamma": gamma,
+        })
+        return 0
+
+    lines = [
+        "# HELP aios_spec_acceptance_rate Speculative decoding acceptance rate (0-1)",
+        "# TYPE aios_spec_acceptance_rate gauge",
+        f"aios_spec_acceptance_rate{{{labels}}} {acc_rate}",
+        "# HELP aios_spec_speedup_ratio Estimated latency speedup ratio",
+        "# TYPE aios_spec_speedup_ratio gauge",
+        f"aios_spec_speedup_ratio{{{labels}}} {speedup:.3f}",
+        "# HELP aios_spec_gamma Speculative tokens per step",
+        "# TYPE aios_spec_gamma gauge",
+        f"aios_spec_gamma{{{labels}}} {gamma}",
+    ]
+    print("\n".join(lines))
     return 0

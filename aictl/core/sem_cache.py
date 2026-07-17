@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,7 +51,7 @@ class CacheEntry:
 class SemanticCache:
     """SQLite-backed semantic response cache.
 
-    Thread-safe for single-process use (SQLite WAL mode).
+    Thread-safe: SQLite WAL for DB operations; threading.Lock for in-process counters.
     """
 
     def __init__(
@@ -71,7 +72,8 @@ class SemanticCache:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-        # Stats (in-memory per process)
+        # Stats (in-memory per process) — guarded by _lock for thread safety
+        self._lock = threading.Lock()
         self._hits = 0
         self._misses = 0
         self._total_tokens_saved = 0
@@ -114,8 +116,9 @@ class SemanticCache:
         # Fast path: exact hash match
         exact = self._exact_lookup(prompt, model)
         if exact:
-            self._hits += 1
-            self._total_tokens_saved += exact.tokens_saved
+            with self._lock:
+                self._hits += 1
+                self._total_tokens_saved += exact.tokens_saved
             self._bump_hits(exact.prompt_hash)
             return exact
 
@@ -124,7 +127,8 @@ class SemanticCache:
             from aictl.core.rag import embed_text, cosine
             [query_vec] = embed_text([prompt])
         except Exception:
-            self._misses += 1
+            with self._lock:
+                self._misses += 1
             return None
 
         now = time.time()
@@ -162,12 +166,14 @@ class SemanticCache:
                 )
 
         if best:
-            self._hits += 1
-            self._total_tokens_saved += best.tokens_saved
+            with self._lock:
+                self._hits += 1
+                self._total_tokens_saved += best.tokens_saved
             self._bump_hits(best.prompt_hash)
             return best
 
-        self._misses += 1
+        with self._lock:
+            self._misses += 1
         return None
 
     def _exact_lookup(self, prompt: str, model: str) -> CacheEntry | None:
@@ -283,17 +289,38 @@ class SemanticCache:
             lifetime_tokens_saved = c.execute(
                 "SELECT COALESCE(SUM(tokens_saved * hits), 0) FROM cache"
             ).fetchone()[0]
+            sample = c.execute(
+                "SELECT embedding FROM cache LIMIT 1"
+            ).fetchone()
 
-        total_requests = self._hits + self._misses
-        hit_rate = self._hits / total_requests if total_requests else 0.0
+        # Same degraded-retrieval flag `rag status` shows (rag.py's
+        # RagIndex.status): a stored vector of FALLBACK_DIM width means the
+        # hash fallback was used -- similarity matching is then byte-
+        # distribution noise, not meaning, so "semantic cache" is overstating
+        # it and the CLI should say so instead of silently implying quality.
+        semantic = False
+        if sample and sample[0]:
+            try:
+                from aictl.core.rag import FALLBACK_DIM
+                semantic = len(json.loads(sample[0])) != FALLBACK_DIM
+            except Exception:
+                semantic = False
+
+        with self._lock:
+            hits = self._hits
+            misses = self._misses
+            tokens_saved = self._total_tokens_saved
+        total_requests = hits + misses
+        hit_rate = hits / total_requests if total_requests else 0.0
         return {
             "entries": total,
-            "session_hits": self._hits,
-            "session_misses": self._misses,
+            "session_hits": hits,
+            "session_misses": misses,
             "session_hit_rate": round(hit_rate, 3),
-            "total_tokens_saved": self._total_tokens_saved,
+            "total_tokens_saved": tokens_saved,
             "lifetime_tokens_saved": lifetime_tokens_saved,
             "lifetime_hits": total_hits,
+            "semantic_embeddings": semantic,
             "db_path": str(self.db_path),
             "threshold": self.threshold,
         }
@@ -309,8 +336,20 @@ _DEFAULT_CACHE: SemanticCache | None = None
 
 
 def get_default_cache() -> SemanticCache:
-    """Return the global default SemanticCache instance."""
+    """Return the global default SemanticCache instance.
+
+    The similarity threshold honors `aictl config set cache_similarity_floor
+    <value>` (IMPROVEMENTS.md item B) if a user has configured one;
+    otherwise DEFAULT_THRESHOLD applies exactly as before. Best-effort: any
+    failure reading config (e.g. during very early bootstrap) falls back to
+    the built-in default rather than blocking cache construction."""
     global _DEFAULT_CACHE
     if _DEFAULT_CACHE is None:
-        _DEFAULT_CACHE = SemanticCache()
+        threshold = DEFAULT_THRESHOLD
+        try:
+            from aictl.core.config import load_config
+            threshold = load_config().cache_similarity_floor
+        except Exception:
+            pass
+        _DEFAULT_CACHE = SemanticCache(threshold=threshold)
     return _DEFAULT_CACHE

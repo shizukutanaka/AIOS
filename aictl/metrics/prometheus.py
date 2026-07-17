@@ -22,7 +22,6 @@ from aictl.core.state import StateStore
 def generate_metrics_text(store: StateStore) -> str:
     """Generate Prometheus text format metrics."""
     lines: list[str] = []
-    int(time.time() * 1000)
 
     config = load_config(store.dir)
     node = store.load_node()
@@ -93,7 +92,104 @@ def generate_metrics_text(store: StateStore) -> str:
     models = store.list_models()
     _gauge(lines, "aios_models_registered", "Number of registered models", len(models))
 
+    # ── Value-prop metrics ────────────────────────────────────────────
+    # The headline claims (cache savings, cost avoided, tokens metered) that
+    # peers (LiteLLM/Portkey/Helicone) expose as counters — emitted here so
+    # dashboards can *prove* the ROI instead of asserting it. All best-effort:
+    # a failure in any block must not break the /metrics endpoint.
+    _emit_value_prop_metrics(lines)
+
     return "\n".join(lines) + "\n"
+
+
+def _emit_value_prop_metrics(lines: list[str]) -> None:
+    """Emit cache-savings, cost-avoided, and metering counters (best-effort)."""
+    from aictl.core.constants import PRICE_PER_MILLION_INPUT, PRICE_PER_MILLION_OUTPUT
+    # Cache responses avoid both prompt re-send and generation; blend the two.
+    blended_price_per_million = (PRICE_PER_MILLION_INPUT + PRICE_PER_MILLION_OUTPUT) / 2
+
+    # Semantic cache: lifetime savings (the core "30-50% cost cut" claim).
+    try:
+        from aictl.core.sem_cache import get_default_cache
+        stats = get_default_cache().stats()
+        tokens_saved = int(stats.get("lifetime_tokens_saved", 0) or 0)
+        cost_saved_usd = tokens_saved / 1_000_000 * blended_price_per_million
+        _gauge(lines, "aios_cache_entries",
+               "Semantic cache entries", int(stats.get("entries", 0) or 0))
+        _counter(lines, "aios_cache_hits_total",
+                 "Lifetime semantic cache hits", int(stats.get("lifetime_hits", 0) or 0))
+        _counter(lines, "aios_cache_tokens_saved_total",
+                 "Lifetime tokens served from cache (not re-inferred)", tokens_saved)
+        _counter(lines, "aios_cache_cost_saved_usd_total",
+                 "Estimated USD saved by cache hits", round(cost_saved_usd, 6))
+        _gauge(lines, "aios_cache_hit_rate",
+               "Session cache hit rate (0-1)", stats.get("session_hit_rate", 0.0))
+    except Exception:
+        pass  # cache DB may be absent; skip silently
+
+    # Metering: tokens and cost attributed across tenants/keys.
+    try:
+        from aictl.core.metering import TokenMeter
+        buckets = TokenMeter().list_usage()
+        total_tokens = sum(b.total_tokens for b in buckets)
+        total_prompt = sum(b.prompt_tokens for b in buckets)
+        total_completion = sum(b.completion_tokens for b in buckets)
+        metered_cost = (total_prompt / 1_000_000 * PRICE_PER_MILLION_INPUT
+                        + total_completion / 1_000_000 * PRICE_PER_MILLION_OUTPUT)
+        _counter(lines, "aios_tokens_metered_total",
+                 "Total tokens metered across all entities", total_tokens)
+        _counter(lines, "aios_cost_metered_usd_total",
+                 "Estimated USD cost of metered tokens", round(metered_cost, 6))
+        _gauge(lines, "aios_metered_entities",
+               "Number of metered tenants/keys", len(buckets))
+    except Exception:
+        pass  # metering store may be empty; skip silently
+
+    # Guard: scan/block counts derived from perf records.
+    try:
+        from aictl.core.perf import summary as perf_summary
+        g = perf_summary().get("guard", {})
+        if g:
+            _counter(lines, "aios_guard_scans_total",
+                     "Total aictl guard scan invocations", int(g.get("count", 0)))
+            _counter(lines, "aios_guard_blocks_total",
+                     "Guard scans that detected PII or violated policy (non-zero exit)",
+                     int(g.get("failures", 0)))
+    except Exception:
+        pass
+
+    # Guard: lifetime PII redaction count (IMPROVEMENTS.md item J — the last
+    # value-prop counter that wasn't emitted yet). Only tallies `aictl guard
+    # scan --redact` invocations today (the CLI is the only call site with a
+    # resolvable state dir); the MCP guard tool doesn't thread one through.
+    try:
+        import json as _json
+        from aictl.core.guard import _guard_stats_path
+        _gs = _json.loads(_guard_stats_path().read_text())
+        _counter(lines, "aios_guard_redactions_total",
+                 "Lifetime count of PII items redacted by `aictl guard scan --redact`",
+                 int(_gs.get("total_redactions", 0) or 0))
+    except Exception:
+        pass  # stats file absent until the first --redact scan
+
+    # Cascade routing: escalation counters from persistent stats file.
+    try:
+        import json as _json
+        import os as _os
+        _base = _os.environ.get("AIOS_STATE_DIR", _os.path.expanduser("~/.aios"))
+        _cs = _json.loads((__import__("pathlib").Path(_base) / "cascade_stats.json").read_text())
+        _counter(lines, "aios_route_cascade_runs_total",
+                 "Total cascade routing invocations", int(_cs.get("total_runs", 0)))
+        _counter(lines, "aios_route_cascade_escalations_total",
+                 "Cascade routes that escalated from simple to complex model",
+                 int(_cs.get("escalations", 0)))
+    except Exception:
+        pass  # stats file absent until first cascade run
+
+
+def _escape_label(v: Any) -> str:
+    """Escape a Prometheus label value (\\, ", and newline) per the text format."""
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _gauge(lines: list[str], name: str, help_text: str,
@@ -102,7 +198,19 @@ def _gauge(lines: list[str], name: str, help_text: str,
     lines.append(f"# HELP {name} {help_text}")
     lines.append(f"# TYPE {name} gauge")
     if labels:
-        label_str = ",".join(f'{k}="{v}"' for k, v in labels.items())
+        label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in labels.items())
+        lines.append(f"{name}{{{label_str}}} {value}")
+    else:
+        lines.append(f"{name} {value}")
+
+
+def _counter(lines: list[str], name: str, help_text: str,
+             value: Any, labels: dict[str, str] | None = None) -> None:
+    """Emit a Prometheus counter (monotonic; convention: _total suffix)."""
+    lines.append(f"# HELP {name} {help_text}")
+    lines.append(f"# TYPE {name} counter")
+    if labels:
+        label_str = ",".join(f'{k}="{_escape_label(v)}"' for k, v in labels.items())
         lines.append(f"{name}{{{label_str}}} {value}")
     else:
         lines.append(f"{name} {value}")

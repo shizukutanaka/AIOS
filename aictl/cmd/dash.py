@@ -41,11 +41,16 @@ def register(sub: Any) -> None:
 def run(args: argparse.Namespace) -> int:
     """Execute the command and return an exit code."""
     if args.watch:
+        # Clamp the refresh interval: a negative value makes `time.sleep` raise
+        # ValueError ("sleep length must be non-negative") and 0 busy-loops at
+        # 100% CPU. Floor at 0.5s (preserves sub-second refresh while staying
+        # crash-/spin-safe), mirroring top/health/status's guard.
+        interval = max(0.5, args.interval)
         try:
             while True:
                 _clear()
                 _render()
-                time.sleep(args.interval)
+                time.sleep(interval)
         except KeyboardInterrupt:
             print("\n  Stopped.")
             return 0

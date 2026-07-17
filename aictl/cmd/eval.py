@@ -39,6 +39,27 @@ import time
 from pathlib import Path
 
 
+def _load_suite_file(path: Path) -> tuple[dict[str, Any] | None, str]:
+    """Safely load an eval-suite/results/baseline JSON file.
+
+    Eval files are user-authored, so they must be parsed defensively: a malformed
+    file previously raised an uncaught JSONDecodeError, and a non-object root
+    (e.g. a JSON list) reached `suite.get(...)` and raised AttributeError —
+    surfaced to the user as "report a bug" for what is really a bad input file.
+
+    Returns (data, "") on success, or (None, error_message) on failure.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        return None, f"Could not read {path.name}: not valid JSON ({e})"
+    if not isinstance(data, dict):
+        return None, (f"{path.name} must be a JSON object "
+                      f"(got {type(data).__name__}); expected a suite with a "
+                      f"'cases' array.")
+    return data, ""
+
+
 # ── Default eval suite template ───────────────────────────
 
 _TEMPLATE = {
@@ -77,7 +98,8 @@ _TEMPLATE = {
 
 # ── Assertion engine ─────────────────────────────────────
 
-def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, cost_usd: float) -> tuple[bool, str]:
+def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, cost_usd: float,
+                     prompt: str = "") -> tuple[bool, str]:
     """Run one assertion. Returns (passed, reason)."""
     kind = assertion.get("type", "")
     value = assertion.get("value")
@@ -132,6 +154,15 @@ def _check_assertion(assertion: dict[str, Any], output: str, latency_ms: int, co
 
     if kind == "llm_judge":
         return _llm_judge(output, assertion)
+
+    if kind == "route_tier":
+        # Validate routing decision against the prompt (no LLM call needed).
+        from aictl.cmd.route import score_complexity, classify_complexity
+        expected = str(value).upper()
+        actual_tier = classify_complexity(score_complexity(prompt))
+        passed = actual_tier == expected
+        return passed, (f"route tier {actual_tier} {'==' if passed else '!='} expected {expected} "
+                        f"(score={score_complexity(prompt)})")
 
     return False, f"unknown assertion type: {kind!r}"
 
@@ -193,7 +224,7 @@ def _run_case(case: dict[str, Any], model: str) -> dict[str, Any]:
     # Evaluate assertions
     results = []
     for assertion in assertions:
-        passed, reason = _check_assertion(assertion, output, latency_ms, cost_usd)
+        passed, reason = _check_assertion(assertion, output, latency_ms, cost_usd, prompt)
         results.append({
             "type": assertion.get("type"),
             "passed": passed,
@@ -221,7 +252,7 @@ def register(sub: Any) -> None:
         "eval",
         help="LLM regression testing — catch prompt quality regressions.",
     )
-    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output as JSON")
     sp = p.add_subparsers(dest="eval_cmd", required=False)
 
     c = sp.add_parser("create", help="Create a new eval suite template.")
@@ -232,13 +263,13 @@ def register(sub: Any) -> None:
     r.add_argument("--suite", required=True, help="Eval suite JSON file")
     r.add_argument("--model", default="auto", help="Model to use (override suite)")
     r.add_argument("--save", help="Save results to file for comparison")
-    r.add_argument("--json", action="store_true", help="JSON output")
+    r.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     r.set_defaults(func=run_eval)
 
     cmp = sp.add_parser("compare", help="Compare two eval results (before/after).")
     cmp.add_argument("--suite", required=True, help="Eval suite JSON")
     cmp.add_argument("--baseline", required=True, help="Baseline results JSON")
-    cmp.add_argument("--json", action="store_true", help="JSON output")
+    cmp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="JSON output")
     cmp.set_defaults(func=run_compare)
 
     rpt = sp.add_parser("report", help="Human-readable eval summary.")
@@ -295,7 +326,11 @@ def run_eval(args: argparse.Namespace) -> int:
         print(f"  Create one: aictl eval create --suite {suite_path}")
         return 1
 
-    suite = json.loads(suite_path.read_text())
+    suite, load_err = _load_suite_file(suite_path)
+    if load_err:
+        from aictl.core.output import err
+        err(load_err)
+        return 1
     cases = suite.get("cases", [])
     model = getattr(args, "model", "auto") or suite.get("model", "auto")
 
@@ -338,7 +373,7 @@ def run_eval(args: argparse.Namespace) -> int:
     output = {
         "suite": suite.get("name", suite_path.stem),
         "model": model,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "total": total,
         "passed": passed,
         "failed": failed,
@@ -348,7 +383,9 @@ def run_eval(args: argparse.Namespace) -> int:
 
     save_path = getattr(args, "save", None)
     if save_path:
-        Path(save_path).write_text(json.dumps(output, indent=2))
+        save = Path(save_path)
+        save.parent.mkdir(parents=True, exist_ok=True)
+        save.write_text(json.dumps(output, indent=2))
         if not use_json:
             print()
             print(f"  Results saved: {save_path}")
@@ -364,7 +401,7 @@ def run_eval(args: argparse.Namespace) -> int:
         ok(f"All {total} cases passed  (pass rate 100%)")
     else:
         from aictl.core.output import warn, err
-        err(f"{failed}/{total} cases FAILED  (pass rate {passed*100//total}%)")
+        err(f"{failed}/{total} cases FAILED  (pass rate {round(passed * 100 / total)}%)")
 
     if getattr(args, "save", None):
         pass  # already printed
@@ -381,34 +418,35 @@ def run_compare(args: argparse.Namespace) -> int:
     suite_path = Path(args.suite)
     baseline_path = Path(args.baseline)
 
+    if not suite_path.exists():
+        from aictl.core.output import err
+        err(f"Suite not found: {suite_path}")
+        return 1
+
     if not baseline_path.exists():
         from aictl.core.output import err
         err(f"Baseline not found: {baseline_path}")
         return 1
 
-    # Run current eval first
-    run_args = argparse.Namespace(
-        suite=str(suite_path), model="auto", save=None, json=False)
-
-    import io
-    from contextlib import redirect_stdout
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        run_eval(run_args)
-    buf.getvalue()
-
-    # Re-run properly to get data
-    suite = json.loads(suite_path.read_text())
+    suite, load_err = _load_suite_file(suite_path)
+    if load_err:
+        from aictl.core.output import err
+        err(load_err)
+        return 1
     current = {
         "suite": suite.get("name", "current"),
         "cases": [_run_case(c, "auto") for c in suite.get("cases", [])],
     }
 
-    baseline = json.loads(baseline_path.read_text())
+    baseline, base_err = _load_suite_file(baseline_path)
+    if base_err:
+        from aictl.core.output import err
+        err(base_err)
+        return 1
 
     # Build comparison
-    base_by_id = {c["id"]: c for c in baseline.get("cases", [])}
-    curr_by_id = {c["id"]: c for c in current.get("cases", [])}
+    base_by_id = {c["id"]: c for c in baseline.get("cases", []) if "id" in c}
+    curr_by_id = {c["id"]: c for c in current.get("cases", []) if "id" in c}
 
     use_json = getattr(args, "json", False)
 
@@ -473,18 +511,26 @@ def run_report(args: argparse.Namespace) -> int:
         err(f"Not found: {suite_path}")
         return 1
 
-    data = json.loads(suite_path.read_text())
+    data, load_err = _load_suite_file(suite_path)
+    if load_err:
+        from aictl.core.output import err
+        err(load_err)
+        return 1
 
-    # Accept either a suite definition or saved results
-    if "cases" in data and "passed" in data.get("cases", [{}])[0]:
+    # Accept either a suite definition or saved results. Sniff on top-level
+    # summary keys that run_eval writes but a suite definition never carries —
+    # peeking at cases[0]["passed"] misclassified a valid results file whose
+    # `cases` list is empty (e.g. a 0-case run) as a suite and re-ran it,
+    # incurring real inference instead of reporting the saved 0/0 result.
+    is_results = any(k in data for k in ("pass_rate", "total", "failed"))
+    if is_results:
         # It's a results file
         results = data
     else:
         # It's a suite definition — run it
         run_args = argparse.Namespace(
             suite=str(suite_path), model="auto", save=None, json=False)
-        run_eval(run_args)
-        return 0
+        return run_eval(run_args)
 
     print()
     print(f"  Eval Report: {results.get('suite', suite_path.stem)}")

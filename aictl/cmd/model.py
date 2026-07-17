@@ -6,8 +6,9 @@ from typing import Any
 
 import argparse
 
-from aictl.core.output import ok, err, print_json, print_table
+from aictl.core.output import ok, err, warn, print_json, print_table
 from aictl.core.state import StateStore
+from aictl.core.argtypes import nonneg_int
 
 
 def register(sub: Any) -> None:
@@ -27,18 +28,53 @@ def register(sub: Any) -> None:
 
     cache = msub.add_parser("cache", help="Model cache management")
     cache.add_argument("--clean", action="store_true", help="Remove stale entries")
-    cache.add_argument("--days", type=int, default=30, help="Stale threshold (days)")
+    cache.add_argument("--days", type=nonneg_int, default=30,
+                       help="Stale threshold in days (>= 0)")
     cache.set_defaults(func=run_cache)
 
     pull = msub.add_parser("pull", help="Pull model from OCI registry")
     pull.add_argument("reference", help="OCI reference (e.g. ghcr.io/org/model:tag)")
     pull.add_argument("--output", default="", help="Output directory")
+    pull.add_argument("--baseline", action="store_true",
+                      help="Record an `aictl trust` integrity baseline for the "
+                           "pulled files, tagged with this registry reference — "
+                           "so a later `trust check` can tell 'freshly pulled, "
+                           "registry-attested' apart from an untagged baseline.")
     pull.set_defaults(func=run_pull)
 
     verify = msub.add_parser("verify", help="Verify model/image signature")
     verify.add_argument("reference", help="Image or model reference")
     verify.add_argument("--key", default="", help="Public key file for verification")
+    verify.add_argument("--identity", default="",
+                        help="Expected signer identity for keyless verification "
+                             "(e.g. https://github.com/org/repo/.github/workflows/release.yml@refs/heads/main). "
+                             "Without this + --oidc-issuer, verification only "
+                             "confirms SOME signature exists, not who signed it.")
+    verify.add_argument("--oidc-issuer", default="",
+                        help="Expected OIDC issuer for keyless verification "
+                             "(e.g. https://token.actions.githubusercontent.com)")
     verify.set_defaults(func=run_verify)
+
+    ps = msub.add_parser("ps", help="Show models currently loaded in GPU memory")
+    ps.add_argument("--json", action="store_true", help="JSON output")
+    ps.set_defaults(func=run_ps)
+
+    inspect = msub.add_parser("inspect", help="Show full metadata for a registered model")
+    inspect.add_argument("name", help="Model name or id")
+    inspect.add_argument("--json", action="store_true")
+    inspect.set_defaults(func=run_inspect)
+
+    cleanup = msub.add_parser("cleanup", help="Remove stale model registry entries")
+    # nonneg, not positive: 0 = "remove all up to now" is legitimate, but a
+    # negative --days makes the cutoff a FUTURE time so every model (even one
+    # registered this second) is flagged stale — wiping the live registry.
+    cleanup.add_argument("--days", type=nonneg_int, default=30,
+                         help="Remove models not updated in N days (default: 30, >= 0)")
+    cleanup.add_argument("--status", default="",
+                         help="Only remove entries with this status (e.g. unavailable)")
+    cleanup.add_argument("--dry-run", action="store_true",
+                         help="Show what would be removed without deleting")
+    cleanup.set_defaults(func=run_cleanup)
 
     p.set_defaults(func=lambda a: (p.print_help(), 0)[1])
 
@@ -73,6 +109,10 @@ def run_register(args: argparse.Namespace) -> int:
         signed=args.signed,
     )
 
+    from aictl.core.hooks import on_model_registered
+    on_model_registered(args.name, digest=args.digest, runtime=args.fmt,
+                       state_dir=store.dir)
+
     if getattr(args, "json", False):
         print_json({"id": mid, "name": args.name})
         return 0
@@ -104,10 +144,10 @@ def run_cache(args: argparse.Namespace) -> int:
         print(f"\n  {len(report.entries)} cached models/files")
 
     if getattr(args, "clean", False):
-        stale = clean_stale(report, days=args.days, dry_run=True)
+        stale = clean_stale(report, days=args.days, dry_run=False)
         if stale:
-            print(f"\n  Stale (>{args.days} days): {len(stale)} files, "
-                  f"{format_bytes(sum(e.size_bytes for e in stale))}")
+            print(f"\n  Removed {len(stale)} stale files "
+                  f"(>{args.days} days), freed {format_bytes(sum(e.size_bytes for e in stale))}")
             for e in stale[:5]:
                 print(f"    {e.name} ({format_bytes(e.size_bytes)})")
         else:
@@ -127,15 +167,29 @@ def run_pull(args: argparse.Namespace) -> int:
     ok(f"Pulling {args.reference}...")
     result = pull_model(args.reference, output_dir=getattr(args, "output", ""))
 
+    baseline_count = 0
+    if result.success and getattr(args, "baseline", False):
+        from aictl.trust.baseline import BaselineStore
+        from aictl.core.state import StateStore
+        store = BaselineStore(StateStore(getattr(args, "state_dir", None)).dir)
+        recorded = store.record(result.local_path, source=f"pull:{args.reference}")
+        baseline_count = len(recorded)
+
     if getattr(args, "json", False):
         print_json({"success": result.success, "path": result.local_path,
-                     "digest": result.digest, "error": result.error})
+                     "digest": result.digest, "error": result.error,
+                     "baselined": baseline_count})
         return 0 if result.success else 1
 
     if result.success:
         ok(f"Model pulled to {result.local_path}")
         if result.digest:
             print(f"  Digest: {result.digest}")
+        if getattr(args, "baseline", False):
+            if baseline_count:
+                ok(f"Baselined {baseline_count} file(s) — source: pull:{args.reference}")
+            else:
+                warn("No model weight files found to baseline at the pulled path.")
     else:
         err(f"Pull failed: {result.error}")
     return 0 if result.success else 1
@@ -150,17 +204,200 @@ def run_verify(args: argparse.Namespace) -> int:
         return 1
 
     ok(f"Verifying {args.reference}...")
-    result = verify_image(args.reference, public_key=getattr(args, "key", ""))
+    result = verify_image(
+        args.reference, public_key=getattr(args, "key", ""),
+        certificate_identity=getattr(args, "identity", ""),
+        certificate_oidc_issuer=getattr(args, "oidc_issuer", ""),
+    )
+
+    from pathlib import Path as _Path
+    from aictl.core.hooks import on_model_verified
+    _sd = getattr(args, "state_dir", None)
+    on_model_verified(args.reference, method=result.method,
+                     valid=result.verified,
+                     state_dir=_Path(_sd) if _sd else None)
 
     if getattr(args, "json", False):
         print_json({"verified": result.verified, "method": result.method,
-                     "signer": result.signer, "error": result.error})
+                     "signer": result.signer, "error": result.error,
+                     "warning": result.warning})
         return 0 if result.verified else 1
 
     if result.verified:
         ok(f"Signature verified ({result.method})")
         if result.signer:
             print(f"  Signer: {result.signer}")
+        # A bare "✓ verified" from unpinned keyless verification is misleading —
+        # it means "signed by someone", not "signed by a trusted publisher".
+        # Never let that caveat get lost in scrollback below the checkmark.
+        if result.warning:
+            warn(result.warning)
     else:
         err(f"Verification failed: {result.error}")
     return 0 if result.verified else 1
+
+
+def run_ps(args: argparse.Namespace) -> int:
+    """Show models currently loaded in GPU memory across all configured engines."""
+    import json
+    import urllib.request
+    from aictl.core.state import StateStore
+    from aictl.core.config import load_config
+
+    store = StateStore(getattr(args, "state_dir", None))
+    config = load_config(store.dir)
+    engines = config.engines.to_dict()
+
+    loaded: list[dict] = []
+
+    for engine_name, base_url in engines.items():
+        base_url = base_url.rstrip("/")
+
+        # Ollama: /api/ps returns running models with VRAM usage
+        if "11434" in base_url or engine_name == "ollama":
+            try:
+                with urllib.request.urlopen(f"{base_url}/api/ps", timeout=3) as r:
+                    data = json.loads(r.read())
+                for m in data.get("models", []):
+                    loaded.append({
+                        "engine": engine_name,
+                        "model": m.get("name", ""),
+                        "vram_mb": m.get("size_vram", 0) // (1024 * 1024),
+                        "expires_at": m.get("expires_at", ""),
+                    })
+            except Exception:
+                pass
+            continue
+
+        # vLLM / SGLang: /v1/models (OpenAI-compatible)
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/v1/models",
+                headers={"Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read())
+            for m in data.get("data", []):
+                loaded.append({
+                    "engine": engine_name,
+                    "model": m.get("id", ""),
+                    "vram_mb": 0,  # vLLM/SGLang don't expose per-model VRAM via API
+                    "expires_at": "",
+                })
+        except Exception:
+            pass
+
+    if getattr(args, "json", False):
+        print_json(loaded)
+        return 0
+
+    if not loaded:
+        print("No models currently loaded (no engines reachable or no models active)")
+        return 0
+
+    print_table(loaded, ["engine", "model", "vram_mb", "expires_at"])
+    return 0
+
+
+def run_cleanup(args: argparse.Namespace) -> int:
+    """Remove stale model registry entries by age or status."""
+    import time as _time
+    store = StateStore(getattr(args, "state_dir", None))
+    models = store.list_models()
+    # Defense-in-depth (SDK callers bypass the nonneg_int parser type): a
+    # negative days makes the cutoff a future time and flags every model stale.
+    days = max(0, getattr(args, "days", 30))
+    status_filter = getattr(args, "status", "")
+    dry_run = getattr(args, "dry_run", False)
+    cutoff = _time.time() - days * 86400
+
+    candidates = [
+        m for m in models
+        if (m.get("registered_at", 0) < cutoff)
+        and (not status_filter or m.get("status", "") == status_filter)
+    ]
+
+    if not candidates:
+        print("No stale model entries found.")
+        if getattr(args, "json", False):
+            print_json({"removed": 0, "dry_run": dry_run, "candidates": []})
+        return 0
+
+    if getattr(args, "json", False):
+        print_json({
+            "removed": 0 if dry_run else len(candidates),
+            "dry_run": dry_run,
+            "candidates": [{"id": m.get("id"), "name": m.get("name"),
+                             "status": m.get("status"), "registered_at": m.get("registered_at")}
+                            for m in candidates],
+        })
+        if not dry_run:
+            _delete_models(store, [m["id"] for m in candidates])
+        return 0
+
+    action = "Would remove" if dry_run else "Removing"
+    ok(f"{action} {len(candidates)} stale model entries (>{days} days old)")
+    for m in candidates:
+        reg = _time.strftime("%Y-%m-%d", _time.localtime(m.get("registered_at", 0)))
+        print(f"  - {m.get('name')} [{m.get('status')}] registered {reg}")
+
+    if not dry_run:
+        _delete_models(store, [m["id"] for m in candidates])
+        ok("Cleanup complete")
+    else:
+        print("\n  (dry-run — no changes made)")
+    return 0
+
+
+def _delete_models(store: StateStore, model_ids: list[str]) -> None:
+    """Delete model registry entries by ID."""
+    db = store._db()
+    try:
+        for mid in model_ids:
+            db.execute("DELETE FROM models WHERE id=?", (mid,))
+        db.commit()
+    finally:
+        db.close()
+
+
+def run_inspect(args: argparse.Namespace) -> int:
+    """Show full metadata for a registered model by name or id."""
+    store = StateStore(getattr(args, "state_dir", None))
+    models = store.list_models()
+    query = args.name.lower()
+    match = next(
+        (m for m in models if m.get("name", "").lower() == query
+         or m.get("id", "").startswith(query)),
+        None,
+    )
+
+    if match is None:
+        err(f"Model not found: {args.name}")
+        if getattr(args, "json", False):
+            print_json({"found": False, "name": args.name})
+        return 1
+
+    if getattr(args, "json", False):
+        print_json(match)
+        return 0
+
+    import time as _time
+    reg_time = match.get("registered_at", 0)
+    reg_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(reg_time)) if reg_time else "unknown"
+    size = match.get("size_bytes", 0)
+    size_str = f"{size / 1_073_741_824:.2f} GB" if size >= 1_073_741_824 else (
+        f"{size / 1_048_576:.1f} MB" if size >= 1_048_576 else f"{size} B"
+    )
+
+    print(f"Model: {match.get('name', '')}")
+    print(f"  id          : {match.get('id', '')}")
+    print(f"  format      : {match.get('format', match.get('fmt', ''))}")
+    print(f"  status      : {match.get('status', '')}")
+    print(f"  size        : {size_str}")
+    print(f"  signed      : {bool(match.get('signed', False))}")
+    if match.get("signer"):
+        print(f"  signer      : {match.get('signer')}")
+    if match.get("digest"):
+        print(f"  digest      : {match.get('digest')}")
+    print(f"  registered  : {reg_str}")
+    return 0
