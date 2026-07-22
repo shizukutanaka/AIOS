@@ -20,7 +20,8 @@ aictl/metrics/    slo otel prometheus collector_config genai_spans
 aictl/mcp_server  MCP server (19 tools, JSON-RPC 2.0 stdio)
 go-port/          29 Go commands (Cobra)
 tests/            258 test files, 3433+ tests
-docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART
+docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART, IMPROVEMENTS
+                  REVIEW_v1.7.0, INSTRUCTIONS_OPUS, INSTRUCTIONS_SONNET
 .claude/          3 agents, 5 commands, 8 skills
 ```
 
