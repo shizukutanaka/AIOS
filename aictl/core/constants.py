@@ -45,6 +45,7 @@ HOOK_SCRIPT_TIMEOUT = 10    # aictl.core.hook_dispatch local script exec
 GUARD_MODEL_CHECK_TIMEOUT = 5   # aictl.core.guard.make_llm_content_check
 EMBEDDING_MODEL_DETECT_TIMEOUT = 3   # aictl.sdk._detect_embedding_model /v1/models probe
 RERANK_TIMEOUT = 5   # aictl.core.rerank.rerank TEI-compatible /rerank POST
+CONFORMANCE_PROBE_TIMEOUT = 5   # aictl.runtime.conformance per-probe HTTP timeout
 
 # ── Guard model-check verdict cache (IMPROVEMENTS.md item P) ─────────
 # DoS hardening (arXiv:2606.14517 "From Shield to Target"): a flood of
