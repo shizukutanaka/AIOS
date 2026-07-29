@@ -582,6 +582,45 @@ discipline as Parts 1–2: no assumed gaps).
   targets a TEI-compatible `/rerank` endpoint (see item A above for why TEI
   over vLLM/Cohere's contract).
 
+## T. Engine conformance — the dependency nothing verified — ✅ implemented (Pass 191)
+
+> **Status:** shipped as `aictl engines conform [url]` (`runtime/conformance.py`).
+
+- **How it was found:** a First-Principles pass mapped all 80 commands onto the
+  irreducible chain "run local AI inference well" reduces to (know hardware →
+  get model → run it → talk to it → know it works → know cost → keep safe →
+  improve quality). Every step had commands; one *precondition* had none.
+- **The gap (verified, not assumed):** aictl's entire value rests on an engine
+  behaving as expected, yet nothing checked that. `cmd/selftest.py` contains
+  zero endpoint/`urlopen`/`/v1/` references — it never contacts an engine. The
+  3451-test suite and `aictl demo` exercise only the bundled mock engine, which
+  proves internal consistency, not that a *user's* engine speaks what aictl
+  needs. Non-conformance therefore surfaced mid-request as silent quality loss:
+  an engine without `/v1/embeddings` makes `rag`/`cache`/`route --knn` fall back
+  to the non-semantic SHA-256 hash embedding, with retrieval quietly ceasing to
+  be semantic.
+- **Implementation:** six probes (`/v1/models`, reachability, chat completions,
+  streaming, `/v1/embeddings`, `/metrics`), each classified `required` /
+  `degraded` / `optional` and — the actual point — **mapped to the aictl
+  features it powers**, so a missing surface reads as "rag and cache lose
+  semantic search" rather than "404". Read-only (GETs plus 1-token POSTs), never
+  raises (an unreachable engine still yields the full 6-probe report so `--json`
+  consumers get a stable shape), `--json` supported, exit code stays 0 unless
+  `--strict`.
+- **Scoping note:** added as a subcommand of the existing `engines` command, not
+  an 81st top-level command — the same First-Principles pass identified command
+  sprawl (10 observability entry points, 9 advisory-only commands) as the
+  project's main *excess*, so growing that surface to fix a gap would have been
+  self-defeating. See `docs/REVIEW_v1.7.0.md`.
+- **Validation:** verified end-to-end against the project's own `mock_engine` (a
+  real HTTP server, not a hand-rolled double), which genuinely lacks
+  `/v1/embeddings` — making it a live demonstration of the degradation case the
+  feature exists to surface. 18 new tests (`tests/test_new_features_191.py`).
+- **Still open:** the probes describe conformance, they do not yet *gate*
+  anything — e.g. `rag index` could warn up front when the configured engine
+  fails the embeddings probe. Deliberately deferred rather than silently
+  skipped.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
