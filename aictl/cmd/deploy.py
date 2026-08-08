@@ -64,6 +64,12 @@ def register(sub: Any) -> None:
     opt.add_argument("--objective", default="balanced",
                      choices=["balanced", "throughput", "interactivity"])
     opt.add_argument("--speculative", action="store_true")
+    opt.add_argument("--kv-offload", action="store_true",
+                     help="Consider extending the prefix cache into pinned host "
+                          "memory (vLLM OffloadingConnector). Advisory: declines "
+                          "with a reason when it would not help.")
+    opt.add_argument("--host-ram", type=int, default=0,
+                     help="Host RAM in MB for --kv-offload sizing (auto-detect)")
     opt.set_defaults(func=run_optimize)
 
     strat = dsub.add_parser(
@@ -264,6 +270,26 @@ def run_disagg(args: argparse.Namespace) -> int:
     return 0
 
 
+def _infer_vendor(gpu_name: str, vram_mb: int) -> str:
+    """Best-effort accelerator vendor from an explicitly named GPU.
+
+    Only used to gate advice that is meaningless without a GPU; unknown names
+    keep the historical "nvidia" assumption rather than silently disabling
+    features for GPUs missing from the lookup tables.
+    """
+    name = (gpu_name or "").strip().lower()
+    if not name or name in ("cpu", "none") or vram_mb < 0:
+        return "cpu"
+    if any(tag in name for tag in ("mi300", "mi250", "radeon", "instinct")) or \
+            name.startswith("rx "):
+        return "amd"
+    if any(tag in name for tag in ("arc ", "gaudi", "flex", "ponte")):
+        return "intel"
+    if any(name.startswith(f"m{n}") for n in range(1, 6)):
+        return "apple"
+    return "nvidia"
+
+
 def run_optimize(args: argparse.Namespace) -> int:
     """Generate optimal vLLM serve flags."""
     from aictl.runtime.optimize import (
@@ -273,15 +299,35 @@ def run_optimize(args: argparse.Namespace) -> int:
     # Auto-detect GPU
     gpu_name = args.gpu
     vram = args.vram
-    if gpu_name == "auto":
+    vendor = "nvidia"
+    host_ram_mb = getattr(args, "host_ram", 0)
+    want_offload = getattr(args, "kv_offload", False)
+
+    # Detection is also needed for --kv-offload sizing, which depends on host
+    # RAM rather than the GPU. Probe once and reuse.
+    hw = None
+    if gpu_name == "auto" or (want_offload and host_ram_mb <= 0):
         from aictl.runtime.broker import full_detect
         hw = full_detect()
-        if hw.gpus:
+
+    if gpu_name == "auto":
+        if hw and hw.gpus:
             gpu_name = hw.gpus[0].name
             vram = hw.gpus[0].vram_mb
+            vendor = hw.gpus[0].vendor or "nvidia"
         else:
             gpu_name = "CPU"
             vram = 0
+            vendor = "cpu"
+    else:
+        # Explicitly named GPU: infer the vendor rather than leaving the
+        # "nvidia" default in place. Without this, `--gpu CPU` would let the
+        # KV offload advisor recommend offloading from a device that isn't
+        # there, since it gates on vendor.
+        vendor = _infer_vendor(gpu_name, vram)
+
+    if want_offload and host_ram_mb <= 0 and hw is not None:
+        host_ram_mb = hw.system.ram_total_mb
 
     # Auto-detect model size from name
     model_size = args.size
@@ -299,6 +345,8 @@ def run_optimize(args: argparse.Namespace) -> int:
         gpu_count=args.gpu_count,
         vram_per_gpu_mb=vram or 24576,
         compute_capability=GPU_CC.get(gpu_name, 0),
+        host_ram_mb=host_ram_mb,
+        vendor=vendor,
     )
 
     result = optimize_vllm_flags(
@@ -307,6 +355,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         hardware=profile,
         objective=args.objective,
         enable_speculative=getattr(args, "speculative", False),
+        enable_kv_offload=want_offload,
     )
 
     if getattr(args, "json", False):
