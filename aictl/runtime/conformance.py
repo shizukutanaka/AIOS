@@ -218,6 +218,15 @@ def check_conformance(endpoint: str, timeout: float | None = None,
         except Exception:
             chat_ok = False
             chat_detail = "malformed JSON"
+    elif not model and not discovered:
+        # The model name was invented because /v1/models gave us nothing, and
+        # engines that validate the name (vLLM) reject an unknown one. Calling
+        # that a broken chat endpoint would be a false negative — the endpoint
+        # may be fine and only the name wrong. Say which we actually know.
+        chat_detail = (f"{chat_detail} — probed with a guessed model name "
+                       f"({probe_model!r}) because /v1/models did not answer; "
+                       "retry with --model to distinguish a broken endpoint "
+                       "from a wrong name")
     report.probes.append(ProbeResult(
         name="chat completions", path="/v1/chat/completions", ok=chat_ok,
         severity=REQUIRED, detail=chat_detail,
