@@ -574,6 +574,21 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
+def drain_reuse_counters() -> bool:
+    """Write out any prefix-reuse counts not yet persisted. Best-effort.
+
+    Auto-flush only fires every N lookups, so whatever accumulated since the
+    last one would be lost on exit. Draining on shutdown keeps a restart from
+    silently discarding the tail of a measurement. Never raises — this runs
+    inside a signal handler, where an exception would derail shutdown.
+    """
+    try:
+        from aictl.runtime.prefix_route import get_default_tracker
+        return get_default_tracker().flush_reuse()
+    except Exception:
+        return False
+
+
 def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
           state_dir: Path | None = None) -> None:
     """Start the aiosd daemon with background SLO Governor."""
@@ -630,6 +645,7 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         print("\naiosd shutting down...")
         governor.stop()
         scheduler.stop()
+        drain_reuse_counters()
         threading.Thread(target=server.shutdown).start()
 
     signal.signal(signal.SIGINT, shutdown)

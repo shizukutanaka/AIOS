@@ -783,10 +783,41 @@ discipline as Parts 1–2: no assumed gaps).
   concurrency test asserting persisted totals equal in-process totals under 6
   threads, corruption resilience (truncated final line, garbage lines,
   unwritable log), and that routing still works when the log cannot be written.
-- **Still open:** the daemon flushes every 100 lookups but does not flush on
-  shutdown, so up to 99 lookups are lost on exit — immaterial for a rate, but
-  worth noting. The log is also global rather than per-endpoint, so a
-  multi-engine deployment gets one blended rate.
+- **Shutdown gap closed in Pass 196 (below).** Still open: the log is global
+  rather than per-endpoint, so a multi-engine deployment gets one blended rate.
+
+## Y. Drain reuse counters on shutdown, and a `clear()` cursor bug — ✅ implemented (Pass 196)
+
+> **Status:** `aiosd.drain_reuse_counters()`, called from the shutdown handler.
+
+- **The gap:** auto-flush fires only every `PREFIX_REUSE_FLUSH_EVERY` lookups,
+  so up to that many lookups' worth of measurement was lost whenever the
+  daemon exited. Immaterial to a rate over a long run — but it meant a daemon
+  restarted more often than it flushed persisted *nothing at all*, making the
+  case where the measurement matters least indistinguishable from the case
+  where it matters most.
+- **Deliberately a named module function**, not logic inline in the signal
+  handler: shutdown paths are the least-exercised code in a daemon, and one
+  buried in a closure could not be tested at all. It also cannot raise —
+  an exception inside a signal handler would derail shutdown.
+- **Bug found by the new tests:** `clear()` reset the hit/miss counters but
+  **not** the flush cursors, so `lookups - flushed` went negative and a
+  cleared tracker silently under-persisted — or persisted nothing — until it
+  passed the stale cursor. Surfaced as a drain test recording 5 of 10
+  lookups. Both cursors now reset with the counters they index into, with a
+  direct regression test in Pass 195's file where the invariant belongs.
+- **Ambient-state lesson repeated:** a first attempt asserted
+  `persistence_enabled()` was False on the shared singleton, which only held
+  in isolation — a daemon test elsewhere had opted it in. The tests now pin
+  the state they assume and restore it, rather than inheriting whatever ran
+  first. This is the third time in four passes that shared process state
+  produced an order-dependent test; worth treating as a standing hazard in
+  this codebase.
+- **Validation:** 8 new tests (`tests/test_new_features_196.py`), including
+  that sub-interval counts survive, that draining twice does not double-count,
+  that an unwritable log returns rather than raises, and a guard asserting the
+  shutdown handler still calls the drain (its removal would be silent data
+  loss).
 
 ## Sources (Part 3)
 
