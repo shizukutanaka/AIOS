@@ -621,6 +621,50 @@ discipline as Parts 1–2: no assumed gaps).
   fails the embeddings probe. Deliberately deferred rather than silently
   skipped.
 
+## U. KV prefix-cache offload advice (OffloadingConnector) — ✅ implemented (Pass 192)
+
+> **Status:** shipped as `optimize_vllm_flags(..., enable_kv_offload=True)`
+> (`runtime/kv_offload.py`). Off by default.
+
+- **The gap:** `optimize_vllm_flags` has always emitted `--enable-prefix-caching`,
+  but that cache lives in whatever VRAM the weights left behind. On a large
+  model / small GPU the leftover is thin enough to thrash, so on prefix-heavy
+  workloads — multi-turn chat, RAG sharing one system prompt, agent loops
+  replaying a transcript — the reuse the flag promises never materializes.
+  aictl had no notion of the fix.
+- **Upstream mechanism:** vLLM's OffloadingConnector (2026) extends the prefix
+  cache into pinned host memory: completed GPU blocks are DMA'd out to a CPU
+  tier instead of being dropped, so an evicted prefix stays a cache hit rather
+  than a recompute.
+- **Schema discipline:** the emitted `--kv-transfer-config` uses only keys
+  verified against the connector's own pull request (vllm-project/vllm#24498) —
+  `kv_connector` / `kv_role` / `kv_connector_extra_config.{block_size,
+  cpu_bytes_to_use}`, bytes as the unit, replacing the legacy `num_cpu_blocks`.
+  `spec_name` and the multi-tier options appear in secondary sources but the
+  primary docs were unreachable from this environment (docs.vllm.ai and
+  vllm.ai are egress-blocked), so they are deliberately **not** emitted, and a
+  test pins that boundary. One verified contract over two guessed ones.
+- **Safety property, not a preference:** `cpu_bytes_to_use` is *pinned*
+  (page-locked) host memory — unswappable and gone from the OS for the
+  engine's lifetime, so over-allocating it degrades the whole host rather than
+  just the engine. Sizing takes at most 25% of host RAM, always leaves an 8GB
+  floor, returns nothing rather than a token allocation below 4GiB, and
+  **refuses outright when host RAM is unknown** instead of guessing.
+- **Honest scoping:** the advisor declines, with a reason, when the GPU KV
+  cache already dwarfs any safe host tier (a small model on an 80GB card), on
+  non-GPU hosts, and when measured prefix reuse is under 10% — offloading buys
+  prefix hits and nothing else. Notes state plainly that it does *not* make a
+  model that exceeds VRAM fit, the most likely misreading.
+- **Measurement over heuristic:** an optional `prefix_reuse` argument (aictl's
+  `PrefixRouteTracker` already produces one) overrides the heuristic in both
+  directions when supplied.
+- **Validation:** 31 new tests (`tests/test_new_features_192.py`), including
+  that the default path is byte-identical to before and that enabling adds
+  exactly one flag.
+- **Still open:** nothing wires `PrefixRouteTracker.stats()` into the
+  `prefix_reuse` argument automatically, and no CLI flag exposes this yet —
+  the plumbing is a deliberate follow-up, not an oversight.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
@@ -637,3 +681,15 @@ Embeddings: [Milvus 2026 comparison](https://milvus.io/blog/choose-embedding-mod
 Engines/models: [engine comparison 2026](https://leetllm.com/blog/llm-inference-engine-comparison-2026) ·
 [Ollama release notes](https://releasebot.io/updates/ollama).
 Spec-decode attack (context only): Mistletoe acceleration-collapse (arXiv:2605.14005).
+
+## Sources (Part 4 — Pass 192)
+
+KV offloading: [vLLM OffloadingConnector `cpu_bytes_to_use` PR
+#24498](https://github.com/vllm-project/vllm/pull/24498) — the primary source for
+the emitted schema; vLLM's own docs (docs.vllm.ai) and the 2026-01-08 connector
+blog post were egress-blocked from this environment, so anything appearing only
+there (`spec_name`, multi-tier specs) was left unimplemented rather than guessed.
+Context on the wider design space (titles/abstracts only, arxiv.org also
+egress-blocked): PEEK queue-informed KV cache management (arXiv:2607.02525),
+KV cache management survey (arXiv:2607.02574), adaptive KV cache reuse
+(arXiv:2605.24022).

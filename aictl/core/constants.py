@@ -47,6 +47,16 @@ EMBEDDING_MODEL_DETECT_TIMEOUT = 3   # aictl.sdk._detect_embedding_model /v1/mod
 RERANK_TIMEOUT = 5   # aictl.core.rerank.rerank TEI-compatible /rerank POST
 CONFORMANCE_PROBE_TIMEOUT = 5   # aictl.runtime.conformance per-probe HTTP timeout
 
+# vLLM OffloadingConnector (KV prefix-cache offload to pinned host memory).
+# cpu_bytes_to_use is PINNED (page-locked) host memory: it is unswappable and
+# taken away from the OS for the engine's lifetime, so over-allocating it
+# destabilizes the whole host, not just the engine. These bounds keep the
+# recommendation conservative.
+KV_OFFLOAD_HOST_RAM_FRACTION = 0.25   # max share of host RAM to pin
+KV_OFFLOAD_MIN_FREE_RAM_MB = 8192     # never pin if it would leave the host under this
+KV_OFFLOAD_MIN_BYTES = 4 * 1024**3    # below this the offload tier isn't worth its overhead
+KV_OFFLOAD_BLOCK_SIZE = 64            # per the connector's documented example
+
 # ── Guard model-check verdict cache (IMPROVEMENTS.md item P) ─────────
 # DoS hardening (arXiv:2606.14517 "From Shield to Target"): a flood of
 # identical/near-identical prompts must not re-trigger the upstream guard
