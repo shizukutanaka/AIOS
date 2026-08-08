@@ -819,6 +819,36 @@ discipline as Parts 1–2: no assumed gaps).
   shutdown handler still calls the drain (its removal would be silent data
   loss).
 
+## Z. Self-audit of items T–Y — two defects in untested paths — ✅ fixed (Pass 197)
+
+> `INSTRUCTIONS_OPUS.md` calls recently-added code the highest-yield audit
+> surface. Re-reading items T–Y found two defects, both in paths the
+> happy-path tests never took.
+
+1. **The KV offload vendor gate fell open on an unnamed vendor.**
+   `if vendor and vendor.lower() not in SUPPORTED_VENDORS` meant a
+   *recognized-but-unsupported* vendor (`"huawei"`) correctly declined, while
+   an *unidentified* one (`""`) skipped the check entirely and got a
+   recommendation — the looser case was the one falling open. Emitting the
+   flag for hardware the connector may not support produces a config the
+   engine rejects at startup. Now an unnamed vendor is treated exactly like an
+   unrecognized one. Cross-checked every vendor string the broker actually
+   emits (nvidia/amd/intel/apple/huawei/qualcomm) against the gate.
+2. **`engines conform` reported a false negative on chat.** When `/v1/models`
+   does not answer and no `--model` is given, the probe invents
+   `"test-model"`; engines that validate the name (vLLM) reject it, and the
+   report read `chat completions: HTTP 404` — indistinguishable from a
+   genuinely broken endpoint. In a module whose entire purpose is mapping
+   probe results to honest consequences, conflating "your engine is broken"
+   with "I guessed the model name wrong" is the worst defect it could carry.
+   The detail now says which it is and points at `--model`; the caveat is
+   deliberately *not* added when the user supplied a name or when
+   `/v1/models` answered, since a failure there is a real signal.
+
+- **Validation:** 8 new tests (`tests/test_new_features_197.py`), including a
+  reproduction engine that validates model names and hides `/v1/models` —
+  the exact combination that produced the false negative.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

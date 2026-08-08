@@ -166,11 +166,17 @@ def advise_kv_offload(
     if prefix_reuse is None:
         prefix_reuse = measured_prefix_reuse()
 
-    if vendor and vendor.lower() not in SUPPORTED_VENDORS:
+    if vendor.lower() not in SUPPORTED_VENDORS:
+        # An unnamed vendor is treated exactly like an unrecognized one. The
+        # gate previously skipped on empty, so an unknown accelerator declined
+        # while an unidentified one was recommended — the looser case falling
+        # open. Emitting the flag for hardware the connector may not support
+        # produces a config the engine rejects at startup.
+        shown = vendor or "unknown"
         return OffloadAdvice(
             recommended=False,
             reason=f"OffloadingConnector supports {'/'.join(SUPPORTED_VENDORS)} "
-                   f"accelerators; nothing to offload from on '{vendor}'",
+                   f"accelerators; cannot confirm support for '{shown}'",
         )
 
     if host_ram_mb <= 0:
