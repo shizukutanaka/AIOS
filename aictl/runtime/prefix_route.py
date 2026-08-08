@@ -60,6 +60,13 @@ class PrefixRouteTracker:
         self._capacity = capacity
         self._endpoints: dict[str, OrderedDict[str, float]] = {}
         self._lock = threading.RLock()
+        # Lookup accounting. Routing already knows, per request, whether a
+        # warm prefix existed — it just threw that away. Keeping it turns the
+        # router into a free measurement of how prefix-heavy the workload
+        # actually is, which is the one thing that decides whether extending
+        # the KV cache (see runtime/kv_offload.py) can pay off at all.
+        self._lookups = 0
+        self._hits = 0
 
     # Candidate prefix lengths to hash (must match best_endpoint)
     _PREFIX_LENS = [1024, 768, 512, 384, 256, 192, 128, 64, 32, 16]
@@ -139,7 +146,28 @@ class PrefixRouteTracker:
                                 matched_prefix_len=length,
                             )
 
+            # Counted inside the lock, and only for lookups that got far
+            # enough to be answerable — early returns above are malformed
+            # queries, not evidence about the workload.
+            self._lookups += 1
+            if best is not None:
+                self._hits += 1
+
         return best
+
+    def reuse_rate(self) -> float | None:
+        """Fraction of lookups that found a warm prefix, or None if unmeasured.
+
+        None and 0.0 are deliberately different answers: None means nothing
+        has been observed yet, 0.0 means reuse was observed to be absent.
+        Callers act on them in opposite ways — `advise_kv_offload` falls back
+        to a heuristic on None but vetoes offloading on a measured 0.0 — so
+        collapsing the two would turn "no data" into "don't bother".
+        """
+        with self._lock:
+            if self._lookups == 0:
+                return None
+            return self._hits / self._lookups
 
     def stats(self) -> dict[str, Any]:
         """For debugging."""
@@ -147,6 +175,9 @@ class PrefixRouteTracker:
             now = time.time()
             return {
                 "endpoints": list(self._endpoints.keys()),
+                "lookups": self._lookups,
+                "hits": self._hits,
+                "reuse_rate": (self._hits / self._lookups) if self._lookups else None,
                 "totals": {
                     ep: {
                         "tracked_prefixes": len(history),
@@ -163,6 +194,8 @@ class PrefixRouteTracker:
         """Clear stored data."""
         with self._lock:
             self._endpoints.clear()
+            self._lookups = 0
+            self._hits = 0
 
     def _hash_prefix(self, prompt: str) -> str:
         """Compute and return the hash."""

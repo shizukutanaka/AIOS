@@ -661,9 +661,51 @@ discipline as Parts 1–2: no assumed gaps).
 - **Validation:** 31 new tests (`tests/test_new_features_192.py`), including
   that the default path is byte-identical to before and that enabling adds
   exactly one flag.
-- **Still open:** nothing wires `PrefixRouteTracker.stats()` into the
-  `prefix_reuse` argument automatically, and no CLI flag exposes this yet —
-  the plumbing is a deliberate follow-up, not an oversight.
+- **Follow-up closed in Pass 193 (below):** the `prefix_reuse` argument is now
+  supplied automatically from the router's own measurements. A CLI flag
+  exposing `enable_kv_offload` is still not wired.
+
+## V. Measured prefix reuse feeds the offload decision — ✅ implemented (Pass 193)
+
+> **Status:** `PrefixRouteTracker.reuse_rate()` → `measured_prefix_reuse()` →
+> `advise_kv_offload`. Closes item U's documented follow-up.
+
+- **The gap:** item U accepted a `prefix_reuse` measurement but nothing
+  produced one, so it always fell back to *assuming* a prefix-heavy workload.
+  Meanwhile `PrefixRouteTracker.best_endpoint()` was answering exactly that
+  question on every request — "does a warm prefix exist for this prompt?" —
+  and discarding the answer. The measurement was already being computed and
+  thrown away.
+- **Grounding:** KVFlow (NeurIPS 2025, arXiv:2507.07400) finds LRU eviction is
+  fundamentally mismatched with agentic workflows: it evicts on past access
+  time while the workflow structure already encodes future execution order, so
+  caches are dropped shortly before reuse. aictl cannot change an engine's
+  eviction policy, but that is precisely the regime where enlarging the cache
+  tier recovers hits eviction would otherwise squander. Whether a deployment
+  is in that regime is empirical — and is now measured rather than assumed.
+- **Implementation:** hit/miss counters on the tracker (inside the existing
+  lock, counted only for lookups that actually consulted history — malformed
+  queries are not evidence), `reuse_rate()`, counters surfaced in `stats()`,
+  and reset by `clear()`.
+- **The load-bearing distinction:** `reuse_rate()` returns `None` when nothing
+  has been observed and `0.0` when reuse was observed to be absent. Callers
+  act on these in *opposite* directions — None defers to the heuristic, 0.0
+  vetoes offloading — so collapsing them (e.g. `prefix_reuse or measured()`)
+  would silently turn "no data yet" into "don't bother". A regression test
+  pins it.
+- **Known caveat, documented not hidden:** `advise_kv_offload` now reads
+  process-global state when `prefix_reuse` is omitted, so identical arguments
+  can yield different advice in a process that has served traffic versus a
+  fresh one. That is the intent (an observed workload beats an assumed one);
+  callers wanting ambient-independent advice pass `prefix_reuse` explicitly.
+  Verified deliberately: a process fed 30 one-shot prompts correctly declines
+  offloading.
+- **Validation:** 19 new tests (`tests/test_new_features_193.py`), including
+  thread-safety of the counters under 8 concurrent readers, that routing
+  decisions are unchanged by the accounting, and that the suite passes in both
+  file orders (the new global-state read makes order-dependence a real risk).
+- **Still open:** no CLI flag exposes `enable_kv_offload`; the reuse rate is
+  process-local and resets on restart (no persistence across runs).
 
 ## Sources (Part 3)
 
@@ -693,3 +735,14 @@ Context on the wider design space (titles/abstracts only, arxiv.org also
 egress-blocked): PEEK queue-informed KV cache management (arXiv:2607.02525),
 KV cache management survey (arXiv:2607.02574), adaptive KV cache reuse
 (arXiv:2605.24022).
+
+Pass 193 — prefix reuse: KVFlow, *Efficient Prefix Caching for Accelerating
+LLM-Based Multi-Agent Workflows* (NeurIPS 2025, arXiv:2507.07400) — LRU evicts
+on past access time while agentic workflow structure already encodes future
+execution order, so caches are dropped shortly before reuse; reported 1.12x /
+1.08x speedups over SGLang / HiCache. Used as motivation only: aictl does not
+implement KVFlow's steps-to-execution scheduling (it cannot control engine
+eviction), it measures whether a deployment is in the high-reuse regime that
+makes a larger cache tier worthwhile. Related workload characterization:
+TraceLab, *Characterizing Coding Agent Workloads for LLM Serving*
+(arXiv:2606.30560).

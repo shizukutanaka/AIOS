@@ -110,6 +110,24 @@ def size_cpu_tier(host_ram_mb: int, gpu_kv_mb: float = 0.0) -> int:
     return cpu_bytes if cpu_bytes >= KV_OFFLOAD_MIN_BYTES else 0
 
 
+def measured_prefix_reuse() -> float | None:
+    """This process's observed prefix-cache reuse rate, or None if unmeasured.
+
+    Reads the router's own lookup accounting rather than sampling anything:
+    if requests have flowed through prefix-aware routing, the workload has
+    already answered the question this module would otherwise guess at.
+
+    Returns None (not 0.0) when nothing has been observed — see
+    `PrefixRouteTracker.reuse_rate` for why that distinction matters.
+    """
+    try:
+        from aictl.runtime.prefix_route import get_default_tracker
+        return get_default_tracker().reuse_rate()
+    except Exception:
+        # Advisory path: never let measurement failure break flag generation.
+        return None
+
+
 def advise_kv_offload(
     *,
     host_ram_mb: int,
@@ -121,11 +139,24 @@ def advise_kv_offload(
 
     `gpu_kv_mb` is the VRAM left for KV cache after weights — the same
     quantity `optimize_vllm_flags` computes when auto-sizing context.
-    `prefix_reuse` is an optional measured hit rate in [0, 1] (aictl's
-    PrefixRouteTracker produces one); when supplied it is believed over any
-    heuristic, in both directions.
+
+    `prefix_reuse` is a measured hit rate in [0, 1]; when supplied it is
+    believed over any heuristic, in both directions. **When omitted it is
+    read from this process's prefix-aware router** (`measured_prefix_reuse`),
+    so advice reflects traffic the process actually served — which means the
+    same arguments can yield different advice in a process that has served
+    requests versus a fresh one. That is the intent: an observed workload
+    beats an assumed one. Pass `prefix_reuse` explicitly for advice that does
+    not depend on ambient state.
+
+    Note that `prefix_reuse=0.0` and `prefix_reuse=None` are distinct inputs:
+    0.0 vetoes offloading (reuse was measured and absent), None defers to the
+    router and then to the heuristic. Never collapse them with `or`.
     """
     notes: list[str] = []
+
+    if prefix_reuse is None:
+        prefix_reuse = measured_prefix_reuse()
 
     if vendor and vendor.lower() not in SUPPORTED_VENDORS:
         return OffloadAdvice(
@@ -167,8 +198,9 @@ def advise_kv_offload(
         return OffloadAdvice(recommended=False, reason=reason)
 
     if prefix_reuse is not None:
-        notes.append(f"measured prefix reuse {prefix_reuse:.0%} — offloaded blocks "
-                     "should see comparable hit rates")
+        notes.append(f"measured prefix reuse {prefix_reuse:.0%} (from this process's "
+                     "prefix-aware routing) — offloaded blocks should see comparable "
+                     "hit rates")
     else:
         notes.append("no measured prefix reuse available; this assumes a prefix-heavy "
                      "workload (multi-turn chat, shared RAG system prompt, agent loops). "
