@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,433+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,519+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -32,6 +32,33 @@
 - **Fair-share advisory** (`aictl tco fairshare`): Jain's fairness index over per-tenant/apikey token usage, with starved/over-share classification. Advisory only — does not touch the serving path.
 - **Carbon/energy advisor** (`aictl tco carbon`): kWh + CO₂e, GPU power-cap flags, FREESH-style savings projections.
 
+### Engine conformance
+- **`aictl engines conform [url]`**: probes the six HTTP surfaces aictl depends on
+  (`/v1/models`, reachability, chat completions, streaming, `/v1/embeddings`,
+  `/metrics`) and maps each to *which aictl features work, degrade, or break*.
+  Closes a real gap: `selftest` never contacted an engine and the test suite
+  exercises only the bundled mock, so non-conformance previously surfaced
+  mid-request as silent quality loss — an engine without `/v1/embeddings` makes
+  RAG and the semantic cache fall back to the non-semantic hash embedding.
+  Read-only, and an unreachable engine still yields a full report.
+
+### KV prefix-cache offloading
+- **`aictl deploy optimize <model> --kv-offload`**: advises on vLLM's
+  OffloadingConnector, which extends the prefix cache into pinned host memory so
+  an evicted prefix stays a cache hit instead of a recompute. Matters because
+  `--enable-prefix-caching` alone is bounded by leftover VRAM, which thrashes on
+  prefix-heavy workloads (multi-turn chat, shared RAG system prompts, agent loops).
+- Sizing is treated as a **safety property**: `cpu_bytes_to_use` is pinned,
+  unswappable host memory, so the advisor takes at most 25% of host RAM, keeps an
+  8GB floor, and refuses outright rather than guessing when host RAM is unknown.
+- Declines with a stated reason when it would not help — small model on a large
+  GPU, non-GPU host, or measured prefix reuse under 10%. It does **not** make a
+  model that exceeds VRAM fit, and says so.
+- **Measured, not assumed**: the prefix router now keeps hit/miss accounting
+  (`reuse_rate()`), so the decision uses observed traffic when the process has
+  served any. Motivated by KVFlow (NeurIPS 2025, arXiv:2507.07400) on LRU
+  eviction discarding caches shortly before reuse in agentic workflows.
+
 ### Catalog & advisors
 - New models (GLM-5.2, Kimi K2.6); Medusa speculative-decoding method; vLLM v0.19 CPU KV-offload hints; NVFP4 quant sweet-spot notes; Apple-Silicon unified-memory fit math; 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio — all opt-in, OpenAI-compatible).
 
@@ -49,6 +76,13 @@ python3 -m aictl gate            # compile + import + version + tests + demo
 - Python 3.11+
 - Linux (any distro)
 - Optional: Podman, NVIDIA GPU, Ollama / vLLM / SGLang
+
+## For contributors
+
+`docs/REVIEW_v1.7.0.md` records this release's strengths, weaknesses, and a
+prioritized backlog — every item grounded in real code rather than aspiration.
+`docs/INSTRUCTIONS_OPUS.md` and `docs/INSTRUCTIONS_SONNET.md` are playbooks for
+design-scope and mechanical-scope contribution sessions respectively.
 
 ## Upgrade notes
 
