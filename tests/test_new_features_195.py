@@ -103,6 +103,25 @@ class TestPersistence(_IsolatedState):
         # 19 hits of 20 lookups total, counted once each.
         self.assertAlmostEqual(persisted_reuse_rate(), 19 / 20)
 
+    def test_clear_resets_the_flush_cursor_too(self):
+        # Regression: clear() reset the counters but not the flush cursors, so
+        # `lookups - flushed` went negative and a cleared tracker silently
+        # under-persisted (or persisted nothing) until it passed the stale
+        # cursor. Found by a shutdown-drain test recording 5 of 10 lookups.
+        tracker = self._warm_tracker(hits=4, misses=1)     # 5 lookups
+        self.assertTrue(tracker.flush_reuse())
+        tracker.clear()
+
+        tracker.record(ENDPOINTS[0], SHARED)
+        for _ in range(3):
+            tracker.best_endpoint(SHARED, ENDPOINTS)
+        self.assertTrue(tracker.flush_reuse(), "cleared tracker refused to flush")
+
+        with open(_reuse_log_path(), encoding="utf-8") as fh:
+            records = [json.loads(line) for line in fh if line.strip()]
+        # 5 from before the clear, 3 after — every lookup accounted for once.
+        self.assertEqual(sum(r["lookups"] for r in records), 8)
+
     def test_empty_log_is_unmeasured(self):
         _reuse_log_path().parent.mkdir(parents=True, exist_ok=True)
         _reuse_log_path().write_text("")

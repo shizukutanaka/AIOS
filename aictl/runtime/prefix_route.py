@@ -277,6 +277,12 @@ class PrefixRouteTracker:
             self._endpoints.clear()
             self._lookups = 0
             self._hits = 0
+            # The flush cursors must reset with the counters they index into.
+            # Leaving them behind makes the next delta (lookups - flushed) go
+            # negative, so a cleared tracker silently under-persists — or
+            # persists nothing at all — until it exceeds the stale cursor.
+            self._flushed_lookups = 0
+            self._flushed_hits = 0
 
     def _hash_prefix(self, prompt: str) -> str:
         """Compute and return the hash."""
