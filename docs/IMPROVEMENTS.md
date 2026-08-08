@@ -704,8 +704,44 @@ discipline as Parts 1–2: no assumed gaps).
   thread-safety of the counters under 8 concurrent readers, that routing
   decisions are unchanged by the accounting, and that the suite passes in both
   file orders (the new global-state read makes order-dependence a real risk).
-- **Still open:** no CLI flag exposes `enable_kv_offload`; the reuse rate is
-  process-local and resets on restart (no persistence across runs).
+- **Follow-up closed in Pass 194 (below):** `--kv-offload` now exposes it.
+  The reuse rate remains process-local and resets on restart.
+
+## W. `--kv-offload` on the CLI, and a vendor-gating bug it exposed — ✅ implemented (Pass 194)
+
+> **Status:** `aictl deploy optimize <model> --kv-offload [--host-ram MB]`.
+> Closes item U's remaining follow-up.
+
+- **The gap:** items U and V built the advisor and gave it a real measurement,
+  but `enable_kv_offload` was reachable only from Python — no user could get
+  at it.
+- **Detection had to change shape:** sizing depends on *host* RAM, which the
+  existing auto-detect path never needed (it only looked at GPUs) and only ran
+  under `--gpu auto`. `full_detect()` is now also triggered by `--kv-offload`,
+  probed exactly once and reused — with a test asserting it is not run at all
+  when both GPU and host RAM are given, since it shells out to
+  nvidia-smi/rocm-smi.
+- **Real bug found by a test, not by review:** `HardwareProfile.vendor`
+  defaulted to `"nvidia"` for every explicitly-named GPU, so
+  `--gpu CPU --kv-offload` recommended offloading from a device that wasn't
+  there — the advisor's vendor gate was being fed a wrong constant. Fixed with
+  `_infer_vendor()`, which maps CPU/none to `"cpu"` and recognizes AMD/Intel/
+  Apple names, while keeping the historical `"nvidia"` assumption for unknown
+  names (better to keep advising for a GPU missing from the tables than to
+  silently disable features for it).
+- **Advisory semantics preserved:** declining is not an error — exit stays 0
+  and the reason is printed, so `--kv-offload` on an unsuitable host is
+  informative rather than a failure.
+- **Validation:** 18 new tests (`tests/test_new_features_194.py`), including
+  that the default path emits nothing, `--json` stays valid, explicit
+  `--host-ram` overrides detection (the machine generating flags is often not
+  the machine that will run the engine), and old Namespaces without the new
+  attributes still work.
+- **Still open:** the reuse rate is process-local with no persistence across
+  runs, so a fresh CLI invocation always falls back to the heuristic — only a
+  long-lived process (the proxy/daemon) accumulates a real measurement. That
+  limitation is inherent to invoking the advisor from a short-lived CLI and
+  would need the measurement persisted to state to fix.
 
 ## Sources (Part 3)
 
