@@ -737,11 +737,56 @@ discipline as Parts 1–2: no assumed gaps).
   `--host-ram` overrides detection (the machine generating flags is often not
   the machine that will run the engine), and old Namespaces without the new
   attributes still work.
-- **Still open:** the reuse rate is process-local with no persistence across
-  runs, so a fresh CLI invocation always falls back to the heuristic — only a
-  long-lived process (the proxy/daemon) accumulates a real measurement. That
-  limitation is inherent to invoking the advisor from a short-lived CLI and
-  would need the measurement persisted to state to fix.
+- **Follow-up closed in Pass 195 (below):** the reuse rate now persists, so a
+  fresh CLI run can read what the daemon measured.
+
+## X. Persisted prefix reuse, and three bugs the tests found — ✅ implemented (Pass 195)
+
+> **Status:** `PrefixRouteTracker.flush_reuse()` / `persisted_reuse_rate()`,
+> opt-in per tracker, enabled by the daemon. Closes item W's limitation.
+
+- **The gap:** the reuse rate was process-local, so `deploy optimize
+  --kv-offload` — a fresh process that has served no traffic — always fell
+  back to the heuristic. The measurement only accumulated in the long-lived
+  daemon, which is precisely the process that never asks for the advice.
+- **Design:** the log stores *deltas*, not absolute counts. Appends under
+  PIPE_BUF are atomic on POSIX, so concurrent writers share one file without
+  locking and a reader simply sums; absolute counts would need
+  read-modify-write and would race. Mirrors `core/perf.py`'s rationale.
+- **Staleness rule:** records older than 24h are ignored, and untimestamped
+  ones (predating the `ts` field) with them. Advice driven by month-old
+  traffic is worse than advice that admits it has no data — the workload it
+  measured may no longer exist.
+
+**Three real bugs, each caught by a test or an inspection rather than review:**
+
+1. **Non-dict JSON crashed the reader.** A well-formed line that wasn't an
+   object (`["wrong","shape"]`) raised `AttributeError` on `.get`, which the
+   handler didn't catch — it escaped and would crash the caller. Fixed with an
+   `isinstance` check in both readers.
+2. **Concurrent flushes double-counted.** The delta was computed under the
+   lock, the lock released for the write, then the cursor advanced — so two
+   threads could claim overlapping ranges and write the same lookups twice.
+   Observed as 1212 persisted vs 1200 actual under 6 threads. Fixed by
+   reserving *and* claiming the delta in one atomic step, un-claiming on write
+   failure so counts are retried rather than lost.
+3. **A process-global opt-in leaked across the whole process.** Auto-flush was
+   a module-level flag flipped by the daemon, so once any daemon test ran,
+   *every* tracker in the process began writing to the real `~/.aios` — found
+   by noticing the test suite creating files in the user's home directory, not
+   by a failing test. Made per-instance (`tracker.enable_persistence()`).
+- **Ambient-state fragility fixed in earlier passes' tests:** giving the
+  advisor a persisted fallback made `measured_prefix_reuse()` depend on the
+  state dir, which broke Pass 192/193 tests that assumed "unmeasured". Those
+  now isolate `AICTL_STATE_DIR` — they were silently environment-dependent.
+- **Validation:** 29 new tests (`tests/test_new_features_195.py`), including a
+  concurrency test asserting persisted totals equal in-process totals under 6
+  threads, corruption resilience (truncated final line, garbage lines,
+  unwritable log), and that routing still works when the log cannot be written.
+- **Still open:** the daemon flushes every 100 lookups but does not flush on
+  shutdown, so up to 99 lookups are lost on exit — immaterial for a rate, but
+  worth noting. The log is also global rather than per-endpoint, so a
+  multi-engine deployment gets one blended rate.
 
 ## Sources (Part 3)
 

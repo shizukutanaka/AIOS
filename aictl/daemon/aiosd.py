@@ -580,6 +580,20 @@ def serve(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     store = StateStore(state_dir)
     AIOSHandler.store = store
 
+    # This is the long-lived process that actually routes traffic, so it is
+    # the only one whose prefix-reuse counts are worth persisting — a
+    # short-lived CLI run measures nothing. Persisting here is what lets
+    # `deploy optimize --kv-offload` consult a real measurement instead of
+    # falling back to a heuristic. Best-effort; never fatal to startup.
+    try:
+        from aictl.runtime.prefix_route import (
+            get_default_tracker, truncate_reuse_log,
+        )
+        truncate_reuse_log()          # collapse any unbounded log from prior runs
+        get_default_tracker().enable_persistence()
+    except Exception:
+        pass
+
     # Bind FIRST so a port conflict fails fast with a clean, actionable message —
     # before spinning up the governor thread (which would otherwise leak when the
     # bind raises). HTTPServer sets allow_reuse_address, so a fresh restart after

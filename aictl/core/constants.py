@@ -57,6 +57,17 @@ KV_OFFLOAD_MIN_FREE_RAM_MB = 8192     # never pin if it would leave the host und
 KV_OFFLOAD_MIN_BYTES = 4 * 1024**3    # below this the offload tier isn't worth its overhead
 KV_OFFLOAD_BLOCK_SIZE = 64            # per the connector's documented example
 
+# Prefix-reuse persistence. The router accumulates hit/miss counts in a
+# long-lived process (the daemon), but the advisor that consumes them usually
+# runs in a short-lived CLI process. Deltas are appended periodically so the
+# CLI can read a real measurement instead of falling back to a guess.
+PREFIX_REUSE_FLUSH_EVERY = 100        # lookups between appends (0 disables)
+PREFIX_REUSE_MAX_RECORDS = 2000       # log is trimmed past this
+# Reuse measured long ago describes a workload that may no longer exist, and
+# advice driven by stale traffic is worse than advice that admits it has no
+# data. Records older than this are ignored when reading.
+PREFIX_REUSE_MAX_AGE_SECONDS = 86400  # 24h
+
 # ── Guard model-check verdict cache (IMPROVEMENTS.md item P) ─────────
 # DoS hardening (arXiv:2606.14517 "From Shield to Target"): a flood of
 # identical/near-identical prompts must not re-trigger the upstream guard

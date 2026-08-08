@@ -129,10 +129,24 @@ class TestAdvisorWiring(unittest.TestCase):
     """The advisor should consult the router instead of assuming."""
 
     def setUp(self):
+        # Pass 195 gave the advisor a persisted cross-process fallback, so
+        # "unmeasured" now also depends on the state dir. Isolate it, or these
+        # tests read whatever the developer's machine happens to have logged.
+        import os
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("AICTL_STATE_DIR")
+        os.environ["AICTL_STATE_DIR"] = self._tmp.name
         get_default_tracker().clear()
 
     def tearDown(self):
+        import os
         get_default_tracker().clear()
+        if self._prev is None:
+            os.environ.pop("AICTL_STATE_DIR", None)
+        else:
+            os.environ["AICTL_STATE_DIR"] = self._prev
+        self._tmp.cleanup()
 
     def test_unmeasured_falls_back_to_the_heuristic(self):
         self.assertIsNone(measured_prefix_reuse())
