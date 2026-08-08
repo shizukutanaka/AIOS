@@ -144,6 +144,65 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return "\n".join(s for s in text_input if isinstance(s, str))
         return ""
 
+    def _entity_id(self) -> str:
+        """Billing/fairness identity for this request.
+
+        Mirrors `_meter_tokens`' attribution exactly — the key's id, never the
+        raw key — so a tenant's fair-share accounting is keyed the same way as
+        the usage it is measured against. Keying them differently would make
+        the gate compare an entity to a total it does not appear in.
+        """
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:].startswith("aios-"):
+            try:
+                from aictl.core.apikeys import key_id_for
+                return key_id_for(auth[7:])
+            except Exception:
+                return "anonymous"
+        return "anonymous"
+
+    def _check_fair_share(self, entity_id: str) -> tuple[bool, str]:
+        """Least-service-first admission gate (IMPROVEMENTS.md item M).
+
+        Defers a tenant only when it is using more than the configured
+        multiple of an even share *and* another tenant is behind it. Config is
+        re-read per request, matching `_check_guard`/`_model_trust_ok`, so the
+        policy can be changed on live traffic without a restart.
+
+        Fails OPEN on every error and every uncertainty. A fairness mechanism
+        that denies service because it could not read usage data has traded a
+        fairness problem for an availability problem, which is strictly worse.
+        """
+        config = load_config(self.store.dir)
+        policy = getattr(config, "fair_share_policy", "off")
+        if policy == "off" or not entity_id:
+            return True, ""
+
+        try:
+            from aictl.core.fair_scheduler import should_admit
+            from aictl.core.metering import TokenMeter
+            buckets = TokenMeter(self.store.dir).list_usage()
+            decision = should_admit(
+                entity_id, buckets,
+                yield_ratio=float(getattr(config, "fair_share_yield_ratio", 2.0)),
+            )
+        except Exception:
+            return True, ""
+
+        if decision.admit:
+            return True, ""
+
+        if policy == "enforce":
+            self._audit("fairshare.deferred", decision.reason,
+                        action="defer", outcome="blocked")
+            return False, f"Deferred by fair-share policy: {decision.reason}"
+
+        # warn mode: admit, but leave the same discoverable trail so an
+        # operator can see what enforcing would have done before enabling it.
+        self._audit("fairshare.warning", decision.reason,
+                    action="allow", outcome="warning")
+        return True, ""
+
     def _check_guard(self, body: dict[str, Any]) -> tuple[bool, str]:
         """Content-policy gate (prompt injection / jailbreak / system-leak)
         before routing. Orthogonal to guard_redact_output: PII merely
@@ -240,6 +299,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
         guard_ok, guard_reason = self._check_guard(body)
         if not guard_ok:
             self._error(400, guard_reason)
+            return
+
+        # Fair-share gate. Deliberately AFTER trust and guard: a request that
+        # is unsafe or untrusted should be refused on those grounds regardless
+        # of whose quota it lands in, and 429 would misdescribe it. 503 with
+        # Retry-After, not 403 — being deferred is transient and retryable,
+        # not a permission failure.
+        fair_ok, fair_reason = self._check_fair_share(self._entity_id())
+        if not fair_ok:
+            self._error(503, fair_reason)
             return
 
         # Route

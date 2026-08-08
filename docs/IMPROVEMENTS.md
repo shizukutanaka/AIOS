@@ -849,6 +849,55 @@ discipline as Parts 1–2: no assumed gaps).
   reproduction engine that validates model names and hides `/v1/models` —
   the exact combination that produced the false negative.
 
+## M (remainder). Live fair-share admission — ✅ implemented (Pass 198)
+
+> **Status:** `core/fair_scheduler.py` + an opt-in proxy gate
+> (`fair_share_policy`, default `off`). Completes item M, whose advisory half
+> shipped in Pass 190.
+
+- **This is deliberately NOT VTC.** The VTC paper (arXiv:2401.00588, OSDI '24)
+  motivates the work, but its exact virtual-counter update — the input/output
+  weighting and the precise counter-lift rule — still could not be verified:
+  arxiv.org (abstract, PDF *and* HTML) and every secondary source carrying the
+  formula are egress-blocked from this environment, the same wall Pass 190
+  hit. Rather than ship a guessed formula under the paper's name, this
+  implements the two properties consistently reported across sources and
+  textbook in their own right: **least-service-first** ordering, and a
+  **new-arrival lift**. The output-token weight (2.0) is labelled in the
+  source as an engineering default, explicitly *not* a number from the paper.
+- **New-arrival lift matters for more than latency:** a client with no history
+  starts at the current *minimum*, not zero. At zero, a fresh identity
+  outranks every established one until it catches up — so anyone could reset
+  their priority by rotating API keys.
+- **Design flaw found by testing my own first version.** It compared each
+  entity against the *even share*. With N entities that ratio is bounded above
+  by N, so with two tenants a hog taking 98% of all tokens scored 1.96 and
+  slipped under a threshold of 2.0 — **the gate was a no-op in the commonest
+  multi-tenant case**. Now compares against the least-served entity, which is
+  unbounded and expresses the actual intent. A starvation floor
+  (`fair_share * 0.01`) stops a bucket sitting at zero from deferring every
+  other tenant at once.
+- **Fails open, everywhere.** Unknown entity, single tenant, no usage data,
+  or any exception all admit. A fairness mechanism that denies service because
+  it could not read usage data has traded a fairness problem for an
+  availability problem, which is strictly worse.
+- **Gate placement:** after `_model_trust_ok` and `_check_guard`, never
+  before — an unsafe or untrusted request should be refused on those grounds
+  regardless of whose quota it lands in. Returns **503**, not 403: being
+  deferred is transient and retryable, not a permission failure. `warn` mode
+  audits what enforcing *would* have deferred, so an operator can see the
+  blast radius before turning it on.
+- **Validation:** 29 new tests (`tests/test_new_features_198.py`), including
+  the two-tenant regression, the starvation floor, key-rotation resistance,
+  every fail-open path, config validation (a typo'd `"enfroce"` must be
+  rejected rather than silently read as "off"), and source-level guards on
+  gate ordering and the 503 status.
+- **Still open:** admission is per-request and stateless — it consults
+  cumulative usage, so a tenant deferred now stays deferred until others catch
+  up, rather than being queued and released. Real queueing (and the rolling
+  window from item M's original notes) would need scheduler state the proxy
+  does not have today.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
