@@ -92,6 +92,12 @@ class Config:
     trust_policy: str = "warn"        # enforce | warn | disabled
     guard_policy: str = "off"         # enforce | warn | off — content policy (injection/jailbreak)
     guard_redact_output: bool = False  # redact PII from completion responses before returning
+    # Live fair-share admission (IMPROVEMENTS.md item M). "off" leaves the
+    # serving path untouched; "warn" logs what it would have deferred without
+    # deferring anything; "enforce" actually rejects. Default off — this is
+    # the first thing here that can refuse a request on fairness grounds.
+    fair_share_policy: str = "off"     # enforce | warn | off
+    fair_share_yield_ratio: float = 2.0  # defer above this multiple of an even share
     # Optional model-based content check (IMPROVEMENTS.md item G, proposal 3):
     # empty endpoint = disabled (zero-dep default, no network call ever made).
     # Set both to point the proxy's guard gate at a local Llama-Guard-style
@@ -184,6 +190,9 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.trust_policy = data.get("trust_policy", c.trust_policy)
         c.guard_policy = data.get("guard_policy", c.guard_policy)
         c.guard_redact_output = data.get("guard_redact_output", c.guard_redact_output)
+        c.fair_share_policy = data.get("fair_share_policy", c.fair_share_policy)
+        c.fair_share_yield_ratio = data.get("fair_share_yield_ratio",
+                                            c.fair_share_yield_ratio)
         c.guard_model_check_endpoint = data.get("guard_model_check_endpoint",
                                                 c.guard_model_check_endpoint)
         c.guard_model_check_model = data.get("guard_model_check_model",

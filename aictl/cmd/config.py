@@ -219,6 +219,24 @@ def _validate_config(config: Any) -> list[str]:
         problems.append(f"guard_policy must be one of {sorted(valid_guard_policies)}, "
                         f"got {d['guard_policy']!r}")
 
+    # fair_share_policy gates whether requests can be refused on fairness
+    # grounds, so an unrecognized value must be rejected rather than silently
+    # treated as "off" (which would hide a typo'd "enforce").
+    valid_fair_share = {"enforce", "warn", "off"}
+    if d.get("fair_share_policy", "off") not in valid_fair_share:
+        problems.append(f"fair_share_policy must be one of {sorted(valid_fair_share)}, "
+                        f"got {d['fair_share_policy']!r}")
+
+    # A yield ratio at or below 1.0 would defer anyone even marginally above
+    # an even split — including, at exactly 1.0, nearly everyone at once.
+    try:
+        ratio = float(d.get("fair_share_yield_ratio", 2.0))
+        if ratio <= 1.0:
+            problems.append(f"fair_share_yield_ratio must be > 1.0, got {ratio}")
+    except (TypeError, ValueError):
+        problems.append("fair_share_yield_ratio must be a number, got "
+                        f"{d.get('fair_share_yield_ratio')!r}")
+
     # cache_similarity_floor must be a valid cosine-similarity bound: 0 (or
     # below) would match everything indiscriminately, and cosine similarity
     # for these embeddings never exceeds 1.0.
@@ -452,6 +470,8 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         trust_policy=d.get("trust_policy", "warn"),
         guard_policy=d.get("guard_policy", "off"),
         guard_redact_output=d.get("guard_redact_output", False),
+        fair_share_policy=d.get("fair_share_policy", "off"),
+        fair_share_yield_ratio=d.get("fair_share_yield_ratio", 2.0),
         guard_model_check_endpoint=d.get("guard_model_check_endpoint", ""),
         guard_model_check_model=d.get("guard_model_check_model", "llama-guard3"),
         cache_similarity_floor=d.get("cache_similarity_floor", 0.92),
