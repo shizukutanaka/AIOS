@@ -44,6 +44,8 @@ class HardwareProfile:
     vram_per_gpu_mb: int = 0
     compute_capability: int = 0   # e.g. 89=Ada, 90=Hopper, 100=Blackwell
     has_nvlink: bool = False
+    host_ram_mb: int = 0          # 0 = unknown; only used for KV offload sizing
+    vendor: str = "nvidia"        # nvidia | amd | intel | cpu
 
 
 @dataclass
@@ -74,8 +76,15 @@ def optimize_vllm_flags(
     max_context: int = 0,
     objective: str = "balanced",  # balanced | throughput | interactivity
     enable_speculative: bool = False,
+    enable_kv_offload: bool = False,
+    prefix_reuse: float | None = None,
 ) -> OptimizeResult:
-    """Generate optimal vLLM flags for model + hardware."""
+    """Generate optimal vLLM flags for model + hardware.
+
+    `enable_kv_offload` opts into vLLM's OffloadingConnector, which extends the
+    prefix cache into pinned host memory. Off by default: it pins host RAM, so
+    it is never turned on behind the caller's back.
+    """
     flags: list[str] = []
     notes: list[str] = []
 
@@ -136,6 +145,32 @@ def optimize_vllm_flags(
     # ── Prefix caching ──
     flags.append("--enable-prefix-caching")
     notes.append("Prefix caching: reuse KV cache for shared prompts")
+
+    # ── KV prefix-cache offload to host memory (opt-in) ──
+    # The prefix cache above lives in whatever VRAM the weights left behind; on
+    # a big model / small GPU that is thin enough to thrash. vLLM's
+    # OffloadingConnector spills completed blocks to pinned host memory so an
+    # evicted prefix is still a hit. Strictly opt-in — it pins host RAM, which
+    # is not something to do behind the caller's back.
+    if enable_kv_offload:
+        from aictl.runtime.kv_offload import advise_kv_offload
+
+        # Recomputed here rather than reusing the auto-context branch below,
+        # which only runs when max_context is unset. Mirrors that formula.
+        gpu_kv_mb = max(0.0, total_vram * gpu_util - model_vram_mb) * (
+            2.0 if kv_dtype == "fp8" else 1.0)
+        advice = advise_kv_offload(
+            host_ram_mb=hardware.host_ram_mb,
+            gpu_kv_mb=gpu_kv_mb,
+            vendor=hardware.vendor,
+            prefix_reuse=prefix_reuse,
+        )
+        if advice.recommended:
+            flags.append(advice.flag)
+            notes.append(f"KV offload: {advice.reason}")
+            notes.extend(f"  {n}" for n in advice.notes)
+        else:
+            notes.append(f"KV offload requested but not applied: {advice.reason}")
 
     # ── Chunked prefill ──
     flags.append("--enable-chunked-prefill")
