@@ -109,6 +109,29 @@ class TestPinnedMemorySizing(unittest.TestCase):
 
 
 class TestAdviceDecisions(unittest.TestCase):
+    def setUp(self):
+        # advise_kv_offload consults the router and, since Pass 195, a
+        # persisted cross-process log. Both are ambient state; isolate them so
+        # these decision tests exercise the arguments they pass, not whatever
+        # the host machine last measured.
+        import os
+        import tempfile
+        from aictl.runtime.prefix_route import get_default_tracker
+        self._tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("AICTL_STATE_DIR")
+        os.environ["AICTL_STATE_DIR"] = self._tmp.name
+        get_default_tracker().clear()
+
+    def tearDown(self):
+        import os
+        from aictl.runtime.prefix_route import get_default_tracker
+        get_default_tracker().clear()
+        if self._prev is None:
+            os.environ.pop("AICTL_STATE_DIR", None)
+        else:
+            os.environ["AICTL_STATE_DIR"] = self._prev
+        self._tmp.cleanup()
+
     def test_recommends_when_vram_is_tight_and_host_is_large(self):
         advice = advise_kv_offload(host_ram_mb=128 * 1024, gpu_kv_mb=11_200)
         self.assertTrue(advice.recommended)
@@ -186,6 +209,26 @@ class TestAdviceDecisions(unittest.TestCase):
 
 
 class TestOptimizeIntegration(unittest.TestCase):
+    def setUp(self):
+        # Same ambient-state isolation as TestAdviceDecisions above.
+        import os
+        import tempfile
+        from aictl.runtime.prefix_route import get_default_tracker
+        self._tmp = tempfile.TemporaryDirectory()
+        self._prev = os.environ.get("AICTL_STATE_DIR")
+        os.environ["AICTL_STATE_DIR"] = self._tmp.name
+        get_default_tracker().clear()
+
+    def tearDown(self):
+        import os
+        from aictl.runtime.prefix_route import get_default_tracker
+        get_default_tracker().clear()
+        if self._prev is None:
+            os.environ.pop("AICTL_STATE_DIR", None)
+        else:
+            os.environ["AICTL_STATE_DIR"] = self._prev
+        self._tmp.cleanup()
+
     def _hw(self, **kw):
         base = dict(gpu_name="RTX 4090", gpu_count=1, vram_per_gpu_mb=24000,
                     compute_capability=89, host_ram_mb=128 * 1024)

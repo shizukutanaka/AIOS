@@ -121,8 +121,16 @@ def measured_prefix_reuse() -> float | None:
     `PrefixRouteTracker.reuse_rate` for why that distinction matters.
     """
     try:
-        from aictl.runtime.prefix_route import get_default_tracker
-        return get_default_tracker().reuse_rate()
+        from aictl.runtime.prefix_route import (
+            get_default_tracker, persisted_reuse_rate,
+        )
+        # This process's own traffic first — it is exact and current. The
+        # cross-process log is the fallback that makes a short-lived CLI run
+        # (which has served nothing) able to see what the daemon observed.
+        in_process = get_default_tracker().reuse_rate()
+        if in_process is not None:
+            return in_process
+        return persisted_reuse_rate()
     except Exception:
         # Advisory path: never let measurement failure break flag generation.
         return None
