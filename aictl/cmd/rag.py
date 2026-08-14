@@ -112,7 +112,7 @@ def run_index(args: argparse.Namespace) -> int:
 
 def run_ask(args: argparse.Namespace) -> int:
     """Answer a question using indexed documents."""
-    from aictl.core.rag import RagStore, answer
+    from aictl.core.rag import RagStore, answer, search
     from aictl.core.empty_state import show as show_empty
 
     # -k is a retrieval count: a value < 1 is meaningless and would otherwise
@@ -133,7 +133,25 @@ def run_ask(args: argparse.Namespace) -> int:
     print()
     print("  Searching index...")
 
-    response, sources = answer(args.question, store, k=args.k, config=cfg)
+    from aictl.core.config import load_config as _load_full_config
+    from aictl.core.rag import screen_retrieved
+    _state = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+    screen_policy = getattr(_load_full_config(_state), "rag_screen_policy", "off")
+
+    # Screening runs inside answer(); repeat it here only to report which
+    # sources were quarantined, since answer() returns the surviving set.
+    _pre = search(args.question, store, k=args.k, config=cfg)
+    _, quarantined = screen_retrieved(_pre, screen_policy)
+
+    response, sources = answer(args.question, store, k=args.k, config=cfg,
+                               screen_policy=screen_policy)
+
+    if quarantined:
+        print()
+        verb = "Excluded" if screen_policy == "enforce" else "Flagged (not excluded)"
+        warn(f"{verb} by content policy — possible injected instructions:")
+        for name, rule in quarantined:
+            print(f"    ! {name}: {rule}")
 
     print()
     if not sources:
