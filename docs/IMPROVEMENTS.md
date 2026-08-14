@@ -898,6 +898,57 @@ discipline as Parts 1–2: no assumed gaps).
   window from item M's original notes) would need scheduler state the proxy
   does not have today.
 
+## AA. Indirect prompt injection via RAG — ✅ implemented (Pass 199)
+
+> **Status:** `rag_screen_policy` (default `off`), `core/rag.screen_retrieved`.
+
+- **The gap:** `core/guard.py` scans what a *user* types, via the proxy's
+  `_check_guard`. `core/rag.py` had **zero** guard references — retrieved
+  document text was joined into `context_blob` and handed to the model with no
+  check at all. Indexed documents are a third-party data channel, so a
+  document containing "ignore all previous instructions and …" reached the
+  model verbatim and the prompt-side guard never saw it. The detection
+  capability already existed; it was simply never applied here.
+- **Grounding:** 2024–2026 work on indirect prompt injection converged on
+  enforcing security *outside* the model with a deterministic check mediating
+  what reaches it (CaMeL, FIDES, Progent, RTBAS, FORGE), rather than trusting
+  the model to notice an instruction embedded in its context. Retrieval is
+  where that boundary sits for RAG — the moment third-party text becomes
+  prompt. Reported indirect-injection success rates of 50–84% mean "the model
+  will probably ignore it" is not a defense.
+- **Degrade, don't deny:** `enforce` drops the flagged chunk and answers from
+  the rest. Failing the whole query would let one poisoned document deny
+  answers the clean sources can still support. But if *every* retrieved source
+  is quarantined, `answer()` refuses instead of replying from no context — an
+  ungrounded answer presented as document-grounded is worse than an explicit
+  refusal.
+- **Fails open on scanner trouble:** a scan exception or an unimportable guard
+  keeps the chunk. Screening is a filter on retrieval, not a gate on
+  availability.
+- **Validation:** 18 new tests (`tests/test_new_features_199.py`). The
+  load-bearing one asserts the injected text never appears in the context
+  handed to the model, with a companion test pinning that `off` still passes
+  it through — so a regression in *either* direction is caught.
+- **Still open:** screening is retrieval-time only. Index-time scanning would
+  catch a poisoned document once at ingest rather than on every query, and
+  `rag index` currently reports nothing about what it ingested. Also unhandled:
+  an injection split across two chunks, which neither chunk contains in full.
+
+## Sources (Part 5 — Pass 199)
+
+Indirect prompt injection: [Adaptive Evaluation of Out-of-Band Defenses
+Against Prompt Injection in LLM Agents](https://arxiv.org/abs/2606.26479) —
+notes the 2024–2026 convergence on deterministic out-of-model mediation
+(CaMeL, FIDES, Progent, RTBAS, FORGE). Benchmarks and threat data:
+[LivePI](https://arxiv.org/abs/2605.17986),
+[AgentRedBench](https://arxiv.org/abs/2606.02240),
+[ARGUS](https://arxiv.org/abs/2605.03378),
+[AutoDojo](https://arxiv.org/abs/2606.15057), and the MDPI review of attack
+vectors and defenses. Papers were reachable only as titles/abstracts via
+search — arxiv.org itself is egress-blocked from this environment — so the
+implementation uses the architectural principle they agree on, not any
+specific paper's algorithm.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

@@ -603,16 +603,77 @@ def search(
     return fused[:k]
 
 
+def screen_retrieved(
+    matches: list[tuple["Chunk", float]],
+    policy: str = "off",
+) -> tuple[list[tuple["Chunk", float]], list[tuple[str, str]]]:
+    """Scan retrieved chunks for injected instructions before they reach the prompt.
+
+    Indexed documents are a *third-party data channel*: nothing a user typed
+    passes through here, so the proxy's prompt-side guard never sees this text.
+    A document containing "ignore previous instructions and ..." reaches the
+    model verbatim. Across 2024-2026 the literature converged on mediating
+    such content with a deterministic check outside the model rather than
+    trusting the model to notice, and retrieval time is where that boundary
+    sits — it is the moment third-party text becomes prompt.
+
+    Returns (kept_matches, quarantined) where quarantined is a list of
+    (source_name, rule) pairs. Under "enforce" a flagged chunk is dropped and
+    the answer is built from the rest, rather than failing the whole query:
+    losing one poisoned source should not deny an answer the clean sources can
+    still support. Under "warn" nothing is dropped and the caller reports.
+
+    Never raises — a scanner failure must not take out retrieval.
+    """
+    if policy == "off" or not matches:
+        return matches, []
+
+    try:
+        from aictl.core.guard import scan
+    except Exception:
+        return matches, []
+
+    kept: list[tuple[Chunk, float]] = []
+    quarantined: list[tuple[str, str]] = []
+    for chunk, score in matches:
+        try:
+            result, _ = scan(chunk.text, redact_pii=False, block_on_pii=False,
+                             block_on_injection=True)
+        except Exception:
+            kept.append((chunk, score))
+            continue
+
+        blocking = [v.rule for v in result.violations if v.severity == "block"]
+        if not blocking:
+            kept.append((chunk, score))
+            continue
+
+        quarantined.append((Path(chunk.source).name, ", ".join(blocking)))
+        if policy != "enforce":
+            kept.append((chunk, score))     # warn: report but still use it
+
+    return kept, quarantined
+
+
 def answer(
     question: str,
     store: RagStore,
     k: int = DEFAULT_K,
     config: Any = None,
+    screen_policy: str = "off",
 ) -> tuple[str, list[tuple[Chunk, float]]]:
     """Retrieve context, then ask the model. Returns (answer, sources)."""
     matches = search(question, store, k=k, config=config)
     if not matches:
         return ("No relevant documents found in the index.", [])
+
+    matches, quarantined = screen_retrieved(matches, screen_policy)
+    if quarantined and not matches:
+        # Every retrieved source was flagged. Answering from nothing would
+        # silently produce an ungrounded reply, which is worse than saying so.
+        sources = ", ".join(name for name, _ in quarantined)
+        return (f"All retrieved sources were quarantined by the content policy "
+                f"({sources}). No trusted context remains to answer from.", [])
 
     context_blob = "\n\n---\n\n".join(
         f"[Source: {Path(c.source).name}]\n{c.text}"

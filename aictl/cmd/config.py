@@ -219,6 +219,13 @@ def _validate_config(config: Any) -> list[str]:
         problems.append(f"guard_policy must be one of {sorted(valid_guard_policies)}, "
                         f"got {d['guard_policy']!r}")
 
+    # rag_screen_policy decides whether poisoned documents are dropped, so a
+    # typo must not silently degrade to "off" and leave retrieval unguarded.
+    valid_rag_screen = {"enforce", "warn", "off"}
+    if d.get("rag_screen_policy", "off") not in valid_rag_screen:
+        problems.append(f"rag_screen_policy must be one of {sorted(valid_rag_screen)}, "
+                        f"got {d['rag_screen_policy']!r}")
+
     # fair_share_policy gates whether requests can be refused on fairness
     # grounds, so an unrecognized value must be rejected rather than silently
     # treated as "off" (which would hide a typo'd "enforce").
@@ -470,6 +477,7 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         trust_policy=d.get("trust_policy", "warn"),
         guard_policy=d.get("guard_policy", "off"),
         guard_redact_output=d.get("guard_redact_output", False),
+        rag_screen_policy=d.get("rag_screen_policy", "off"),
         fair_share_policy=d.get("fair_share_policy", "off"),
         fair_share_yield_ratio=d.get("fair_share_yield_ratio", 2.0),
         guard_model_check_endpoint=d.get("guard_model_check_endpoint", ""),

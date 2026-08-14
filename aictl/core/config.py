@@ -92,6 +92,12 @@ class Config:
     trust_policy: str = "warn"        # enforce | warn | disabled
     guard_policy: str = "off"         # enforce | warn | off — content policy (injection/jailbreak)
     guard_redact_output: bool = False  # redact PII from completion responses before returning
+    # Screen RAG-retrieved chunks for injected instructions before they enter
+    # the prompt. Indexed documents are a third-party data channel that the
+    # proxy's prompt-side guard never sees, so a poisoned document reaches the
+    # model verbatim. "enforce" drops flagged chunks and answers from the
+    # rest; "warn" reports without dropping.
+    rag_screen_policy: str = "off"     # enforce | warn | off
     # Live fair-share admission (IMPROVEMENTS.md item M). "off" leaves the
     # serving path untouched; "warn" logs what it would have deferred without
     # deferring anything; "enforce" actually rejects. Default off — this is
@@ -190,6 +196,7 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.trust_policy = data.get("trust_policy", c.trust_policy)
         c.guard_policy = data.get("guard_policy", c.guard_policy)
         c.guard_redact_output = data.get("guard_redact_output", c.guard_redact_output)
+        c.rag_screen_policy = data.get("rag_screen_policy", c.rag_screen_policy)
         c.fair_share_policy = data.get("fair_share_policy", c.fair_share_policy)
         c.fair_share_yield_ratio = data.get("fair_share_yield_ratio",
                                             c.fair_share_yield_ratio)
