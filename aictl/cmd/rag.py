@@ -85,7 +85,11 @@ def run_index(args: argparse.Namespace) -> int:
         print(f"    + {rel} ({n_chunks} chunks)")
 
     try:
-        stats = index_directory(target, store, progress_callback=progress)
+        from aictl.core.config import load_config as _load_full_config
+        _state = Path(args.state_dir) if getattr(args, "state_dir", None) else None
+        _screen = getattr(_load_full_config(_state), "rag_screen_policy", "off")
+        stats = index_directory(target, store, progress_callback=progress,
+                                screen_policy=_screen)
     except FileNotFoundError as e:
         err(str(e))
         return 1
@@ -101,6 +105,13 @@ def run_index(args: argparse.Namespace) -> int:
         ok(f"Indexed {stats['indexed']} files, "
            f"{stats['chunks_created']} chunks "
            f"({stats['skipped']} skipped)")
+
+    if stats.get("flagged"):
+        print()
+        verb = "Not indexed" if _screen == "enforce" else "Indexed but flagged"
+        warn(f"{verb} — possible injected instructions:")
+        for entry in stats["flagged"]:
+            print(f"    ! {entry['source']}: {entry['rule']}")
 
     if getattr(args, "json", False):
         print_json(stats)

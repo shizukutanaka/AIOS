@@ -929,10 +929,48 @@ discipline as Parts 1–2: no assumed gaps).
   load-bearing one asserts the injected text never appears in the context
   handed to the model, with a companion test pinning that `off` still passes
   it through — so a regression in *either* direction is caught.
-- **Still open:** screening is retrieval-time only. Index-time scanning would
-  catch a poisoned document once at ingest rather than on every query, and
-  `rag index` currently reports nothing about what it ingested. Also unhandled:
-  an injection split across two chunks, which neither chunk contains in full.
+- **Both follow-ups closed in Pass 200 (below).** Still open: an injection
+  split across two chunks, which neither chunk contains in full.
+
+## AB. Invisible-character bypass + ingest-time screening — ✅ implemented (Pass 200)
+
+> **Status:** `core/guard.deobfuscate()` (detection-only normalization) and
+> `index_directory(..., screen_policy=...)`.
+
+1. **A bypass of Pass 199, found by testing it against the literature.** 2026
+   RAG-poisoning work describes "human-imperceptible" payloads — instructions
+   hidden in visually invisible text. Tested against our own guard: the plain
+   payload was caught, but the same phrase with zero-width spaces interleaved
+   (`Ignore​all​previous​instructions`) **sailed through every
+   pattern** and reached the model. Invisible to anyone reviewing the
+   document, fully tokenized by the model.
+   - `deobfuscate()` maps concealment characters (zero-width space/joiner/
+     non-joiner, word joiner, BOM, bidi embedding/override/isolates, soft
+     hyphen) to **spaces** and scans that copy in addition to the original.
+     Spaces, not deletion: an attacker interleaves those characters precisely
+     to break a phrase, so deleting them yields
+     `Ignoreallpreviousinstructions` and still matches nothing.
+   - Fixed in `guard.scan` rather than in the RAG path, so the proxy's
+     prompt-side gate gets the same protection — a user could obfuscate an
+     injection just as easily as a document could.
+   - **`processed` is never rewritten.** Detection uses the normalized copy;
+     redaction still returns the caller's own text. Pinned by a test.
+   - **No false positives on legitimate use:** ZWNJ is ordinary in Persian and
+     Devanagari, so its presence alone is never a violation — only what it was
+     concealing is. Tested with real Persian text.
+2. **Ingest-time screening.** Security reviews of RAG rank ingestion-time
+   filtering above generation-phase mitigations (one measuring embedding
+   anomaly detection at ingest as outperforming three generation-phase layers
+   combined). Pass 199 screened only at retrieval, so a poisoned document was
+   re-scanned on every query and the operator only learned mid-answer.
+   `enforce` now refuses to index it at all; `warn` indexes and reports. The
+   `flagged` key is always present in the stats dict, so `--json` consumers
+   get a stable shape — empty means "nothing flagged", never "not checked".
+   A scanner failure mid-run leaves the store fully populated rather than
+   half-indexed.
+- **Validation:** 22 new tests (`tests/test_new_features_200.py`) covering
+  each obfuscation family, the no-false-positive cases, retrieval-time
+  screening of an obfuscated chunk, and all three ingest policies.
 
 ## Sources (Part 5 — Pass 199)
 
@@ -948,6 +986,20 @@ vectors and defenses. Papers were reachable only as titles/abstracts via
 search — arxiv.org itself is egress-blocked from this environment — so the
 implementation uses the architectural principle they agree on, not any
 specific paper's algorithm.
+
+Pass 200 — RAG poisoning: [Towards Secure Retrieval-Augmented Generation: A
+Comprehensive Review of Threats, Defenses and
+Benchmarks](https://arxiv.org/abs/2603.21654) and [Securing RAG: A Taxonomy of
+Attacks, Defenses, and Future Directions](https://arxiv.org/abs/2604.08304) —
+source of both the ingestion-time-filtering priority and the
+"human-imperceptible payload" vector that turned out to bypass Pass 199.
+Also: [POISONCRAFT](https://arxiv.org/abs/2505.06579),
+[Needle-in-RAG](https://arxiv.org/abs/2605.01782),
+[Knowledge Base Poisoning for Policy-Aware LLM-RAG](https://arxiv.org/abs/2607.04379).
+Perplexity-based and clustering defenses (TrustRAG, RobustRAG) were read about
+but deliberately not implemented: both need a model or numeric stack this
+project does not have, whereas Unicode concealment is deterministic and
+stdlib-only. As before, papers were reachable only as titles/abstracts.
 
 ## Sources (Part 3)
 

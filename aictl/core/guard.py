@@ -282,6 +282,44 @@ _CONTENT_RULES: list[tuple[str, str, re.Pattern[str]]] = [
 ]
 
 
+# Unicode characters used to hide instructions from a human reader while
+# leaving them visible to the tokenizer. Bidi overrides are the "Trojan
+# Source" family and have essentially no legitimate use in stored prose;
+# zero-width joiners DO have legitimate uses (Persian, Devanagari), which is
+# why their presence alone is never treated as a violation — only what they
+# were concealing is.
+_CONCEALMENT_CHARS = (
+    "​‌‍⁠﻿"      # zero-width space/non-joiner/joiner/word-joiner/BOM
+    "‪‫‬‭‮"      # bidi embedding/override
+    "⁦⁧⁨⁩"            # bidi isolates
+    "­"                              # soft hyphen
+)
+
+
+def deobfuscate(text: str) -> str:
+    """Return `text` with invisible concealment characters turned into spaces.
+
+    Used for *detection only* — never for what gets stored, served, or
+    returned to a caller.
+
+    Spaces rather than deletion: an attacker interleaves zero-width characters
+    precisely to break up a phrase, so deleting them yields
+    "Ignoreallpreviousinstructions", which still matches nothing. Substituting
+    a space restores the word boundaries the phrase patterns need. Whitespace
+    is then collapsed so the result reads as ordinary prose.
+
+    The cost is that legitimate ZWNJ use (Persian, Hindi) splits a word in the
+    scanned copy. That can only ever cause a scan to see two words where one
+    was intended, which does not manufacture an injection phrase.
+    """
+    if not text:
+        return text
+    if not any(ch in text for ch in _CONCEALMENT_CHARS):
+        return text
+    out = "".join(" " if ch in _CONCEALMENT_CHARS else ch for ch in text)
+    return " ".join(out.split())
+
+
 def check_content(text: str, *, model_check: ModelCheck | None = None) -> list[ContentViolation]:
     """Return a list of policy violations found in text.
 
@@ -365,7 +403,20 @@ def scan(
     """
     processed = text
     pii_found = detect_pii(text)
+    # Detection runs on BOTH the original and a de-obfuscated copy. Zero-width
+    # characters interleaved into a phrase ("Ignore​all​previous...")
+    # are invisible to a human reviewing the document but still tokenized by
+    # the model, and they defeat every phrase pattern here. Verified: the plain
+    # payload was caught, the zero-width one sailed through. Scanning the copy
+    # too closes that without touching `processed` — redaction must still
+    # return the caller's own text, not a normalized rewrite of it.
     violations = check_content(text, model_check=model_check)
+    deobfuscated = deobfuscate(text)
+    if deobfuscated != text:
+        seen = {(v.rule, v.severity) for v in violations}
+        for v in check_content(deobfuscated, model_check=None):
+            if (v.rule, v.severity) not in seen:
+                violations.append(v)
 
     if redact_pii and pii_found:
         processed, _ = redact(text)

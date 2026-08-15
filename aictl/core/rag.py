@@ -393,10 +393,35 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 # ─── Pipeline orchestration ────────────────────────────────
 
+def _screen_document(fpath: Path, chunks_text: list[str]) -> list[tuple[str, str]]:
+    """Scan a document's chunks at ingest. Returns (source_name, rule) pairs.
+
+    Never raises: a scanner problem must not abort an indexing run partway
+    through and leave the store half-populated.
+    """
+    try:
+        from aictl.core.guard import scan
+    except Exception:
+        return []
+    found: list[tuple[str, str]] = []
+    for piece in chunks_text:
+        try:
+            result, _ = scan(piece, redact_pii=False, block_on_pii=False,
+                             block_on_injection=True)
+        except Exception:
+            continue
+        blocking = [v.rule for v in result.violations if v.severity == "block"]
+        if blocking:
+            found.append((fpath.name, ", ".join(blocking)))
+            break        # one finding per document is enough to report it
+    return found
+
+
 def index_directory(
     root: Path,
     store: RagStore,
     progress_callback: Any=None,
+    screen_policy: str = "off",
 ) -> dict[str, Any]:
     """Walk a directory, chunk every readable file, embed, store.
 
@@ -414,6 +439,7 @@ def index_directory(
     indexed = 0
     skipped = 0
     chunks_created = 0
+    flagged: list[tuple[str, str]] = []
 
     for fpath in files:
         # Heuristic skip
@@ -437,6 +463,21 @@ def index_directory(
         if not chunks_text:
             skipped += 1
             continue
+
+        # Ingest-time screening. Retrieval-time screening (screen_retrieved)
+        # is the boundary that must hold, but catching a poisoned document
+        # here means it is caught once at ingest rather than re-scanned on
+        # every query — and the operator learns at `rag index` time, while
+        # they are looking at the corpus, instead of mid-answer. Security
+        # reviews of RAG consistently rank ingestion-time filtering above
+        # generation-phase mitigations for exactly this reason.
+        if screen_policy != "off":
+            flagged_here = _screen_document(fpath, chunks_text)
+            if flagged_here:
+                flagged.extend(flagged_here)
+                if screen_policy == "enforce":
+                    skipped += 1
+                    continue     # refuse to index a poisoned document at all
 
         embeddings = embed_text(chunks_text)
         doc_id = _doc_id_for(str(fpath))
@@ -463,6 +504,9 @@ def index_directory(
         "skipped": skipped,
         "chunks_created": chunks_created,
         "files_total": len(files),
+        # Always present so --json consumers get a stable shape whether or not
+        # screening ran; empty means "nothing flagged", not "not checked".
+        "flagged": [{"source": name, "rule": rule} for name, rule in flagged],
     }
 
 
