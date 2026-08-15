@@ -929,8 +929,8 @@ discipline as Parts 1–2: no assumed gaps).
   load-bearing one asserts the injected text never appears in the context
   handed to the model, with a companion test pinning that `off` still passes
   it through — so a regression in *either* direction is caught.
-- **Both follow-ups closed in Pass 200 (below).** Still open: an injection
-  split across two chunks, which neither chunk contains in full.
+- **Both follow-ups closed in Pass 200 (below).** The "split across chunks"
+  risk noted here turned out **not to exist** — see Pass 201.
 
 ## AB. Invisible-character bypass + ingest-time screening — ✅ implemented (Pass 200)
 
@@ -971,6 +971,35 @@ discipline as Parts 1–2: no assumed gaps).
 - **Validation:** 22 new tests (`tests/test_new_features_200.py`) covering
   each obfuscation family, the no-false-positive cases, retrieval-time
   screening of an obfuscated chunk, and all three ingest policies.
+
+## AC. The "split across chunks" gap does not exist — ✅ corrected (Pass 201)
+
+> Passes 199 and 200 both closed noting an unresolved risk: an injection split
+> across two chunks, present in neither in full, evading chunk-level
+> screening. Investigating it found **the claim was wrong**.
+
+- **Why it cannot happen:** `chunk_text` overlaps consecutive chunks by
+  `DEFAULT_OVERLAP` (200 chars) for retrieval-quality reasons that have
+  nothing to do with security. The unwritten consequence: any phrase shorter
+  than the overlap must appear *intact* in at least one chunk, because the
+  overlap re-includes the previous chunk's tail at the next chunk's head. The
+  widest blocking rule matches ~42 characters — a ~4.8x margin.
+- **Confirmed empirically, not by argument:** an exhaustive sweep of 600
+  consecutive byte offsets across a chunk boundary found **zero** evasions.
+- **Why this still needed work:** the property is *accidental*. Nothing stops
+  someone tuning `DEFAULT_OVERLAP` down for retrieval reasons, or adding a
+  longer blocking pattern; either would silently delete a security property
+  whose existence was never written down. Pass 201 adds an invariant test that
+  fails loudly with an explanatory message if the margin ever closes —
+  verified by temporarily setting the overlap to 20 and confirming the test
+  fails with the right diagnosis.
+- **Lesson recorded:** two consecutive passes propagated an unverified
+  "still open" risk. Documenting a gap is not the same as confirming one, and
+  a wrong entry in the backlog costs future work chasing a non-problem.
+- **Validation:** 9 new tests (`tests/test_new_features_201.py`) — the
+  invariant, the byte-level sweep, start/end/short-document placements, a
+  clean-document control proving the sweep is not passing vacuously, and a
+  test pinning that consecutive chunks genuinely overlap.
 
 ## Sources (Part 5 — Pass 199)
 
