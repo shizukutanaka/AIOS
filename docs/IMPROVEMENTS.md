@@ -996,10 +996,35 @@ discipline as Parts 1–2: no assumed gaps).
 - **Lesson recorded:** two consecutive passes propagated an unverified
   "still open" risk. Documenting a gap is not the same as confirming one, and
   a wrong entry in the backlog costs future work chasing a non-problem.
-- **Validation:** 9 new tests (`tests/test_new_features_201.py`) — the
+- **Validation:** 13 tests (`tests/test_new_features_201.py`) — the
   invariant, the byte-level sweep, start/end/short-document placements, a
   clean-document control proving the sweep is not passing vacuously, and a
   test pinning that consecutive chunks genuinely overlap.
+
+### Correction to Pass 200's stated cause
+
+Auditing Pass 200 found its own code comment mischaracterized the bug it
+fixed. The comment implied the content rules had *no* Unicode normalization.
+They did: `check_content` normalizes via `_normalize_with_map`, which
+**deletes** zero-width characters — and deletion is exactly what made the
+bypass work. Stripping them from `Ignore​all​previous​instructions`
+leaves `Ignoreallpreviousinstructions`, one unbroken token no phrase pattern
+can match. The problem was never missing normalization; it was normalization
+that removed the separators instead of preserving the word boundaries they
+stood in for. `deobfuscate()` maps them to spaces instead.
+
+This matters because the wrong explanation invites the wrong fix: a maintainer
+reading the old comment could delete `deobfuscate()` on the grounds that
+`_normalize_with_map` "already handles zero-width" and silently reopen the
+hole. Four tests now pin the distinction, including one asserting the two
+normalizations *differ* and saying what to do if they ever converge.
+
+Also confirmed during the audit: `detect_pii` was already Unicode-hardened
+(zero-width stripped, homoglyphs folded, NFKC, with an index map so redaction
+spans stay exact), and homoglyph substitution (`Ignоre` with Cyrillic о,
+fullwidth Ｉ) was already caught. Only the zero-width-as-separator case was
+open. Performance checked: de-obfuscating 1.5 MB costs 0.107 s and only runs
+when concealment characters are actually present.
 
 ## Sources (Part 5 — Pass 199)
 
