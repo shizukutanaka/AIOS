@@ -403,13 +403,23 @@ def scan(
     """
     processed = text
     pii_found = detect_pii(text)
-    # Detection runs on BOTH the original and a de-obfuscated copy. Zero-width
-    # characters interleaved into a phrase ("Ignore​all​previous...")
-    # are invisible to a human reviewing the document but still tokenized by
-    # the model, and they defeat every phrase pattern here. Verified: the plain
-    # payload was caught, the zero-width one sailed through. Scanning the copy
-    # too closes that without touching `processed` — redaction must still
-    # return the caller's own text, not a normalized rewrite of it.
+    # Detection runs on BOTH the original and a de-obfuscated copy.
+    #
+    # Subtle, and worth stating exactly: check_content already normalizes via
+    # _normalize_with_map, which *deletes* zero-width characters. Deletion is
+    # precisely what made the bypass work — an attacker interleaving them into
+    # "Ignore​all​previous​instructions" leaves
+    # "Ignoreallpreviousinstructions" after stripping, one unbroken token that
+    # no phrase pattern can match. So the problem was never missing
+    # normalization; it was normalization that removed the separators instead
+    # of preserving the word boundaries they replaced. deobfuscate() maps them
+    # to spaces, restoring "Ignore all previous instructions".
+    #
+    # Both copies are scanned, so coverage is a superset of either alone. Do
+    # not "simplify" this away on the grounds that _normalize_with_map already
+    # handles zero-width — it handles them in the way that caused the bug.
+    # `processed` is untouched: redaction must return the caller's own text,
+    # not a normalized rewrite of it.
     violations = check_content(text, model_check=model_check)
     deobfuscated = deobfuscate(text)
     if deobfuscated != text:
