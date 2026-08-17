@@ -1193,6 +1193,53 @@ readiness checklist ("HTTPS, restart on failure, per-key rate limiting,
 metrics with three real alerts, benchmarked performance") is what this pass
 audited aictl against.
 
+## AG. Schema design review for constrained decoding — ✅ implemented (Pass 205)
+
+> **Status:** `aictl guided lint <schema>` (`runtime/schema_lint.py`).
+
+- **The gap:** `guided validate` answered "does this document match this
+  schema?". Nothing answered the prior question — "is this schema one a model
+  can fill in well?" Constrained decoding gives a **format guarantee, not a
+  semantic one**: a schema can be perfectly valid, compile fine in XGrammar,
+  and produce parseable output on every request while making the answers
+  worse. That failure is invisible precisely because the structural check
+  passes.
+- **The load-bearing check is field ordering.** Generation is autoregressive,
+  so a schema emitting `answer` before `reasoning` forces the model to commit
+  to a conclusion and then rationalize it — it cannot think first if the
+  grammar will not let it write first. Both `properties` order and `required`
+  order are checked, since backends differ in which they emit by, and a schema
+  can be correct in one and wrong in the other.
+- **Also checked:** nesting depth (4+), field count (50+), undescribed fields,
+  and optional fields that cannot be null (the model can neither omit the
+  field nor say it has no value, so it invents one).
+- **Conservative by construction.** The reasoning/answer keyword sets are
+  short and unambiguous: a false positive tells someone their schema is wrong
+  when it is not, which is worse than staying quiet. Tests cover
+  answer-only, reasoning-only, and unrelated-field schemas staying clean.
+- **Advisory, never blocking.** Good schemas break these rules deliberately,
+  so `lint_schema` never raises, `guided lint` exits 0 by default, and
+  `--strict` fails only on warning-level findings — info-level observations
+  never fail a build.
+- **Validation:** 30 new tests (`tests/test_new_features_205.py`), including
+  malformed-schema robustness and array traversal (a deep structure hidden
+  behind `items` must still be seen).
+
+## Sources (Part 9 — Pass 205)
+
+Structured output: [JSONSchemaBench](https://arxiv.org/abs/2501.10868)
+(rigorous benchmark of structured-output engines; found Outlines' compliance
+limited largely by schema-compilation timeouts),
+[XGrammar](https://arxiv.org/abs/2411.15100) and
+[XGrammar-2](https://arxiv.org/abs/2601.04426) (now the default structured
+backend for vLLM/SGLang/TensorRT-LLM),
+[SLOT](https://arxiv.org/abs/2505.04016). The schema-design pitfalls
+implemented here — reasoning-after-answer ordering, deep nesting, large
+schemas, missing descriptions, absent null handling — come from practitioner
+guidance on grammar-constrained generation, which consistently stresses that
+the guarantee is structural rather than semantic. arxiv.org is egress-blocked
+here, so papers were reachable as titles/abstracts only.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

@@ -55,6 +55,15 @@ def register(sub: Any) -> None:
     v.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     v.set_defaults(func=run_validate)
 
+    lint = sp.add_parser(
+        "lint",
+        help="Review a JSON Schema for constrained-decoding design problems.")
+    lint.add_argument("schema", help="Path to JSON Schema file, or '-' for stdin.")
+    lint.add_argument("--strict", action="store_true",
+                      help="Exit non-zero if any warning-level finding is reported.")
+    lint.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    lint.set_defaults(func=run_lint)
+
     p.set_defaults(func=run_default)
 
 
@@ -175,6 +184,47 @@ def run_matrix(args: argparse.Namespace) -> int:
         print(f"  {b:<20} {'★'*speed:<7} {req}")
     print()
     print("  XGrammar is the 2026 default across vLLM/SGLang/TensorRT-LLM.\n")
+    return 0
+
+
+def run_lint(args: argparse.Namespace) -> int:
+    """Review a schema's design, as opposed to validating a document against it.
+
+    Constrained decoding guarantees format, not semantics: a schema can be
+    valid, compile fine, and still make answers worse. Those failures are
+    invisible exactly because the structural check passes.
+    """
+    from aictl.runtime.schema_lint import lint_schema
+
+    try:
+        if args.schema == "-":
+            import sys
+            schema = json.load(sys.stdin)
+        else:
+            with open(args.schema, encoding="utf-8") as f:
+                schema = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        err(f"Cannot read schema: {e}")
+        return 1
+
+    findings = lint_schema(schema)
+
+    if getattr(args, "json", False):
+        print_json({"findings": [f.to_dict() for f in findings],
+                    "warnings": sum(1 for f in findings if f.severity == "warn")})
+    elif not findings:
+        ok("No design problems found.")
+    else:
+        print()
+        for f in findings:
+            icon = "!" if f.severity == "warn" else "·"
+            where = f" [{f.path}]" if f.path else ""
+            print(f"  {icon} {f.rule}{where}")
+            print(f"      {f.message}")
+            print()
+
+    if getattr(args, "strict", False) and any(f.severity == "warn" for f in findings):
+        return 1
     return 0
 
 
