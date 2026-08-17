@@ -158,5 +158,53 @@ class TestAutoSelectedConfigsAreClean(unittest.TestCase):
             self.assertLessEqual(tokens, SPEC_TOKENS_MAX)
 
 
+
+class TestSpecCommandSurfacesWarnings(unittest.TestCase):
+    """Advice nobody can read is the same as no advice.
+
+    Pass 202 added `warnings` to estimate_speedup, but `spec methods` builds
+    its JSON payload key-by-key and prints a fixed set of lines, so the new
+    key was silently dropped in both modes — the same "built but unreachable"
+    pattern item W caught for the KV offload advisor.
+    """
+
+    def _run(self, model, use_json):
+        import argparse
+        import io
+        import json as _json
+        from contextlib import redirect_stdout
+
+        from aictl.cmd.spec import run_methods
+
+        namespace = argparse.Namespace(model=model, all=False, json=use_json)
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = run_methods(namespace)
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        return _json.loads(output) if use_json else output
+
+    def test_json_payload_carries_warnings(self):
+        payload = self._run("meta-llama/Llama-3.3-70B-Instruct", True)
+        self.assertIn("warnings", payload)
+        self.assertIsInstance(payload["warnings"], list)
+
+    def test_json_warnings_present_for_an_eagle3_model(self):
+        payload = self._run("meta-llama/Llama-3.3-70B-Instruct", True)
+        self.assertTrue(any("fine-tune" in w for w in payload["warnings"]))
+
+    def test_json_warnings_empty_for_ngram_fallback(self):
+        # N-gram has no draft model, so the caveat must not appear as noise.
+        payload = self._run("definitely/not-a-known-model-7b", True)
+        self.assertEqual(payload["warnings"], [])
+
+    def test_text_output_shows_the_caveat(self):
+        output = self._run("meta-llama/Llama-3.3-70B-Instruct", False)
+        self.assertIn("fine-tune", output)
+
+    def test_text_output_stays_quiet_for_ngram(self):
+        output = self._run("definitely/not-a-known-model-7b", False)
+        self.assertNotIn("fine-tune", output)
+
 if __name__ == "__main__":
     unittest.main()
