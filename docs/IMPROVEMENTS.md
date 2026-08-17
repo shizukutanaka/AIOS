@@ -1105,6 +1105,48 @@ reachable only as titles/abstracts; the implemented advice rests on the
 quantitative guidance that appears consistently across the practitioner
 sources, not on any single paper's algorithm.
 
+## AE. FP8-first call-out when FP4 wins the quant ranking — ✅ implemented (Pass 203)
+
+> **Status:** `cmd/quant._fp8_near_lossless_note()`, surfaced in both output
+> modes of `aictl quant recommend`.
+
+- **The gap:** deployment guidance for Blackwell is consistently "FP8 first,
+  FP4 only if you need maximum throughput and can validate quality". aictl's
+  scorer picks NVFP4 on a B200 — defensibly, 2.8x versus 1.3x for two quality
+  points — but a user who cares more about fidelity than tokens/sec had to
+  read the `quant compare` table to discover a 99% option was sitting right
+  there, and got no signal that FP4 quality is workload-dependent enough to
+  warrant validating.
+- **Deliberately does not override the ranking.** The trade the scorer makes
+  is reasonable; what was missing was disclosure. Mirrors the existing
+  `_q4_k_m_sweet_spot_note` precedent exactly — surface the runner-up, leave
+  the ranking alone — and a test asserts the note never tells the user FP4 is
+  wrong.
+- **Fires narrowly:** only when an FP4 format wins *and* FP8 actually fits.
+  On H100 (AWQ wins) it stays silent; advice that fires everywhere stops
+  being read.
+- **Checked and left alone:** the underlying table already matches published
+  comparisons — AWQ (96%) ranks above GPTQ (91%), the direction 2026 sources
+  report for Llama 3+/Qwen 2+ class models, and FP8 (99%) above NVFP4 (97%).
+  No data changes were needed, only disclosure. A test pins the AWQ > GPTQ
+  ordering so a future catalogue edit cannot silently invert it.
+- **Validation:** 15 new tests (`tests/test_new_features_203.py`).
+
+## Sources (Part 7 — Pass 203)
+
+Quantization: [Diagnosing FP4 inference: layer-wise and block-wise
+sensitivity analysis of NVFP4 and MXFP4](https://arxiv.org/abs/2603.08747),
+[Quantization-Aware Distillation for NVFP4 Accuracy
+Recovery](https://arxiv.org/abs/2601.20088),
+[FAAR: Format-Aware Adaptive Rounding for NVFP4](https://arxiv.org/abs/2603.22370),
+[SOAR: Scale Optimization for NVFP4](https://arxiv.org/abs/2605.12245),
+[Private LLM Inference on Consumer Blackwell GPUs](https://arxiv.org/abs/2601.09527),
+plus 2026 practitioner benchmark round-ups reporting AWQ ahead of GPTQ by
+0.5-1.0% perplexity at equal bit-width, Q4 at 1-3% perplexity loss versus
+FP16, and the FP8-before-FP4 ordering for Blackwell. arxiv.org remains
+egress-blocked here, so papers were reachable only as titles/abstracts; the
+implemented change is a disclosure, not an algorithm from any single paper.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
