@@ -1055,6 +1055,49 @@ but deliberately not implemented: both need a model or numeric stack this
 project does not have, whereas Unicode concealment is deterministic and
 stdlib-only. As before, papers were reachable only as titles/abstracts.
 
+## AD. Speculative-decoding tuning advice — ✅ implemented (Pass 202)
+
+> **Status:** `runtime/speculative.review_config()`, surfaced as a `warnings`
+> key on `estimate_speedup()`.
+
+- **The gap:** `generate_*_args` validated `num_speculative_tokens > 0` and
+  nothing else, so a config of 20 draft tokens was accepted silently.
+  Published tuning guidance puts the useful band at roughly **3-8**: below the
+  floor throughput is left unclaimed, above the ceiling the expected accepted
+  tokens per step plateaus, so the extra draft compute produces tokens that are
+  almost never all accepted. Paying for drafts nobody accepts is the exact
+  failure speculative decoding exists to avoid — and it is invisible, showing
+  up as a disappointing speedup rather than an error.
+- **Second silent failure surfaced:** an EAGLE3 draft head is trained on one
+  target model's own generations. Pointed at a *fine-tune* of that model it
+  drafts in the wrong style and acceptance falls, again with no signal. The
+  advice says to verify against real traffic rather than assume the published
+  rate. Deliberately not attached to `ngram` (drafts from the prompt itself,
+  no training distribution to mismatch) or `mtp` (head ships with the target).
+- **Advisory, not validation:** `generate_*_args` still only rejects values
+  <= 0. A deployment with a measured reason to sit outside the band must not
+  be blocked by a heuristic, and `review_config` never raises.
+- **Checked and left alone:** `estimate_speedup`'s existing figures (1.1-2.1x)
+  were compared against the same sources, which report 2-3x at realistic
+  acceptance rates. Ours are conservative rather than over-promising, so no
+  change — with a test pinning that they stay that way.
+- **aictl's own defaults are clean:** auto-selected configs use 3 or 5 tokens,
+  inside the band, so this adds no noise to the default path — pinned by a test
+  so a future catalogue edit cannot drift out of it.
+- **Validation:** 17 new tests (`tests/test_new_features_202.py`).
+
+## Sources (Part 6 — Pass 202)
+
+Speculative decoding tuning: [LK Losses: Direct Acceptance Rate Optimization
+for Speculative Decoding](https://arxiv.org/abs/2602.23881),
+[EAGLE-2](https://arxiv.org/abs/2406.16858), plus practitioner tuning guides
+reporting the 3-8 band, EAGLE-3 acceptance of 60-80% in-distribution versus
+40-60% for standalone draft models, and the fine-tune acceptance drop. As
+throughout this session, arxiv.org is egress-blocked here, so papers were
+reachable only as titles/abstracts; the implemented advice rests on the
+quantitative guidance that appears consistently across the practitioner
+sources, not on any single paper's algorithm.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

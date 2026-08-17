@@ -177,6 +177,52 @@ def generate_sglang_args(config: SpeculativeConfig) -> list[str]:
     return args
 
 
+# Useful band for num_speculative_tokens, from published tuning guidance.
+# Below the floor, throughput is left on the table; above the ceiling the
+# expected accepted tokens per step plateaus, so the extra draft compute is
+# spent producing tokens that are almost never all accepted. These are
+# advisory bounds — `generate_*_args` still only *rejects* values <= 0,
+# because a deployment with a measured reason to sit outside the band should
+# not be blocked by a heuristic.
+SPEC_TOKENS_MIN = 3
+SPEC_TOKENS_MAX = 8
+
+
+def review_config(config: SpeculativeConfig) -> list[str]:
+    """Advisory notes on a speculative config. Empty means nothing to flag.
+
+    Separate from validation on purpose: these are judgement calls about
+    likely-suboptimal tuning, not correctness errors, and must never turn a
+    working configuration into a failure.
+    """
+    notes: list[str] = []
+    if config.method == "none":
+        return notes
+
+    tokens = config.num_speculative_tokens
+    if tokens > SPEC_TOKENS_MAX:
+        notes.append(
+            f"num_speculative_tokens={tokens} exceeds {SPEC_TOKENS_MAX}: accepted "
+            "tokens per step plateau around there, so the extra draft compute is "
+            "spent on tokens that are rarely accepted. Measure before going higher.")
+    elif tokens < SPEC_TOKENS_MIN:
+        notes.append(
+            f"num_speculative_tokens={tokens} is below {SPEC_TOKENS_MIN}: this "
+            "leaves throughput unclaimed on most instruction-following models.")
+
+    # An EAGLE3 head is trained on one target model's own output distribution.
+    # Pointed at a fine-tune, it drafts in the wrong style and acceptance
+    # falls — the failure is silent, showing up only as a disappointing
+    # speedup, so it is worth saying out loud.
+    if config.method in ("eagle3", "p-eagle") and config.draft_model:
+        notes.append(
+            "EAGLE3 draft heads are trained on a specific target model's own "
+            "generations. If the served model is a fine-tune, acceptance can "
+            "drop well below the off-the-shelf figures — verify against your "
+            "own traffic rather than assuming the published rate.")
+    return notes
+
+
 def estimate_speedup(config: SpeculativeConfig) -> dict[str, Any]:
     """Estimate speedup from speculative decoding configuration."""
     speedups = {
@@ -200,4 +246,7 @@ def estimate_speedup(config: SpeculativeConfig) -> dict[str, Any]:
         "estimated_throughput_speedup": base["throughput"],
         "draft_model": config.draft_model or "(none)",
         "note": base["note"],
+        # Always present so --json consumers get a stable shape; empty means
+        # nothing to flag, never "not reviewed".
+        "warnings": review_config(config),
     }
