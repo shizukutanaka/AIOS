@@ -132,6 +132,38 @@ def _q4_k_m_sweet_spot_note(scores: list[dict[str, Any]],
             "need broader compatibility than " + best["quant"].upper() + ".")
 
 
+# FP4 formats whose quality should be validated before trusting in production.
+_FP4_QUANTS = ("nvfp4", "mxfp4")
+
+
+def _fp8_near_lossless_note(scores: list[dict[str, Any]],
+                            best: dict[str, Any]) -> str | None:
+    """Call out FP8 when an FP4 format wins but FP8 also fits.
+
+    Deployment guidance for Blackwell is consistently "FP8 first, FP4 only if
+    you need maximum throughput and can validate quality" — FP8 is
+    near-lossless with mature framework support, while FP4 trades a couple of
+    quality points for roughly twice the speed. The scorer legitimately
+    prefers FP4 on throughput, but a user who cares more about fidelity than
+    tokens/sec should not have to read the comparison table to discover that
+    a 99% option was sitting right there.
+
+    Mirrors _q4_k_m_sweet_spot_note: surface the runner-up, do not override
+    the ranking.
+    """
+    if best["quant"] not in _FP4_QUANTS:
+        return None
+    fp8 = next((s for s in scores if s["quant"] == "fp8"), None)
+    if fp8 is None:
+        return None
+    return (f"FP8 also fits at {fp8['quality']*100:.0f}% quality "
+            f"({fp8['size_mb']/1024:.1f}GB, {fp8['speed']:.1f}x) and is "
+            "near-lossless with more mature framework support. "
+            f"{best['quant'].upper()} buys speed for a few quality points — "
+            "validate it on your own workload before trusting it in "
+            "production.")
+
+
 def run_recommend(args: argparse.Namespace) -> int:
     """Generate a recommendation."""
     from aictl.cmd.fit import _find_model
@@ -169,10 +201,14 @@ def run_recommend(args: argparse.Namespace) -> int:
     scores.sort(key=lambda x: -x["score"])
     best = scores[0]
     sweet_spot = _q4_k_m_sweet_spot_note(scores, best)
+    fp8_note = _fp8_near_lossless_note(scores, best)
 
     if getattr(args, "json", False):
         print_json({"recommended": best, "alternatives": scores[1:],
-                    "sweet_spot_note": sweet_spot})
+                    "sweet_spot_note": sweet_spot,
+                    # Always present so --json consumers get a stable shape;
+                    # null means "not applicable", never "not evaluated".
+                    "fp8_note": fp8_note})
         return 0
 
     print()
@@ -200,6 +236,13 @@ def run_recommend(args: argparse.Namespace) -> int:
     # scorer picks something else for this specific GPU/use-case.
     if sweet_spot:
         print(f"  Note: {sweet_spot}")
+        print()
+
+    # FP8-first call-out when an FP4 format wins: FP8 is near-lossless with
+    # more mature support, and FP4 quality is workload-dependent enough to
+    # warrant validating rather than assuming.
+    if fp8_note:
+        print(f"  Note: {fp8_note}")
         print()
 
     # Reasoning-degradation warning (arXiv:2501.03035): aggressive quant can
