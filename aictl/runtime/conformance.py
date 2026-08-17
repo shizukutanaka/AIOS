@@ -39,6 +39,18 @@ from aictl.core.constants import CONFORMANCE_PROBE_TIMEOUT
 REQUIRED = "required"
 DEGRADED = "degraded"
 OPTIONAL = "optional"
+#   "insecure" — the engine works, but the transport exposes credentials and
+#   content. Deliberately a fourth severity rather than reusing "degraded":
+#   nothing about output quality changes, so calling it degraded would
+#   misdescribe it, and calling it required would report a working engine as
+#   broken. It does count against conformance — a deployment shipping API keys
+#   in cleartext is not production-conformant, whatever its response quality.
+INSECURE = "insecure"
+
+# Hosts where plaintext HTTP never leaves the machine, so there is nothing on
+# the wire to intercept. aictl's own defaults live here, and flagging them
+# would make the check noise on every local deployment.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", ""})
 
 
 @dataclass
@@ -47,7 +59,7 @@ class ProbeResult:
     name: str
     path: str
     ok: bool
-    severity: str            # REQUIRED | DEGRADED | OPTIONAL
+    severity: str            # REQUIRED | DEGRADED | OPTIONAL | INSECURE
     detail: str = ""         # short human explanation (error text, or what was seen)
     powers: list[str] = field(default_factory=list)   # aictl features relying on it
     impact: str = ""         # what happens when ok is False
@@ -68,9 +80,14 @@ class ConformanceReport:
         return [p for p in self.probes if not p.ok and p.severity == DEGRADED]
 
     @property
+    def failed_insecure(self) -> list[ProbeResult]:
+        return [p for p in self.probes if not p.ok and p.severity == INSECURE]
+
+    @property
     def conformant(self) -> bool:
-        """True when nothing required or quality-affecting failed."""
-        return not self.failed_required and not self.failed_degraded
+        """True when nothing required, quality-affecting, or insecure failed."""
+        return (not self.failed_required and not self.failed_degraded
+                and not self.failed_insecure)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -146,6 +163,23 @@ def check_conformance(endpoint: str, timeout: float | None = None,
             powers=["everything"], impact="aictl cannot talk to this endpoint at all",
         ))
         return report
+
+    # 0. Transport security. Checked first because it needs no network call
+    #    and, unlike everything below, a failure here is not something the
+    #    engine can answer for — it is a property of how it was addressed.
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+    plaintext_remote = parsed.scheme == "http" and host not in _LOOPBACK_HOSTS
+    report.probes.append(ProbeResult(
+        name="transport", path=base.split("://")[0] + "://", ok=not plaintext_remote,
+        severity=INSECURE,
+        detail=("plaintext HTTP to a non-loopback host" if plaintext_remote
+                else ("TLS" if parsed.scheme == "https" else "plaintext, but loopback only")),
+        powers=["API-key confidentiality", "prompt and completion privacy"],
+        impact=("the Authorization header and every prompt and completion cross "
+                "the network in cleartext — anything on the path can read the "
+                "API key and the traffic"),
+    ))
 
     # 1. Model listing — the discovery surface every adapter and the
     #    embedding-model detector depend on.

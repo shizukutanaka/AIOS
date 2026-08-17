@@ -1147,6 +1147,52 @@ FP16, and the FP8-before-FP4 ordering for Blackwell. arxiv.org remains
 egress-blocked here, so papers were reachable only as titles/abstracts; the
 implemented change is a disclosure, not an algorithm from any single paper.
 
+## AF. Plaintext HTTP to a remote engine — ✅ implemented (Pass 204)
+
+> **Status:** a `transport` probe in `runtime/conformance.py`, plus a
+> `--timeout` flag on `engines conform`.
+
+- **How it was found:** comparing aictl against how the surrounding ecosystem
+  (vLLM/SGLang/Ollama/LiteLLM) is actually deployed. Production-readiness
+  checklists converge on the same short list — OpenAI-compatible requests
+  **over HTTPS**, restart-on-failure, per-key rate limiting, metrics with real
+  alerts, benchmarked performance. aictl already covered the last four
+  (quotas/apikeys, quadlet units, Prometheus rules, `bench`); the first was
+  unchecked.
+- **The gap:** `engines conform` accepted `http://10.0.0.5:8000` silently. The
+  Authorization header and every prompt and completion cross the network in
+  cleartext, and nothing said so.
+- **A deliberate fourth severity.** `INSECURE` is not `degraded` (nothing
+  about output quality changes, so that would misdescribe it) and not
+  `required` (the engine works, and calling a working engine broken would be
+  wrong) — but it *does* count against `conformant`, because a deployment
+  shipping API keys in cleartext is not production-conformant whatever its
+  response quality. Tests pin that it is counted as none of the other three.
+- **Loopback is exempt.** aictl's own defaults are `127.0.0.1`, traffic there
+  never reaches a wire, and flagging it would make the check fire on every
+  local deployment. Advice that always fires stops being read.
+- **Runs without the network,** since it is a property of the URL rather than
+  of the server — so an unreachable endpoint still gets the finding.
+- **Wording fixed on the way:** the impact line said "transport unavailable",
+  which is wrong — the transport is present, it is just exposing traffic. The
+  label is now severity-aware.
+- **`--timeout` added:** the new tests ran for 55s against unroutable
+  addresses, which surfaced that `conform` had no way to lower the 5s
+  per-probe default. Useful in its own right (quick local check, slow remote
+  one) and it brought those tests to 1.4s.
+- **Validation:** 21 new tests (`tests/test_new_features_204.py`); the two
+  probe-shape assertions from item T were updated, since the report genuinely
+  gained a probe.
+
+## Sources (Part 8 — Pass 204)
+
+Ecosystem comparison rather than papers this time: 2026 production
+comparisons of vLLM / SGLang / Ollama / LM Studio / TensorRT-LLM and
+OpenAI-compatible API guides covering LiteLLM. The recurring single-node
+readiness checklist ("HTTPS, restart on failure, per-key rate limiting,
+metrics with three real alerts, benchmarked performance") is what this pass
+audited aictl against.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

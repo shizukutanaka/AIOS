@@ -38,6 +38,9 @@ def register(sub: Any) -> None:
                          help="Engine endpoint. Omit to check all discovered engines.")
     conform.add_argument("--model", default="",
                          help="Model name for chat/embedding probes (default: first advertised)")
+    conform.add_argument("--timeout", type=float, default=0,
+                         help="Per-probe timeout in seconds (default: 5). Lower it "
+                              "for a quick local check, raise it for a slow remote one.")
     conform.add_argument("--strict", action="store_true",
                          help="Exit non-zero if any required or quality-affecting probe fails")
     conform.add_argument("--json", action="store_true")
@@ -139,7 +142,9 @@ def run_conform(args: argparse.Namespace) -> int:
     so a missing surface reads as "rag/cache lose semantic search", not just
     "404".
     """
-    from aictl.runtime.conformance import check_conformance, REQUIRED, DEGRADED
+    from aictl.runtime.conformance import (
+        check_conformance, REQUIRED, DEGRADED, INSECURE,
+    )
 
     url = getattr(args, "url", "") or ""
     if url:
@@ -151,7 +156,10 @@ def run_conform(args: argparse.Namespace) -> int:
             return 1
 
     model = getattr(args, "model", "")
-    reports = [check_conformance(e, model=model) for e in endpoints]
+    # 0 means "unset" so the module default stays the single source of truth.
+    timeout = getattr(args, "timeout", 0) or None
+    reports = [check_conformance(e, model=model, timeout=timeout)
+               for e in endpoints]
 
     if getattr(args, "json", False):
         print_json([r.to_dict() for r in reports])
@@ -165,9 +173,12 @@ def run_conform(args: argparse.Namespace) -> int:
                 icon = "✓" if p.ok else ("✗" if p.severity == REQUIRED else "!")
                 print(f"    {icon} {p.name:<18} {p.path:<32} {p.detail}")
             for p in r.probes:
-                if not p.ok and p.severity in (REQUIRED, DEGRADED):
+                if not p.ok and p.severity in (REQUIRED, DEGRADED, INSECURE):
+                    # "unavailable" is wrong for a transport finding — the
+                    # transport is present, it is just exposing traffic.
+                    label = "insecure" if p.severity == INSECURE else "unavailable"
                     print()
-                    print(f"    → {p.name} unavailable: {p.impact}")
+                    print(f"    → {p.name} {label}: {p.impact}")
                     print(f"      affects: {', '.join(p.powers)}")
             print()
 

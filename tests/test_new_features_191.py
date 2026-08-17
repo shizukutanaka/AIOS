@@ -109,7 +109,7 @@ class TestFullyConformantEngine(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join(timeout=5)
         self.assertTrue(report.reachable)
         self.assertTrue(report.conformant, [p.name for p in report.probes if not p.ok])
-        self.assertEqual(len(report.probes), 6)
+        self.assertEqual(len(report.probes), 7)
         self.assertEqual(report.failed_required, [])
         self.assertEqual(report.failed_degraded, [])
 
@@ -212,11 +212,11 @@ class TestUnreachableAndInvalid(unittest.TestCase):
         self.assertFalse(report.reachable)
         self.assertFalse(report.conformant)
         # Shape must stay stable for --json consumers even when nothing answered.
-        self.assertEqual(len(report.probes), 6)
+        self.assertEqual(len(report.probes), 7)
         self.assertEqual(
             [p.name for p in report.probes],
-            ["model listing", "reachability", "chat completions", "streaming",
-             "embeddings", "metrics"],
+            ["transport", "model listing", "reachability", "chat completions",
+             "streaming", "embeddings", "metrics"],
         )
 
     def test_non_http_scheme_rejected_without_request(self):
