@@ -1084,7 +1084,14 @@ stdlib-only. As before, papers were reachable only as titles/abstracts.
 - **aictl's own defaults are clean:** auto-selected configs use 3 or 5 tokens,
   inside the band, so this adds no noise to the default path — pinned by a test
   so a future catalogue edit cannot drift out of it.
-- **Validation:** 17 new tests (`tests/test_new_features_202.py`).
+- **Follow-up caught immediately:** `spec methods` calls `estimate_speedup`
+  but builds its JSON payload key-by-key and prints a fixed set of lines, so
+  the new `warnings` key was dropped in *both* output modes — the same
+  "built but unreachable" pattern item W caught for the KV offload advisor.
+  Now wired into both, with tests asserting the caveat appears for an EAGLE3
+  model and stays absent for the n-gram fallback (advice that fires on every
+  model is noise, not advice).
+- **Validation:** 22 tests (`tests/test_new_features_202.py`).
 
 ## Sources (Part 6 — Pass 202)
 

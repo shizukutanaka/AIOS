@@ -291,6 +291,8 @@ def run_methods(args: argparse.Namespace) -> int:
             "vllm_args": vllm,
             "sglang_args": sglang,
             "note": est["note"],
+            # Stable shape: empty means nothing to flag, never "not reviewed".
+            "warnings": est.get("warnings", []),
         })
         return 0
 
@@ -306,6 +308,9 @@ def run_methods(args: argparse.Namespace) -> int:
         print("  No EAGLE-3 head known → NGRAM fallback (zero setup).")
     print(f"  Expected: ~{est['estimated_latency_speedup']:.1f}x latency / "
           f"~{est['estimated_throughput_speedup']:.1f}x throughput")
+    for note in est.get("warnings", []):
+        print()
+        print(f"  ! {note}")
     print()
     if vllm:
         print("  vLLM:")
