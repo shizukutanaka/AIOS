@@ -8,7 +8,7 @@ import argparse
 
 from aictl.core.constants import DAEMON_HOST, DAEMON_PORT
 from aictl.core.output import ok, err, print_json
-from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.state import resolve_state_dir
 
 
 def register(sub: Any) -> None:
@@ -162,7 +162,7 @@ def run_logs(args: argparse.Namespace) -> int:
     from aictl.core.output import warn
 
     n = getattr(args, "lines", 50)
-    log_path = DEFAULT_STATE_DIR / "daemon.log"
+    log_path = resolve_state_dir() / "daemon.log"
     if not log_path.exists():
         warn(f"No daemon log found at {log_path}")
         if getattr(args, "json", False):

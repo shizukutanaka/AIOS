@@ -12,6 +12,7 @@ from typing import Any
 import argparse
 
 from aictl.core.output import ok, warn, err
+from aictl.core.state import resolve_state_dir
 
 
 def register(sub: Any) -> None:
@@ -93,7 +94,7 @@ def _detect_symptom_from_logs() -> str:
     import os
     from pathlib import Path
 
-    home = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    home = resolve_state_dir()
     audit_path = Path(home) / "audit.jsonl"
     if not audit_path.exists():
         return ""

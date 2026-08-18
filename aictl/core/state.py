@@ -24,6 +24,42 @@ from aictl.core.filelock import file_lock
 
 DEFAULT_STATE_DIR = Path.home() / ".aios"
 
+# The environment variable that moves the state directory. `AICTL_STATE_DIR` is
+# an accepted alias: both names were already in use across this codebase, so
+# neither could be deleted without breaking whatever was setting it.
+STATE_DIR_ENV = "AIOS_STATE_DIR"
+STATE_DIR_ENV_ALIAS = "AICTL_STATE_DIR"
+
+
+def resolve_state_dir(explicit: "str | Path | None" = None) -> Path:
+    """Where state lives, decided in exactly one place.
+
+    It was previously decided in fifteen. Twelve modules read `AIOS_STATE_DIR`,
+    two read `AICTL_STATE_DIR`, and `StateStore` — which owns `state.json`,
+    `models.db`, the audit log and the API keys — read neither, because
+    `DEFAULT_STATE_DIR` was a module constant evaluated at import. Setting the
+    variable therefore *split* the state: `perf.jsonl` moved, `state.json` did
+    not, and nothing said so.
+
+    That also made a printed remedy false. `core/errors.py` answers a
+    PermissionError with "run with AIOS_STATE_DIR=/tmp/aios", which did not
+    move the file whose permissions were the problem.
+
+    Precedence is explicit argument, then the canonical variable, then the
+    alias, then `~/.aios`. The argument must win: the global `--state-dir` flag
+    is the user being specific right now, and an inherited environment variable
+    outranking it would make the flag silently useless.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    for name in (STATE_DIR_ENV, STATE_DIR_ENV_ALIAS):
+        value = os.environ.get(name)
+        # An empty value means unset, not "the current directory" — the latter
+        # would scatter state across whatever tree the user happened to be in.
+        if value and value.strip():
+            return Path(value).expanduser()
+    return Path.home() / ".aios"
+
 
 @dataclass
 class NodeState:
@@ -92,7 +128,7 @@ class StateStore:
         `StateStore(args.state_dir)`. Coerce to Path here so every caller works
         uniformly instead of crashing on `str.mkdir`.
         """
-        self.dir = Path(state_dir) if state_dir else DEFAULT_STATE_DIR
+        self.dir = resolve_state_dir(state_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         _secure_state_dir(self.dir)
         self._state_path = self.dir / "state.json"

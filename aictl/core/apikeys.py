@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.state import resolve_state_dir
 from aictl.core.atomicio import atomic_write_text
 
 
@@ -59,7 +59,7 @@ class KeyManager:
 
     def __init__(self, state_dir: Path | None = None):
         """Initialize API key manager."""
-        self.dir = state_dir or DEFAULT_STATE_DIR
+        self.dir = resolve_state_dir(state_dir)
         self._keys_path = self.dir / "api_keys.json"
         self._rate_states: dict[str, RateLimitState] = {}
 

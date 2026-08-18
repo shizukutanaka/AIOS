@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.state import resolve_state_dir
 
 
 @dataclass
@@ -48,7 +48,7 @@ class AuditLog:
 
     def __init__(self, state_dir: Path | None = None):
         """Initialize audit log."""
-        self.dir = (state_dir or DEFAULT_STATE_DIR) / "audit"
+        self.dir = resolve_state_dir(state_dir) / "audit"
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def write(self, entry: AuditEntry) -> None:
@@ -104,7 +104,7 @@ def get_audit_log(state_dir: Path | None = None) -> AuditLog:
     a different directory than it currently points at.
 
     A call with state_dir=None must resolve to (and cache-check against)
-    DEFAULT_STATE_DIR, not "whatever the cache already happens to hold" --
+    resolve_state_dir(), not "whatever the cache already happens to hold" --
     the previous `state_dir is not None and ...` guard treated None as "no
     opinion, reuse the cache as-is", so a call with an explicit directory
     followed by a later call with state_dir=None would keep writing to the
@@ -115,7 +115,7 @@ def get_audit_log(state_dir: Path | None = None) -> AuditLog:
     --state-dir values).
     """
     global _log
-    resolved = state_dir or DEFAULT_STATE_DIR
+    resolved = resolve_state_dir(state_dir)
     if _log is None or _log.dir.parent != resolved:
         _log = AuditLog(state_dir)
     return _log

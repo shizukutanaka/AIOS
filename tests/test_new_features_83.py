@@ -40,9 +40,11 @@ class TestStateStoreAcceptsStr(unittest.TestCase):
             self.assertIsInstance(store.dir, pathlib.Path)
 
     def test_none_uses_default(self):
-        from aictl.core.state import StateStore, DEFAULT_STATE_DIR
+        from aictl.core.state import StateStore, resolve_state_dir
         store = StateStore(None)
-        self.assertEqual(store.dir, DEFAULT_STATE_DIR)
+        # resolve_state_dir(), not the bare constant: the default now honours
+        # AIOS_STATE_DIR, so pinning the constant would assert the old bug.
+        self.assertEqual(store.dir, resolve_state_dir())
 
 
 class TestGlobalStateDirEndToEnd(unittest.TestCase):

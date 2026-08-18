@@ -208,7 +208,8 @@ class TestDaemonCommand(unittest.TestCase):
     def test_run_logs_no_file(self):
         from aictl.cmd.daemon import run_logs
         from pathlib import Path
-        with patch("aictl.cmd.daemon.DEFAULT_STATE_DIR", Path("/nonexistent-state-dir-xyz")):
+        with patch("aictl.cmd.daemon.resolve_state_dir",
+                   return_value=Path("/nonexistent-state-dir-xyz")):
             args = argparse.Namespace(lines=50, json=False)
             ret = run_logs(args)
         self.assertEqual(ret, 0)
@@ -220,7 +221,7 @@ class TestDaemonCommand(unittest.TestCase):
         tmpdir = pathlib.Path(tempfile.mkdtemp())
         log = tmpdir / "daemon.log"
         log.write_text("line1\nline2\nline3\n")
-        with patch("aictl.cmd.daemon.DEFAULT_STATE_DIR", tmpdir):
+        with patch("aictl.cmd.daemon.resolve_state_dir", return_value=tmpdir):
             args = argparse.Namespace(lines=50, json=False)
             lines_out = []
             with patch("builtins.print", side_effect=lambda *a, **k: lines_out.append(a[0])):

@@ -1479,6 +1479,67 @@ release surface, which is a maintainer's decision, not an agent's.
   See `go-port/README.md`.
 - **Validation:** 26 new tests (`tests/test_new_features_212.py`).
 
+## AK. The state directory was decided in 34 places, so it split — ✅ fixed (Pass 213)
+
+> **Status:** one `resolve_state_dir()` in `core/state.py`; 34 ad-hoc
+> resolutions across 28 files removed; `--state-dir` now reaches every writer.
+
+- **Found by reading the one line of output nobody reads.** Walking the
+  first-run journey with the state directory redirected, `aictl init` printed
+  `State dir /root/.aios` while `AIOS_STATE_DIR` pointed somewhere else.
+- **Two writers, two directories, no warning:**
+
+      $ AIOS_STATE_DIR=/tmp/s aictl init && aictl chat hi
+      /tmp/s/perf.jsonl        <- twelve modules honoured the variable
+      ~/.aios/state.json       <- StateStore did not
+
+  `DEFAULT_STATE_DIR = Path.home() / ".aios"` was a module constant evaluated
+  at import, so `StateStore` — owner of `state.json`, `models.db`, the audit
+  log and the API keys — consulted no environment at all.
+- **A printed remedy was false.** `core/errors.py` answers a `PermissionError`
+  with "run with `AIOS_STATE_DIR=/tmp/aios`". That advice did not move the file
+  whose permissions were the problem.
+- **Three layers, each found by fixing the one above it:**
+  1. twelve modules read `AIOS_STATE_DIR`, two read `AICTL_STATE_DIR`, and
+     `StateStore` read neither;
+  2. `--state-dir` had the same shape of bug one level down — it moved
+     `state.json` and left `perf.jsonl` behind, because a dozen helpers resolve
+     the directory with no argparse namespace in hand. A global flag only moved
+     what was handed it explicitly;
+  3. **fifteen further modules imported `DEFAULT_STATE_DIR` directly** —
+     `config.json`, the API keys, the audit log, the metering ledger, tenants,
+     plugins. The most sensitive files in the product ignored both names.
+  Layers 2 and 3 were caught by tests written for layer 1, not by inspection.
+- **Fixes.** `resolve_state_dir(explicit=None)` decides once: explicit argument,
+  then `AIOS_STATE_DIR`, then the `AICTL_STATE_DIR` alias, then `~/.aios`. The
+  argument wins because the flag is the user being specific right now. Empty
+  values mean unset rather than the current directory, which would scatter
+  state through whatever tree the user was standing in. `__main__` publishes
+  `--state-dir` into the environment so it reaches every helper and every
+  subprocess. `PLUGIN_DIRS` became `plugin_dirs()` — a module-level list froze
+  the directory at import, before the flag had even been parsed.
+- **The regression guard matters as much as the fix.** This bug existed because
+  one rule was copied 34 times, so a test walks the AST of every module and
+  fails on a 35th copy. It parses rather than greps: modules legitimately name
+  the old constant in prose when explaining this history, and a substring check
+  fails on documentation instead of on a real reference — the same mistake made
+  twice before in this session.
+- **The suite was not hermetic either.** Sweeping every test file against a
+  redirected `HOME` showed **53 of 280** left `models.db`, `rag.db`,
+  `sem_cache.db`, `perf.jsonl`, the audit log or the daemon logs in the real
+  `~/.aios`. Running the tests mutated real data — and worse, a test could pass
+  on what a previous run had left there, which is precisely the order-dependent
+  failure this codebase has already hit twice. Repairing 53 files individually
+  would have been optimising something that should not exist: every one of
+  those artifacts is a state-directory artifact, so `tests/__init__.py` now
+  redirects the state directory once, before any test module imports `aictl`.
+  It honours an already-set value so `core/partest.py`'s per-worker
+  directories still work.
+- **Validation:** 26 new tests (`tests/test_new_features_213.py`), five of them
+  running `aictl` as a subprocess against a redirected `HOME`, because the
+  property is about process-wide resolution and an in-process test shares
+  already-imported modules. Suite 3878/3878, and `~/.aios` stays untouched.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

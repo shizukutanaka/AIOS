@@ -73,8 +73,8 @@ class HookSubscription:
 def _subscriptions_path(state_dir: Path | None = None) -> Path:
     if state_dir:
         return Path(state_dir) / "hooks_subscriptions.json"
-    from aictl.core.state import DEFAULT_STATE_DIR
-    return DEFAULT_STATE_DIR / "hooks_subscriptions.json"
+    from aictl.core.state import resolve_state_dir
+    return resolve_state_dir() / "hooks_subscriptions.json"
 
 
 def load_subscriptions(state_dir: Path | None = None) -> list[HookSubscription]:

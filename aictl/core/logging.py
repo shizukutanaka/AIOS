@@ -79,8 +79,8 @@ class StructuredLogger:
         self.level = norm if norm in self._LEVELS else self._DEFAULT_LEVEL
 
         if log_dir is None:
-            from aictl.core.state import DEFAULT_STATE_DIR
-            log_dir = DEFAULT_STATE_DIR / "logs"
+            from aictl.core.state import resolve_state_dir
+            log_dir = resolve_state_dir() / "logs"
         self.log_dir = log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
 

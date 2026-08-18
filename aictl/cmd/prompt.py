@@ -37,6 +37,7 @@ from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_json
 from aictl.core.atomicio import atomic_write_text
+from aictl.core.state import resolve_state_dir
 
 
 def _slugify(name: str) -> str:
@@ -388,7 +389,7 @@ def run_run(args: argparse.Namespace) -> int:
 
 def _db_path() -> Path:
     """Execute db path."""
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "prompts.json"
 
 

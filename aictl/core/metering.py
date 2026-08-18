@@ -60,8 +60,8 @@ class TokenMeter:
     def __init__(self, state_dir: Path | None = None):
         """Initialize token meter with state directory."""
         if state_dir is None:
-            from aictl.core.state import DEFAULT_STATE_DIR
-            state_dir = DEFAULT_STATE_DIR
+            from aictl.core.state import resolve_state_dir
+            state_dir = resolve_state_dir()
         self.dir = state_dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self._buckets_path = self.dir / "metering.json"

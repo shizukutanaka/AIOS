@@ -44,6 +44,7 @@ from pathlib import Path
 from aictl.core.output import ok, warn, err, print_json
 from aictl.core.argtypes import positive_int
 from aictl.core.atomicio import atomic_write_text
+from aictl.core.state import resolve_state_dir
 
 
 # ── Complexity heuristics ─────────────────────────────────
@@ -655,12 +656,12 @@ def _explain_score(text: str) -> list[str]:
 
 def _config_path() -> Path:
     """Return the path to the TCO configuration file."""
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "route_config.json"
 
 
 def _cascade_stats_path() -> Path:
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "cascade_stats.json"
 
 
@@ -737,7 +738,7 @@ _KNN_CACHE_RETRY_AFTER_S = 3600
 
 def _knn_cache_path() -> Path:
     """Return the path to the kNN example-bank embedding cache file."""
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "route_knn_cache.json"
 
 

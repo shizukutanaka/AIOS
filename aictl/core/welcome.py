@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from aictl.core.constants import AICTL_VERSION
+from aictl.core.state import resolve_state_dir
 
 
 WELCOME_BANNER = f"""
@@ -27,14 +28,14 @@ WELCOME_BANNER = f"""
 
 def is_first_run() -> bool:
     """True if the user has never successfully used aictl before."""
-    state_dir = Path(os.environ.get("AIOS_STATE_DIR", Path.home() / ".aios"))
+    state_dir = resolve_state_dir()
     marker = state_dir / ".welcome_shown"
     return not marker.exists()
 
 
 def mark_welcome_shown() -> None:
     """Remember that we've shown the welcome screen."""
-    state_dir = Path(os.environ.get("AIOS_STATE_DIR", Path.home() / ".aios"))
+    state_dir = resolve_state_dir()
     try:
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / ".welcome_shown").touch()
@@ -72,7 +73,7 @@ def show_welcome() -> int:
 
 def _show_contextual_commands() -> None:
     """Show the most relevant commands based on current state."""
-    state_dir = Path(os.environ.get("AIOS_STATE_DIR", Path.home() / ".aios"))
+    state_dir = resolve_state_dir()
     initialized = (state_dir / "node.json").exists()
 
     # Check RAG index
@@ -104,7 +105,7 @@ def _detect_next_action(first_time: bool) -> dict[str, Any]:
     Apple principle: the suggestion must be the MOST USEFUL thing right now,
     not a generic fallback. Read the actual state to decide.
     """
-    state_dir = Path(os.environ.get("AIOS_STATE_DIR", Path.home() / ".aios"))
+    state_dir = resolve_state_dir()
 
     # ── Level 0: Never used before ──────────────────────
     if first_time or not state_dir.exists():

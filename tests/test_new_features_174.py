@@ -44,16 +44,23 @@ class TestScanStaysPureWithoutStateDir(unittest.TestCase):
     def test_no_state_dir_no_file_created(self):
         from aictl.core.guard import scan, _guard_stats_path
         with tempfile.TemporaryDirectory() as d:
-            # Prove no file appears anywhere reachable by pointing DEFAULT
-            # at this tmp dir and confirming scan() still doesn't write it.
-            import aictl.core.state as state_mod
-            orig = state_mod.DEFAULT_STATE_DIR
-            state_mod.DEFAULT_STATE_DIR = Path(d)
+            # Prove no file appears anywhere reachable by pointing the
+            # default at this tmp dir and confirming scan() still doesn't
+            # write it. Redirected through the environment because the
+            # default is now resolved per call, not bound at import.
+            import os
+            saved = {n: os.environ.get(n) for n in ("AIOS_STATE_DIR", "AICTL_STATE_DIR")}
+            os.environ["AIOS_STATE_DIR"] = d
+            os.environ.pop("AICTL_STATE_DIR", None)
             try:
                 scan("email me at a@b.com", redact_pii=True)
                 self.assertFalse((Path(d) / "guard_stats.json").exists())
             finally:
-                state_mod.DEFAULT_STATE_DIR = orig
+                for name, previous in saved.items():
+                    if previous is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = previous
 
     def test_existing_call_signature_unaffected(self):
         from aictl.core.guard import scan
@@ -149,11 +156,13 @@ class TestGuardScanCLIPersistsRedactions(unittest.TestCase):
         # The whole point: real users rarely pass --state-dir, so the CLI
         # must resolve a concrete default dir itself, not skip persistence
         # just because args.state_dir happens to be None.
+        import os
+
         from aictl.cmd.guard import run_scan
-        import aictl.core.state as state_mod
         with tempfile.TemporaryDirectory() as tmp:
-            orig = state_mod.DEFAULT_STATE_DIR
-            state_mod.DEFAULT_STATE_DIR = Path(tmp)
+            saved = {n: os.environ.get(n) for n in ("AIOS_STATE_DIR", "AICTL_STATE_DIR")}
+            os.environ["AIOS_STATE_DIR"] = tmp
+            os.environ.pop("AICTL_STATE_DIR", None)
             try:
                 args = argparse.Namespace(text="contact a@b.com", file=None,
                                           redact=True, block_pii=False,
@@ -162,7 +171,11 @@ class TestGuardScanCLIPersistsRedactions(unittest.TestCase):
                 stats = json.loads((Path(tmp) / "guard_stats.json").read_text())
                 self.assertEqual(stats["total_redactions"], 1)
             finally:
-                state_mod.DEFAULT_STATE_DIR = orig
+                for name, previous in saved.items():
+                    if previous is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = previous
 
 
 class TestPrometheusEmitsGuardRedactions(unittest.TestCase):

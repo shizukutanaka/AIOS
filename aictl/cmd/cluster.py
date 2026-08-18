@@ -140,8 +140,8 @@ def run_recovery_policy(args: argparse.Namespace) -> int:
     if state_dir:
         policy_path = Path(state_dir) / "recovery_policy.json"
     else:
-        from aictl.core.state import DEFAULT_STATE_DIR
-        policy_path = DEFAULT_STATE_DIR / "recovery_policy.json"
+        from aictl.core.state import resolve_state_dir
+        policy_path = resolve_state_dir() / "recovery_policy.json"
 
     # Load or create default policy
     if policy_path.exists():

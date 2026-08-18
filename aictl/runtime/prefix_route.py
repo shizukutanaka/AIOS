@@ -37,6 +37,7 @@ from aictl.core.constants import (
     PREFIX_REUSE_MAX_AGE_SECONDS,
     PREFIX_REUSE_MAX_RECORDS,
 )
+from aictl.core.state import resolve_state_dir
 
 
 # How long a prefix is assumed warm in a server's KV cache
@@ -294,7 +295,7 @@ class PrefixRouteTracker:
 
 def _reuse_log_path() -> Path:
     """Where the cross-process reuse log lives (mirrors core.perf's layout)."""
-    base = os.environ.get("AICTL_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "prefix_reuse.jsonl"
 
 

@@ -175,9 +175,9 @@ def _emit_value_prop_metrics(lines: list[str]) -> None:
     # Cascade routing: escalation counters from persistent stats file.
     try:
         import json as _json
-        import os as _os
-        _base = _os.environ.get("AIOS_STATE_DIR", _os.path.expanduser("~/.aios"))
-        _cs = _json.loads((__import__("pathlib").Path(_base) / "cascade_stats.json").read_text())
+
+        from aictl.core.state import resolve_state_dir
+        _cs = _json.loads((resolve_state_dir() / "cascade_stats.json").read_text())
         _counter(lines, "aios_route_cascade_runs_total",
                  "Total cascade routing invocations", int(_cs.get("total_runs", 0)))
         _counter(lines, "aios_route_cascade_escalations_total",

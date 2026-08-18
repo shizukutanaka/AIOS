@@ -26,6 +26,7 @@ from pathlib import Path
 
 from aictl.core.output import ok, warn, err, print_kv, print_json
 from aictl.core.argtypes import positive_int
+from aictl.core.state import resolve_state_dir
 
 
 # ── Default configuration ──────────────────────────────────
@@ -535,7 +536,7 @@ def run_forecast(args: argparse.Namespace) -> int:
 
 def _config_path() -> Path:
     """Return the path to the TCO configuration file."""
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "tco.json"
 
 

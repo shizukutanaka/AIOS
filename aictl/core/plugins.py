@@ -26,14 +26,25 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from aictl.core.state import DEFAULT_STATE_DIR
+from aictl.core.state import resolve_state_dir
 
 logger = logging.getLogger("aios.plugins")
 
-PLUGIN_DIRS = [
-    DEFAULT_STATE_DIR / "plugins",
-    Path("/opt/aios/plugins"),
-]
+
+def plugin_dirs() -> list[Path]:
+    """Where plugins are searched for, resolved per call rather than at import.
+
+    This was a module-level list, so the state directory was baked in the first
+    time the module was imported — before `--state-dir` had been parsed, and
+    ignoring the environment entirely. A function re-reads it each time, which
+    is what makes the flag and the variable actually reach plugin discovery.
+    """
+    return [resolve_state_dir() / "plugins", Path("/opt/aios/plugins")]
+
+
+# Retained as a module attribute because external code and tests read it. It is
+# a snapshot of the default layout, not the live answer — use plugin_dirs().
+PLUGIN_DIRS = [Path.home() / ".aios" / "plugins", Path("/opt/aios/plugins")]
 
 
 def discover_plugins() -> list[dict[str, Any]]:
@@ -41,7 +52,7 @@ def discover_plugins() -> list[dict[str, Any]]:
     plugins: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for plugin_dir in PLUGIN_DIRS:
+    for plugin_dir in plugin_dirs():
         if not plugin_dir.is_dir():
             continue
 
