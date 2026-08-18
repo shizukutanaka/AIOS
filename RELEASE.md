@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,801+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,814+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
