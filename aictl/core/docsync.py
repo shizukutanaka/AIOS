@@ -1,4 +1,4 @@
-"""Keep CLAUDE.md's counts honest — the last step, not the first.
+"""Keep the docs' counts honest — the last step, not the first.
 
 Musk's algorithm puts automate last for a reason: automating a process you do
 not yet understand just makes the wrong thing happen faster. This one earned
@@ -33,6 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Documents whose counts are kept honest. RELEASE.md matters most: it is the
+# text that becomes the public release announcement, so a stale number there
+# is a false claim shipped to everyone, not just a stale comment.
+_TRACKED_DOCS = ("CLAUDE.md", "RELEASE.md")
+
+
 @dataclass
 class CountMismatch:
     """One stale number in the docs."""
@@ -42,8 +48,9 @@ class CountMismatch:
     line: int = 0
 
     def __str__(self) -> str:
-        return (f"{self.label}: CLAUDE.md says {self.documented}, "
-                f"actual is {self.actual}")
+        # The label already names the document; repeating a hardcoded
+        # "CLAUDE.md" here mislabelled every RELEASE.md finding.
+        return f"{self.label}: documented {self.documented}, actual {self.actual}"
 
 
 def count_test_files(root: Path | None = None) -> int:
@@ -67,47 +74,59 @@ def count_commands(root: Path | None = None) -> int:
 
 
 def check_counts(root: Path | None = None, test_count: int = 0) -> list[CountMismatch]:
-    """Compare CLAUDE.md's numbers against reality. Pure; never writes.
+    """Compare the tracked docs' numbers against reality. Pure; never writes.
 
     `test_count` of 0 means "not supplied" — the test-count claims are then
     skipped rather than compared against a number nobody measured.
     """
     base = root or Path(".")
-    doc = base / "CLAUDE.md"
-    if not doc.is_file():
-        return []
-    text = doc.read_text(encoding="utf-8")
-    lines = text.splitlines()
     problems: list[CountMismatch] = []
-
     actual_files = count_test_files(base)
-    for i, line in enumerate(lines, 1):
-        m = re.search(r"(\d+)\s+test files", line)
-        if m and int(m.group(1)) != actual_files:
-            problems.append(CountMismatch("test files", int(m.group(1)),
-                                          actual_files, i))
-        if test_count:
-            for m2 in re.finditer(r"(\d+)\+?\s+tests", line):
-                if int(m2.group(1)) != test_count:
-                    problems.append(CountMismatch("tests", int(m2.group(1)),
-                                                  test_count, i))
+
+    for name in _TRACKED_DOCS:
+        doc = base / name
+        if not doc.is_file():
+            continue
+        for i, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+            m = re.search(r"(\d+)\s+test files", line)
+            if m and int(m.group(1)) != actual_files:
+                problems.append(CountMismatch(f"{name} test files",
+                                              int(m.group(1)), actual_files, i))
+            if test_count:
+                # Match both "3783+ tests" and "3,783+ tests" — RELEASE.md
+                # writes the thousands separator, CLAUDE.md does not, and a
+                # checker that only understood one format would silently pass
+                # a stale number in the other.
+                for m2 in re.finditer(r"([\d,]+)\+?\s+tests", line):
+                    documented = int(m2.group(1).replace(",", ""))
+                    if documented != test_count:
+                        problems.append(CountMismatch(f"{name} tests",
+                                                      documented, test_count, i))
     return problems
 
 
 def sync_counts(root: Path | None = None, test_count: int = 0) -> list[CountMismatch]:
-    """Rewrite CLAUDE.md's stale numbers. Returns what was changed."""
+    """Rewrite stale numbers in the tracked docs. Returns what was changed."""
     base = root or Path(".")
-    doc = base / "CLAUDE.md"
     fixed = check_counts(base, test_count)
-    if not fixed or not doc.is_file():
+    if not fixed:
         return []
 
     actual_files = count_test_files(base)
-    out = []
-    for line in doc.read_text(encoding="utf-8").splitlines(keepends=True):
-        line = re.sub(r"\d+(\s+test files)", rf"{actual_files}\1", line)
-        if test_count:
-            line = re.sub(r"\d+(\+?\s+tests)", rf"{test_count}\1", line)
-        out.append(line)
-    doc.write_text("".join(out), encoding="utf-8")
+    for name in _TRACKED_DOCS:
+        doc = base / name
+        if not doc.is_file():
+            continue
+        # Each doc keeps its own thousands-separator convention, so rewrite in
+        # the style already present rather than imposing one.
+        grouped = f"{test_count:,}"
+        out = []
+        for line in doc.read_text(encoding="utf-8").splitlines(keepends=True):
+            line = re.sub(r"\d+(\s+test files)", rf"{actual_files}\1", line)
+            if test_count:
+                line = re.sub(r"\d[\d,]*(\+?\s+tests)",
+                              lambda m: (grouped if "," in m.group(0)
+                                         else str(test_count)) + m.group(1), line)
+            out.append(line)
+        doc.write_text("".join(out), encoding="utf-8")
     return fixed
