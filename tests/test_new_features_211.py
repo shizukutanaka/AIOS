@@ -27,6 +27,14 @@ this session from routing around every other blocked control.
 
 What is fixed is the silence. A gap in the gate's output can be acted on; a
 gap that never appears in it looks like health.
+
+*Superseded in part by pass 212.* Holding the file still long enough to look at
+it properly showed the diagnosis above was too charitable: not one corrupted
+entry but four fabricated ones, in a file the Go toolchain never wrote. The
+conclusion that it must not be "fixed" by writing in proxy-derived values
+survived; what changed is that the fabricated entries were **removed**, which
+restores checksum-database verification instead of retiring it. See
+`test_new_features_212.py`.
 """
 
 from __future__ import annotations
@@ -179,8 +187,14 @@ class TestGoSumIsNotSilentlyRewritten(unittest.TestCase):
     def test_go_mod_tidy_is_not_invoked(self):
         # `go mod tidy` would rewrite go.sum as a side effect, quietly
         # resolving the mismatch by trusting whatever the proxy served.
+        #
+        # Asserts the real property — that `tidy` never reaches a subprocess
+        # argument list — not that the string is absent from the file. The
+        # module legitimately names the command in prose when telling a
+        # maintainer what to run; an earlier `assertNotIn("tidy", source)`
+        # would have failed on the documentation instead of on the behaviour.
         source = Path("aictl/core/goport.py").read_text()
-        self.assertNotIn("tidy", source)
+        self.assertNotIn("tidy", _nearby(source, "subprocess.run", window=90))
 
 
 if __name__ == "__main__":
