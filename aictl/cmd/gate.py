@@ -93,6 +93,7 @@ def run(args: argparse.Namespace) -> int:
         if par.failed:
             detail += f" — failed: {', '.join(par.failed[:3])}"
         results.append(("Tests", par.ok, detail))
+        measured_tests = 0          # per-file runner reports files, not tests
     elif not getattr(args, "skip_tests", False):
         tests_dir = project_root / "tests"
         loader = unittest.TestLoader()
@@ -102,8 +103,22 @@ def run(args: argparse.Namespace) -> int:
         passed = result.testsRun - len(result.failures) - len(result.errors)
         results.append(("Tests", result.wasSuccessful(),
                         f"{passed}/{result.testsRun} passed"))
+        measured_tests = result.testsRun
     else:
         results.append(("Tests", True, "skipped"))
+        measured_tests = 0
+
+    # 4b. Doc counts. Automating the thing that was hand-edited a dozen times
+    #     in one session: CLAUDE.md's counts are the first thing any reader
+    #     sees about this codebase's size, and nothing checked them.
+    try:
+        from aictl.core.docsync import check_counts
+        stale = check_counts(project_root, measured_tests)
+        results.append(("Counts", not stale,
+                        "CLAUDE.md in sync" if not stale
+                        else "; ".join(str(s_) for s_ in stale[:2])))
+    except Exception as e:
+        results.append(("Counts", True, f"skipped ({str(e)[:40]})"))
 
     # 5. Demo
     if not getattr(args, "skip_demo", False):
@@ -176,9 +191,14 @@ def run(args: argparse.Namespace) -> int:
 
         # Verify CHANGELOG documents the current release
         cl_text = (project_root / "CHANGELOG.md").read_text(errors="replace")
-        has_changelog = "v1.7.0" in cl_text
+        # Derived, not hardcoded: a literal here has to be hand-edited at
+        # every version bump, and a forgotten edit makes the check pass
+        # against the *previous* release forever.
+        expected_release = f"v{VERSION}"
+        has_changelog = expected_release in cl_text
 
-        doc_issues = missing_help + missing_readme + ([] if has_changelog else ["v1.7.0 missing from CHANGELOG"])
+        doc_issues = missing_help + missing_readme + (
+            [] if has_changelog else [f"{expected_release} missing from CHANGELOG"])
         if doc_issues:
             results.append(("Docs", False, f"missing: {', '.join(doc_issues[:3])}"))
         else:

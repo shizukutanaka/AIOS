@@ -20,6 +20,7 @@ import tempfile
 import unittest
 
 from aictl.daemon.aiosd import drain_reuse_counters
+from tests.support import IsolatedTrackerTestCase
 from aictl.runtime.prefix_route import (
     _reuse_log_path,
     get_default_tracker,
@@ -30,27 +31,7 @@ ENDPOINTS = ["http://a:8000"]
 SHARED = "SHARED PREAMBLE for the drain test, long enough to hash. " * 25
 
 
-class TestShutdownDrain(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self._prev = os.environ.get("AICTL_STATE_DIR")
-        os.environ["AICTL_STATE_DIR"] = self._tmp.name
-        # The singleton is shared, and a daemon test elsewhere may have opted
-        # it into persistence. Pin the state these tests assume rather than
-        # inheriting whatever ran first.
-        self._prev_persist = get_default_tracker().persistence_enabled()
-        get_default_tracker().enable_persistence(False)
-        get_default_tracker().clear()
-
-    def tearDown(self):
-        get_default_tracker().enable_persistence(self._prev_persist)
-        get_default_tracker().clear()
-        if self._prev is None:
-            os.environ.pop("AICTL_STATE_DIR", None)
-        else:
-            os.environ["AICTL_STATE_DIR"] = self._prev
-        self._tmp.cleanup()
-
+class TestShutdownDrain(IsolatedTrackerTestCase):
     def test_sub_interval_counts_survive_shutdown(self):
         from aictl.core.constants import PREFIX_REUSE_FLUSH_EVERY
 
