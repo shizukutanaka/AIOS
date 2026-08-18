@@ -315,6 +315,19 @@ def main() -> int:
         from aictl.core.state import STATE_DIR_ENV, resolve_state_dir
         _os.environ[STATE_DIR_ENV] = str(resolve_state_dir(args.state_dir))
 
+    # Tell a user whose state was stranded by the resolution fix above. The fix
+    # is correct and indistinguishable from data loss if nobody says so: their
+    # node config, models, API keys and audit log simply read as empty. Warn to
+    # stderr so it never contaminates `--json` output, and never fail on it.
+    try:
+        from aictl.core.state import split_state_warning
+        _warning = split_state_warning()
+        if _warning:
+            import sys as _sys
+            print(f"⚠ {_warning}\n", file=_sys.stderr)
+    except Exception:                        # pragma: no cover - never fatal
+        pass
+
     if args.command is None:
         parser.print_help()
         return 0

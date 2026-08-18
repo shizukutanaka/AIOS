@@ -2,8 +2,16 @@
 
 ## v1.7.0 — 2026-07-16 — Retrieval quality, layered routing, fairness & guardrail hardening
 
-Highlights since v1.6.0 (all additive, off-by-default/opt-in — zero breaking changes,
-zero new external dependencies, still stdlib-only):
+Highlights since v1.6.0 (features all additive and off-by-default/opt-in, zero new
+external dependencies, still stdlib-only):
+
+> **One behaviour change, only if you set `AIOS_STATE_DIR`, `AICTL_STATE_DIR` or
+> `--state-dir`.** Those used to move only part of your state — `state.json`, the
+> model registry, your API keys, the audit log and the metering ledger stayed in
+> `~/.aios` regardless. They now follow the setting like everything else, so the
+> files left behind need to come across once or they will read as empty. `aictl`
+> detects this and prints the command; see **Upgrade notes** in `RELEASE.md`.
+> Default `~/.aios` users are unaffected.
 
 - **Retrieval:** hybrid dense+BM25 RAG retrieval with Reciprocal Rank Fusion; pluggable
   cross-encoder **reranker** (`rag search --rerank`, TEI-compatible `/rerank`, off by

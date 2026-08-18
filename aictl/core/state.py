@@ -31,6 +31,57 @@ STATE_DIR_ENV = "AIOS_STATE_DIR"
 STATE_DIR_ENV_ALIAS = "AICTL_STATE_DIR"
 
 
+# Artifacts that never followed AIOS_STATE_DIR before v1.7.0: they were written
+# to ~/.aios unconditionally, so a user with the variable set has been running
+# on a split state without being told. Order is the order they are copied in.
+LEGACY_HOME_ARTIFACTS = (
+    "state.json", "stacks.json", "models.db", "config.json", "api_keys.json",
+    "tenants.json", "metering.json", "metering_log.jsonl", "lora_registry.json",
+    "trust_baseline.json", "warmup_schedule.json", "hooks_subscriptions.json",
+    "recovery_policy.json", "guard_stats.json",
+)
+LEGACY_HOME_DIRS = ("audit", "logs", "plugins")
+
+
+def split_state_warning(resolved: Path | None = None) -> str:
+    """Warn when v1.7.0's fix has stranded a user's state in ~/.aios.
+
+    Before v1.7.0 the environment variable moved only part of the state, so
+    anyone who set it has data in two directories. Now that everything follows
+    the setting, the half that used to stay behind is no longer where aictl
+    looks — the node config, the model registry, the API keys and the audit
+    log all read as empty.
+
+    That is a fix behaving exactly as intended, and it is indistinguishable
+    from data loss if nobody says so. Returns "" when there is nothing to say.
+    """
+    target = resolved if resolved is not None else resolve_state_dir()
+    legacy = Path.home() / ".aios"
+    try:
+        if target.resolve() == legacy.resolve():
+            return ""                       # not redirected; nothing to strand
+        if not (legacy / "state.json").is_file():
+            return ""                       # nothing was left behind
+        # An empty state.json is what a fresh v1.7.0 run creates, so treat the
+        # target as unmigrated unless it holds a node that was actually saved.
+        if (target / "state.json").is_file() and \
+                (target / "state.json").stat().st_size > 2:
+            return ""
+    except (OSError, RuntimeError):
+        return ""
+
+    files = " \\\n      ".join(f"~/.aios/{n}" for n in LEGACY_HOME_ARTIFACTS)
+    dirs = " ".join(f"~/.aios/{n}" for n in LEGACY_HOME_DIRS)
+    return (
+        f"State from before v1.7.0 is still in ~/.aios and is not being read.\n"
+        f"  Until v1.7.0, {STATE_DIR_ENV} moved only part of your state; now it\n"
+        f"  moves all of it, so these files need to come across once:\n\n"
+        f"    cp -a {files} \\\n      {target}/\n"
+        f"    cp -an {dirs} {target}/\n\n"
+        f"  Nothing is deleted from ~/.aios. See RELEASE.md — Upgrade notes."
+    )
+
+
 def resolve_state_dir(explicit: "str | Path | None" = None) -> Path:
     """Where state lives, decided in exactly one place.
 

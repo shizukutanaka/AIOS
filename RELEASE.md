@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,884+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,903+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -96,6 +96,29 @@
 - **Doc counts maintain themselves.** `gate` derives the test/file counts in
   `CLAUDE.md` and `RELEASE.md` rather than trusting hand-edited numbers.
 
+### Fixed
+- **The Go port builds.** It did not, from a clean checkout, in any previous
+  release. `go.sum` recorded four checksums that no hash function had produced —
+  each sharing a long prefix with the real value and then diverging into a
+  plausible tail, one of them 43 base64 characters and so not a SHA-256 at all.
+  Go refused with `SECURITY ERROR`, which read like an attack and was really the
+  toolchain correctly declining to trust a file that had never attested to
+  anything. Every entry has now been verified against `sum.golang.org` and is
+  pinned in the test suite; the compile error the checksum failure had been
+  masking (an unused import) is fixed. `go build`, `go vet` and `go test ./...`
+  are clean, and `aictl gate` checks the Go port on every run.
+- **`AIOS_STATE_DIR` and `--state-dir` now move all of your state.** They
+  previously moved some of it — see **Upgrade notes**, which you should read if
+  you set either.
+- **The state directory is created owner-only (`0700`).** It holds your cloud
+  API key, the metering ledger, the audit log and every document indexed into
+  RAG, and was created with the process umask — typically world-readable. The
+  security scanner had been reporting this as HIGH and printing `chmod 700` as
+  advice rather than doing it. Existing loose directories are tightened in
+  place, and never loosened.
+- **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
+  files did.
+
 ### Catalog & advisors
 - New models (GLM-5.2, Kimi K2.6); Medusa speculative-decoding method; vLLM v0.19 CPU KV-offload hints; NVFP4 quant sweet-spot notes; Apple-Silicon unified-memory fit math; 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio — all opt-in, OpenAI-compatible).
 
@@ -123,4 +146,59 @@ design-scope and mechanical-scope contribution sessions respectively.
 
 ## Upgrade notes
 
-Fully backward-compatible with v1.6.0. Every feature above defaults to disabled/empty; existing configs, scripts, and zero-config workflows are unaffected. No external Python dependencies were added.
+Every *feature* above defaults to disabled/empty, and no external Python
+dependencies were added. Zero-config workflows — the default `~/.aios` — are
+unaffected, and you can upgrade without doing anything.
+
+**One behaviour change, and it affects you only if you set `AIOS_STATE_DIR`,
+`AICTL_STATE_DIR`, or `--state-dir`.** Read this before upgrading if you do.
+
+Those settings used to move only *part* of the state. `perf.jsonl`, the
+semantic cache and the RAG index followed them; `state.json`, the model
+registry, your API keys, the audit log and the metering ledger did not, and
+stayed in `~/.aios`. The state was silently split across two directories.
+
+v1.7.0 resolves the directory in one place, so **everything** now follows the
+setting. That is the fix — but it means the files that used to stay behind are
+no longer where `aictl` looks. Without migrating, your node config, registered
+models, API keys and audit history will appear empty.
+
+`aictl` detects this on startup and prints the migration command, so you do not
+have to find it here. For reference, it is:
+
+```bash
+export AIOS_STATE_DIR=/your/configured/dir      # or the --state-dir you pass
+
+cp -a ~/.aios/state.json ~/.aios/stacks.json ~/.aios/models.db \
+      ~/.aios/config.json ~/.aios/api_keys.json ~/.aios/tenants.json \
+      ~/.aios/metering.json ~/.aios/metering_log.jsonl \
+      ~/.aios/lora_registry.json ~/.aios/trust_baseline.json \
+      ~/.aios/warmup_schedule.json ~/.aios/hooks_subscriptions.json \
+      ~/.aios/recovery_policy.json ~/.aios/guard_stats.json \
+      "$AIOS_STATE_DIR"/ 2>/dev/null
+
+cp -an ~/.aios/audit ~/.aios/logs ~/.aios/plugins "$AIOS_STATE_DIR"/ 2>/dev/null
+
+aictl status        # your node, models and stacks should be visible again
+```
+
+Two details that matter, both found by testing this command rather than
+trusting it:
+
+- It **overwrites** those specific files in the target, deliberately. An
+  earlier version used `cp -n`, which silently migrated nothing: running any
+  v1.7.0 command first creates an empty `state.json` and `models.db` in the new
+  location, and `-n` then refuses to replace them. Since none of the listed
+  files were *ever* written to a configured directory before v1.7.0, anything
+  there is that freshly-created empty and safe to replace — so run this soon
+  after upgrading, before accumulating new data you would rather keep.
+- The second line uses `-n` on purpose. `audit`, `logs` and `plugins` are
+  directories that may legitimately hold both old and new content, so it merges
+  without clobbering.
+
+Nothing is deleted from `~/.aios`; once `aictl status` looks right, remove it
+yourself.
+
+Precedence is now explicit: `--state-dir` beats `AIOS_STATE_DIR`, which beats
+the `AICTL_STATE_DIR` alias, which beats `~/.aios`. An empty value means unset
+rather than the current directory.
