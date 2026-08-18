@@ -1324,6 +1324,51 @@ hand-edit at every bump — a forgotten edit would leave it passing against the
 previous release forever. Now derived from `VERSION`, closing weakness #2/#8
 from `REVIEW_v1.7.0.md`.
 
+### What step 1 actually found: the SDK fabricates answers
+
+Questioning the error taxonomy — 8 of 9 exception classes never raised —
+looked like a deletion candidate. But the requirement they serve ("an error
+says what happened and what to do") is good and has a name attached, so the
+real question became *where should they fire and don't*.
+
+The answer was worse than an unused class. With no engine running,
+`aictl.ai.ask()` did not fail — it started an in-process mock whose docstring
+said the substitution was "invisible to the developer", and returned plausible
+text attributed to a **real hardware-derived model name** (`llama3.2:1b`) with
+a **non-zero cost for inference that never happened**. A user could `import
+aictl`, get confident answers, ship it, and never learn the output was
+fabricated; `tco`/`cost` would report spend that did not occur.
+
+This is the same defect class the rest of the session kept fixing —
+undisclosed degradation — sitting at the primary library entry point.
+
+Fixed by disclosure, not removal: zero-config still works (a real feature),
+but the response carries `mock=True`, names the model `"mock"`, reports zero
+cost, and says `MOCK` in its repr. `ai.status` gained a `mock` key, since
+"what am I actually running against?" is the question it exists to answer.
+
+Two further defects fell out:
+
+* An existing test asserted `cost_usd > 0` while running against the mock — it
+  **encoded** the fabrication rather than catching it.
+* `model` returned `"mock"` for *"no model configured"*, conflating that with
+  *"a mock produced this"*. Now `"unknown"`, because those are different
+  states and naming them alike was the ambiguity being fixed.
+
+A first version of the new test asserted the *biconditional* (named "mock" iff
+mock-served) and failed: `AICTL_MODEL` lets a user point a real engine at a
+model they have named "mock". The test was wrong, not the code — the
+requirement is one-directional, and it now says so.
+
+### Counts: sync, do not merely complain
+
+The `Counts` gate phase initially *failed* on a stale number, which broke two
+unrelated tests asserting the gate returns 0 and — worse — left the human
+running the sed anyway. That turns the gate's verdict into a statement about
+documentation rather than code. Derived data should be derived: it now syncs
+and reports what it changed, so the manual step disappears rather than
+becoming a reminder. The rewrite is never silent.
+
 ### Steps 1, 3, 5 — status
 
 Step 1 (question requirements) produced the measurement in
