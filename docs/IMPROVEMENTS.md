@@ -1380,6 +1380,44 @@ survive only because tests reference types no code path produces. Cutting
 them — or the observability command overlap — changes documented v1.6.0
 release surface, which is a maintainer's decision, not an agent's.
 
+## AI. The Go port does not build — ⚠️ reported, deliberately not "fixed" (Pass 211)
+
+> **Status:** surfaced by a new `Go port` phase in `gate`
+> (`core/goport.py`). **`go.sum` was left untouched, on purpose.**
+
+- **Found by asking what `gate` does not check.** It is this project's "is
+  everything all right?" command and it verified only the Python half — the
+  2,176-line Go port that CLAUDE.md and RELEASE.md both advertise as "29 Go
+  commands" had no automated check at all.
+- **It is worse than untested: it does not build.** `go.sum` records a
+  checksum for `github.com/spf13/cobra v1.8.1` that disagrees with what the
+  module proxy serves, and Go correctly refuses with a SECURITY ERROR.
+- **The hashes point at corruption, not compromise:**
+
+      downloaded: h1:e5/vxKd/rZsfSJMUX1agtjeTDf+qv1/JdBF8gg5k9ZM=
+      go.sum:     h1:e5/vxKd/rZsfSJMUX1agtjeTDf+qv1/JdBF8lex5Gm=
+
+  They share a 38-character prefix and differ only in the tail. Independent
+  hashes differ everywhere, so this reads as a corrupted or hand-edited entry
+  rather than a substituted artifact.
+- **Why `go.sum` was not repaired.** Rewriting it with whatever the proxy
+  happened to serve *is* the control `go.sum` exists to provide, and the
+  authoritative value could not be checked — `sum.golang.org` is egress-blocked
+  from this environment. Reporting an unverifiable state honestly is correct;
+  silently "fixing" a checksum is the one thing that must not happen. Tests pin
+  that no code writes `go.sum` and that `go mod tidy` is never invoked, since
+  it would rewrite the file as a side effect.
+- **What was fixed is the silence.** A gap in the gate's output can be acted
+  on; one that never appears there looks like health. The phase reports without
+  failing: a missing toolchain or unreachable proxy is a property of the
+  machine, the same reasoning the security phase already applies to host
+  findings, and each failure mode is classified separately because the remedies
+  differ entirely.
+- **For the maintainer:** run `cd go-port && go mod tidy` on a machine with
+  access to `sum.golang.org`, then verify the resulting `go.sum` against the
+  public checksum database before committing.
+- **Validation:** 16 new tests (`tests/test_new_features_211.py`).
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
