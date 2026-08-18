@@ -126,6 +126,22 @@ def run(args: argparse.Namespace) -> int:
     except Exception as e:
         results.append(("Counts", True, f"skipped ({str(e)[:40]})"))
 
+    # 4c. Go port status. The gate is this project's "is everything all
+    #     right?" command and it verified only the Python half — 2,176 lines
+    #     advertised as "29 Go commands" had no automated check at all. This
+    #     reports rather than gates: a missing toolchain or an unreachable
+    #     module proxy is a property of the machine, the same reasoning the
+    #     security phase already applies to host findings.
+    try:
+        from aictl.core.goport import check_go_port
+        go = check_go_port(project_root)
+        if go.builds is False:
+            results.append(("Go port", True, f"NOT BUILDING — {go.detail}"))
+        else:
+            results.append(("Go port", True, go.detail))
+    except Exception as e:
+        results.append(("Go port", True, f"skipped ({str(e)[:40]})"))
+
     # 5. Demo
     if not getattr(args, "skip_demo", False):
         try:
