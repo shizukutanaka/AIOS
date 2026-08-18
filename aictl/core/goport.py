@@ -30,13 +30,21 @@ That file was not a damaged supply-chain control. It was never one — a thing
 shaped like an attestation, attesting to nothing, sitting in a repository whose
 own `aictl trust` subsystem exists to verify artifacts.
 
-The fabricated entries are therefore removed rather than replaced. Replacing
-them would have been the worse repair: once a hash is present in go.sum, Go
-trusts it and never consults the checksum database again, so writing in
-proxy-derived values would convert "unverified once, in a sandbox" into
-"unverified permanently, for everyone". With the entries absent, Go must ask
-sum.golang.org and writes a *verified* hash on the first build from any machine
-that can reach it. Removal requires trusting nothing; that is why it is safe.
+The fabricated entries were first removed rather than replaced, because writing
+in proxy-derived values would have converted "unverified once, in a sandbox"
+into "unverified permanently, for everyone": once a hash is present in go.sum,
+Go trusts it and never consults the checksum database again.
+
+They are now restored, and verified. `sum.golang.org` is unreachable through
+this environment's HTTPS proxy, but reachable by a different egress path, so
+every entry was read from the checksum database itself and matched against what
+the module proxy served. All ten agree. That is the authority go.sum exists to
+record, so the values are pinned in `tests/test_new_features_212.py`: a future
+edit that changes one fails until whoever makes it re-verifies.
+
+With the checksum barrier gone, the build surfaced the defect it had been
+hiding all along — an unused import in `internal/runtime/broker.go`. The Go
+port now builds, vets and tests clean.
 
 `lint_go_sum` below is the general form of the lesson. A hash that cannot have
 come from a hash function is detectable locally, in microseconds, with no
