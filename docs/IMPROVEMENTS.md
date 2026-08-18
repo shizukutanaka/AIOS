@@ -1240,6 +1240,65 @@ guidance on grammar-constrained generation, which consistently stresses that
 the guarantee is structural rather than semantic. arxiv.org is egress-blocked
 here, so papers were reachable as titles/abstracts only.
 
+## AH. Musk algorithm, steps 2 and 4 — ✅ implemented (Passes 207-208)
+
+This session had been running steps 3 and 5 (optimize, automate) while
+skipping 1 and 2 (question, delete) — exactly the failure the algorithm names:
+optimizing something before asking whether it should exist.
+
+### Step 2 — Delete (-333 lines, zero behaviour change)
+
+26 functions and classes referenced nowhere in `aictl/`, `tests/`, or `docs/`,
+including 7 of `stack/systemctl.py`'s 10 functions. **The unchanged 3734-test
+suite is the evidence they were dead** — nothing noticed them leave.
+
+Deliberately kept, having checked: `format_for_user` and the `AictlError`
+base (`__main__` calls the former on every bubbling exception, and its first
+branch is an isinstance check against the latter), and the 9 unreferenced
+constants, which document *external* defaults — lmdeploy's 23333, LM Studio's
+1234, the bootc image. Delete applies to code that does nothing, not to values
+that carry information.
+
+### Step 4 — Accelerate cycle time (gate 59s → 30s)
+
+**Measured before optimizing.** Of `aictl gate`'s ~59s, the suite is ~57s and
+every other phase combined is 2.8s. "Make the gate faster" therefore meant
+exactly "make the suite faster"; work on anything else would have gone into
+the 5%.
+
+`core/partest.py` runs each test *file* in its own process. Files are already
+independent, while order *within* a file is preserved — which matters, since
+unittest orders methods alphabetically and some tests rely on it.
+
+Isolation arrived with the speed rather than after it: each worker gets its
+own state directory, because otherwise workers race on `~/.aios` — and the
+suite would keep writing to the user's real state directory, a bug already
+found in this codebase. One change bought both.
+
+**Serial remains the source of truth.** `--parallel` is opt-in, because a
+parallel run is only ever evidence *about* the serial result.
+
+### The defect parallelization exposed
+
+Running files in isolation revealed that `test_e2e_stories`'s cost-tracking
+test asserted "the first ask is a cache miss" **without ensuring the cache was
+empty**. It passed only because discover-order happened to leave the right
+state, and failed standalone — bisected to a specific preceding test. Fixed by
+establishing the precondition instead of assuming it. This is the fifth
+shared-mutable-state defect found this session; the class is now the single
+most reliable source of bugs in this codebase.
+
+### Steps 1, 3, 5 — status
+
+Step 1 (question requirements) produced the measurement in
+`docs/REVIEW_v1.7.0.md`. Steps 3 and 5 have been this session's default mode
+and are well covered. The **remaining step-1/2 finding is deliberately not
+acted on unilaterally**: 8 of 9 exception classes are never raised, so
+`format_for_user`'s `AictlError` branch never fires in practice, and six
+survive only because tests reference types no code path produces. Cutting
+them — or the observability command overlap — changes documented v1.6.0
+release surface, which is a maintainer's decision, not an agent's.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
