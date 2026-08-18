@@ -1288,6 +1288,42 @@ establishing the precondition instead of assuming it. This is the fifth
 shared-mutable-state defect found this session; the class is now the single
 most reliable source of bugs in this codebase.
 
+### Step 3 — Simplify (-101 lines from 4 files, +9)
+
+The same ~14-line state-isolation setUp/tearDown had been copy-pasted into ten
+places across four test files. Duplicating a *tricky* pattern is worse than
+duplicating a simple one: ten copies are ten chances to forget the
+`AIOS_STATE_DIR` half, or to restore the environment in a way that leaks when a
+test fails. Getting it wrong caused two defects here — the suite writing into
+the developer's real `~/.aios`, and tests passing only in discover order.
+`tests/support.py` now holds one implementation (`IsolatedStateTestCase`,
+`IsolatedTrackerTestCase`), using `addCleanup` so restoration survives a
+failing setUp, which a plain tearDown would not.
+
+### Step 5 — Automate (last, and only now)
+
+Automating a process you do not understand makes the wrong thing happen
+faster. This one earned it: the same three CLAUDE.md numbers were hand-edited
+about a dozen times in one session, always with the same `sed`, always after
+the same trigger. Nothing checked them, so a miscount silently shipped a false
+claim about the project's size — and those numbers are the first thing any
+reader sees.
+
+`core/docsync.py` + a `Counts` phase in `gate`. Deliberately split: check is
+pure and cheap so the gate runs it every time; sync writes. A verification step
+that silently rewrote files would be worse than the sed it replaced. Verified
+by breaking it on purpose — a wrong count fails the gate with the exact
+numbers.
+
+The test *count* is not recomputed (that would cost 57s to check a comment);
+the gate passes in the number it just measured. Count what is cheap, accept the
+expensive number from whoever already paid for it.
+
+Same pass: gate's CHANGELOG check hardcoded `"v1.7.0"`, a literal needing a
+hand-edit at every bump — a forgotten edit would leave it passing against the
+previous release forever. Now derived from `VERSION`, closing weakness #2/#8
+from `REVIEW_v1.7.0.md`.
+
 ### Steps 1, 3, 5 — status
 
 Step 1 (question requirements) produced the measurement in

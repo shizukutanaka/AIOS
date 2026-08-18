@@ -27,6 +27,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.support import IsolatedStateTestCase
 from aictl.runtime.prefix_route import (
     PrefixRouteTracker,
     _reuse_log_path,
@@ -43,20 +44,8 @@ ENDPOINTS = ["http://a:8000"]
 SHARED = "SHARED SYSTEM PREAMBLE, identical across requests. " * 30
 
 
-class _IsolatedState(unittest.TestCase):
+class _IsolatedState(IsolatedStateTestCase):
     """Each test gets its own state dir so the log never leaks between tests."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self._prev = os.environ.get("AICTL_STATE_DIR")
-        os.environ["AICTL_STATE_DIR"] = self._tmp.name
-
-    def tearDown(self):
-        if self._prev is None:
-            os.environ.pop("AICTL_STATE_DIR", None)
-        else:
-            os.environ["AICTL_STATE_DIR"] = self._prev
-        self._tmp.cleanup()
 
     def _warm_tracker(self, hits=9, misses=1):
         tracker = PrefixRouteTracker()
