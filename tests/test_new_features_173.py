@@ -25,7 +25,7 @@ get_audit_log() cached its AuditLog singleton keyed only on "was an explicit
 state_dir given", not on "does the resolved directory actually match the
 cache". A call with an explicit state_dir followed by a later call with
 state_dir=None reused the FIRST (possibly since-deleted, e.g. a cleaned-up
-tempdir) directory instead of falling back to DEFAULT_STATE_DIR -- silently
+tempdir) directory instead of falling back to the default -- silently
 misdirecting or losing audit entries for any process alternating between an
 explicit --state-dir and the default (this test file was the first code
 path in the suite to do exactly that, via two on_stack_applied hook tests
@@ -595,32 +595,50 @@ class TestHooksTestDefaultsToSuppressed(unittest.TestCase):
 class TestAuditLogCacheFallsBackToDefault(unittest.TestCase):
     """A call with an explicit state_dir must not permanently pin the cached
     AuditLog: a later call with state_dir=None must resolve to
-    DEFAULT_STATE_DIR, not silently keep writing to the first directory
+    the resolved default, not silently keep writing to the first directory
     (which may since have been deleted, e.g. a cleaned-up tempdir)."""
 
+    # The default directory is now resolved per call by resolve_state_dir(),
+    # so the default is redirected the way a user redirects it — through the
+    # environment — rather than by rebinding a module constant.
+    _ENV = ("AIOS_STATE_DIR", "AICTL_STATE_DIR")
+
     def setUp(self):
+        import os
+
         import aictl.core.audit as audit_mod
         self._orig_log = audit_mod._log
-        self._orig_default = audit_mod.DEFAULT_STATE_DIR
+        self._orig_env = {n: os.environ.get(n) for n in self._ENV}
 
     def tearDown(self):
+        import os
+
         import aictl.core.audit as audit_mod
         audit_mod._log = self._orig_log
-        audit_mod.DEFAULT_STATE_DIR = self._orig_default
+        for name, previous in self._orig_env.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+
+    def _set_default(self, path):
+        import os
+        os.environ["AIOS_STATE_DIR"] = str(path)
+        os.environ.pop("AICTL_STATE_DIR", None)
 
     def test_none_after_explicit_dir_falls_back_to_default(self):
         import aictl.core.audit as audit_mod
 
         with tempfile.TemporaryDirectory() as explicit_dir, \
              tempfile.TemporaryDirectory() as default_dir:
-            audit_mod.DEFAULT_STATE_DIR = Path(default_dir)
+            self._set_default(default_dir)
 
             log1 = audit_mod.get_audit_log(Path(explicit_dir))
             self.assertEqual(log1.dir.parent, Path(explicit_dir))
 
             log2 = audit_mod.get_audit_log(None)
             self.assertEqual(log2.dir.parent, Path(default_dir),
-                            "state_dir=None must resolve to DEFAULT_STATE_DIR, "
+                            "state_dir=None must resolve to the default, "
                             "not reuse the previous explicit directory")
 
     def test_writing_after_explicit_dir_is_deleted_does_not_crash(self):
@@ -629,7 +647,7 @@ class TestAuditLogCacheFallsBackToDefault(unittest.TestCase):
         import aictl.core.audit as audit_mod
 
         with tempfile.TemporaryDirectory() as default_dir:
-            audit_mod.DEFAULT_STATE_DIR = Path(default_dir)
+            self._set_default(default_dir)
             with tempfile.TemporaryDirectory() as explicit_dir:
                 audit_mod.audit("test.event", resource="x", state_dir=Path(explicit_dir))
             # explicit_dir no longer exists past this point.

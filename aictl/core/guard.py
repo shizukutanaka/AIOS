@@ -586,8 +586,8 @@ def _guard_stats_path(state_dir: Any = None) -> Any:
     if state_dir:
         from pathlib import Path
         return Path(state_dir) / "guard_stats.json"
-    from aictl.core.state import DEFAULT_STATE_DIR
-    return DEFAULT_STATE_DIR / "guard_stats.json"
+    from aictl.core.state import resolve_state_dir
+    return resolve_state_dir() / "guard_stats.json"
 
 
 def _record_redaction_stat(n_redacted: int, state_dir: Any = None) -> None:

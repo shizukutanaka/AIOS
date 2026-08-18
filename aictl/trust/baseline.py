@@ -55,8 +55,8 @@ class BaselineStore:
 
     def __init__(self, state_dir: Path | None = None):
         if state_dir is None:
-            from aictl.core.state import DEFAULT_STATE_DIR
-            state_dir = DEFAULT_STATE_DIR
+            from aictl.core.state import resolve_state_dir
+            state_dir = resolve_state_dir()
         self.dir = Path(state_dir)
         self.path = self.dir / "trust_baseline.json"
 

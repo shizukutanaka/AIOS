@@ -299,6 +299,22 @@ def main() -> int:
         args.json = True
     if state_dir_override is not None:
         args.state_dir = state_dir_override
+
+    # `--state-dir` is a process-wide setting, so publish it to the environment
+    # where the whole process can see it. Roughly a dozen helpers resolve the
+    # state directory without an argparse namespace in hand — the perf log, the
+    # semantic cache, the RAG index, the prefix-reuse log — and they are reached
+    # from call sites with no `args` to thread through. Before this, passing the
+    # flag moved `state.json` and left every one of those behind in `~/.aios`,
+    # which is the same split the environment variable itself used to cause,
+    # one level down. Setting it here also carries the choice into subprocesses,
+    # which is what the daemon and the parallel test workers need.
+    if getattr(args, "state_dir", None):
+        import os as _os
+
+        from aictl.core.state import STATE_DIR_ENV, resolve_state_dir
+        _os.environ[STATE_DIR_ENV] = str(resolve_state_dir(args.state_dir))
+
     if args.command is None:
         parser.print_help()
         return 0

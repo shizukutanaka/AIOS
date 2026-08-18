@@ -28,6 +28,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from aictl.core.state import resolve_state_dir
 
 
 DEFAULT_THRESHOLD = 0.92  # Cosine similarity for a cache hit
@@ -63,7 +64,7 @@ class SemanticCache:
     ):
         """Initialize the instance with provided arguments."""
         if db_path is None:
-            base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+            base = resolve_state_dir()
             db_path = Path(base) / "sem_cache.db"
         self.db_path = db_path
         self.threshold = threshold

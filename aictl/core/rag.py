@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
+from aictl.core.state import resolve_state_dir
 
 
 # ─── Configuration ─────────────────────────────────────────
@@ -106,7 +107,7 @@ class RagStore:
     def __init__(self, db_path: Path | None = None):
         """Initialize the instance with provided arguments."""
         if db_path is None:
-            base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+            base = resolve_state_dir()
             db_path = Path(base) / "rag.db"
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

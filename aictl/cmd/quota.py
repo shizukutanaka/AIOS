@@ -23,6 +23,7 @@ from pathlib import Path
 from aictl.core.output import ok, warn, err, print_json, print_table
 from aictl.core.atomicio import atomic_write_text
 from aictl.core.filelock import file_lock
+from aictl.core.state import resolve_state_dir
 
 
 def register(sub: Any) -> None:
@@ -196,7 +197,7 @@ def run_reset(args: argparse.Namespace) -> int:
 
 def _db_path() -> Path:
     """Execute db path."""
-    base = os.environ.get("AIOS_STATE_DIR", os.path.expanduser("~/.aios"))
+    base = resolve_state_dir()
     return Path(base) / "quotas.json"
 
 

@@ -165,8 +165,8 @@ def registry_path(state_dir: Path | None = None) -> Path:
     must agree on where tenants live."""
     if state_dir:
         return Path(state_dir) / "tenants.json"
-    from aictl.core.state import DEFAULT_STATE_DIR
-    return DEFAULT_STATE_DIR / "tenants.json"
+    from aictl.core.state import resolve_state_dir
+    return resolve_state_dir() / "tenants.json"
 
 
 def load_registry(path: Path) -> dict[str, Any]:

@@ -13,10 +13,13 @@ copies means ten chances to forget the `AIOS_STATE_DIR` half, or to restore the
 environment in a way that leaks on failure. One implementation, used
 everywhere, makes the correct thing the easy thing.
 
-Both environment names are set deliberately. The codebase reads
-`AICTL_STATE_DIR` in some modules and `AIOS_STATE_DIR` in others (the RAG store
-and semantic cache use the latter); setting only one leaves a module pointed at
-the real state directory, which is exactly the bug this exists to prevent.
+Both environment names are still set, but no longer because they have to be.
+The codebase used to read `AICTL_STATE_DIR` in some modules and
+`AIOS_STATE_DIR` in others, so setting only one left a module pointed at the
+real state directory. Every module now resolves through
+`aictl.core.state.resolve_state_dir()`, which honours both names, so either
+alone would do. Setting both is kept as belt-and-braces for any test that
+asserts on a specific variable.
 """
 
 from __future__ import annotations

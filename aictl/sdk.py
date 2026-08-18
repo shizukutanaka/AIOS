@@ -44,6 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Literal, overload
+from aictl.core.state import resolve_state_dir
 
 
 # ── The invisible brain ───────────────────────────────
@@ -676,7 +677,7 @@ def _update_team_quota(tokens: int) -> None:
     if not team:
         return
     try:
-        base = os.environ.get("AIOS_STATE_DIR", str(Path.home() / ".aios"))
+        base = resolve_state_dir()
         qpath = Path(base) / "quotas.json"
         if not qpath.exists():
             return

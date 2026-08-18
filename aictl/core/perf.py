@@ -38,15 +38,19 @@ class PerfRecord:
     error_type: str = ""
 
 
-_PERF_DIR_ENV = "AIOS_STATE_DIR"
 _MAX_RECORDS = 10_000
 _BUFFER_SIZE = 4096  # max bytes per atomic append
 
 
 def _perf_path() -> Path:
-    """Where we store perf.jsonl."""
-    base = os.environ.get(_PERF_DIR_ENV, os.path.expanduser("~/.aios"))
-    return Path(base) / "perf.jsonl"
+    """Where we store perf.jsonl.
+
+    Held the environment variable's name in a private constant, which read
+    only the canonical spelling and so ignored the `AICTL_STATE_DIR` alias —
+    the last writer still landing in ~/.aios when a user set that name.
+    """
+    from aictl.core.state import resolve_state_dir
+    return resolve_state_dir() / "perf.jsonl"
 
 
 def _measure_rss_mb() -> float:

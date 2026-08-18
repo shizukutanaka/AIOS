@@ -55,8 +55,8 @@ class LoRAManager:
     def __init__(self, state_dir: Path | None = None):
         """Initialize LoRA adapter manager."""
         if state_dir is None:
-            from aictl.core.state import DEFAULT_STATE_DIR
-            state_dir = DEFAULT_STATE_DIR
+            from aictl.core.state import resolve_state_dir
+            state_dir = resolve_state_dir()
         self.dir = state_dir
         self._path = self.dir / "lora_registry.json"
 

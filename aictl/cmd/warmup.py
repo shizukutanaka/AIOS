@@ -78,8 +78,8 @@ def _schedule_path(args: argparse.Namespace):
     state_dir = getattr(args, "state_dir", None)
     if state_dir:
         return Path(state_dir) / "warmup_schedule.json"
-    from aictl.core.state import DEFAULT_STATE_DIR
-    return DEFAULT_STATE_DIR / "warmup_schedule.json"
+    from aictl.core.state import resolve_state_dir
+    return resolve_state_dir() / "warmup_schedule.json"
 
 
 def _parse_interval_secs(interval: str) -> int:
