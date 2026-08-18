@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,519+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,788+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -58,6 +58,43 @@
   (`reuse_rate()`), so the decision uses observed traffic when the process has
   served any. Motivated by KVFlow (NeurIPS 2025, arXiv:2507.07400) on LRU
   eviction discarding caches shortly before reuse in agentic workflows.
+
+### Structured output
+- **`aictl guided lint <schema>`**: reviews a JSON Schema's *design*, not just
+  whether a document matches it. Constrained decoding guarantees format, not
+  semantics — a valid schema can compile fine and still make answers worse. The
+  main check is field ordering: generation is autoregressive, so a schema
+  emitting `answer` before `reasoning` forces the model to commit to a
+  conclusion and then rationalize it. Also flags deep nesting, very wide
+  schemas, undescribed fields, and optional fields that cannot be null.
+
+### Honest degradation
+- **Mock responses are now disclosed.** With no engine running, the SDK starts
+  an in-process mock so zero-config works. It previously attributed that text
+  to a real model name and reported a cost for inference that never happened.
+  Responses now carry `mock=True`, name the model `"mock"`, report zero cost,
+  and say `MOCK` in their repr; `ai.status` gained a `mock` key.
+- **`engines conform` flags plaintext HTTP** to a non-loopback engine, where
+  the `Authorization` header and every prompt cross the network in cleartext.
+  Loopback is exempt.
+- **RAG documents are screened for injected instructions** at both ingest and
+  retrieval (`rag_screen_policy`, default off), including payloads hidden with
+  zero-width and bidi characters — invisible to a human reviewing the document,
+  fully tokenized by the model.
+
+### Advisors that admit their limits
+- **Quantization**: when an FP4 format wins on a Blackwell card, the
+  recommendation now says FP8 also fits at higher quality and that FP4 should
+  be validated on your own workload. Fires only when FP4 wins and FP8 fits.
+- **Speculative decoding**: flags draft-token counts outside the useful 3–8
+  band, and warns that an EAGLE3 head pointed at a fine-tune loses acceptance.
+
+### Developer experience
+- **`aictl gate --parallel`** runs the suite file-per-process: gate drops from
+  ~59s to ~30s. Serial remains the source of truth. Each worker gets its own
+  state directory, so the suite no longer touches your real `~/.aios`.
+- **Doc counts maintain themselves.** `gate` derives the test/file counts in
+  `CLAUDE.md` and `RELEASE.md` rather than trusting hand-edited numbers.
 
 ### Catalog & advisors
 - New models (GLM-5.2, Kimi K2.6); Medusa speculative-decoding method; vLLM v0.19 CPU KV-offload hints; NVFP4 quant sweet-spot notes; Apple-Silicon unified-memory fit math; 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio — all opt-in, OpenAI-compatible).

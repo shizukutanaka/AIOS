@@ -85,7 +85,9 @@ class TestCheckIsPure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = self._project(td, "tests/  999 test files\n")
             problems = check_counts(root)
-            self.assertTrue(any(p.label == "test files" for p in problems))
+            # The label names the document, so a finding says which file lies.
+            self.assertTrue(any(p.label.endswith("test files") for p in problems))
+            self.assertTrue(any("CLAUDE.md" in p.label for p in problems))
 
     def test_accurate_counts_report_nothing(self):
         with tempfile.TemporaryDirectory() as td:
@@ -107,6 +109,53 @@ class TestCheckIsPure(unittest.TestCase):
         mismatch = CountMismatch("tests", documented=10, actual=12)
         self.assertIn("10", str(mismatch))
         self.assertIn("12", str(mismatch))
+
+    def test_message_does_not_hardcode_a_document_name(self):
+        # It previously said "CLAUDE.md says ...", which mislabelled every
+        # RELEASE.md finding as coming from the wrong file.
+        message = str(CountMismatch("RELEASE.md tests", documented=1, actual=2))
+        self.assertIn("RELEASE.md", message)
+        self.assertNotIn("CLAUDE.md", message)
+
+
+class TestReleaseNotesAreTracked(unittest.TestCase):
+    """RELEASE.md matters more than CLAUDE.md: it becomes the public release
+    announcement, so a stale number there is a false claim shipped to everyone."""
+
+    def _project(self, td, claude, release):
+        root = Path(td)
+        (root / "tests").mkdir()
+        (root / "tests" / "test_a.py").write_text("")
+        (root / "CLAUDE.md").write_text(claude)
+        (root / "RELEASE.md").write_text(release)
+        return root
+
+    def test_stale_release_notes_are_detected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._project(td, "1 test files, 7+ tests\n", "- **99+ tests**\n")
+            problems = check_counts(root, test_count=7)
+            self.assertTrue(any("RELEASE.md" in p.label for p in problems))
+
+    def test_thousands_separator_is_understood(self):
+        # RELEASE.md writes "3,783+ tests"; a checker that only understood
+        # "3783+ tests" would silently pass a stale grouped number.
+        with tempfile.TemporaryDirectory() as td:
+            root = self._project(td, "1 test files\n", "- **3,519+ tests**\n")
+            problems = check_counts(root, test_count=3783)
+            self.assertTrue(any("RELEASE.md" in p.label for p in problems))
+
+    def test_sync_preserves_each_documents_number_style(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._project(td, "1 test files, 5+ tests\n", "- **5+ tests**\n")
+            sync_counts(root, test_count=3783)
+            self.assertIn("3783+ tests", (root / "CLAUDE.md").read_text())
+            self.assertIn("3783+ tests", (root / "RELEASE.md").read_text())
+
+    def test_grouped_number_stays_grouped(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._project(td, "1 test files\n", "- **3,519+ tests**\n")
+            sync_counts(root, test_count=3783)
+            self.assertIn("3,783+ tests", (root / "RELEASE.md").read_text())
 
 
 class TestSyncWrites(unittest.TestCase):
