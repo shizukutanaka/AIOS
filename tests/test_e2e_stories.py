@@ -160,6 +160,15 @@ class TestStory3CostConsciousOperator(unittest.TestCase):
         from aictl.sdk import _AmbientContext
         _AmbientContext.reset_for_testing()
 
+        # Establish the precondition instead of assuming it. This test
+        # asserts the first ask is a cache MISS, which is only true if the
+        # cache is empty — and it is not, when an earlier test in this file
+        # has run. Previously the test passed only because discover-order
+        # happened to leave the cache in the right state, so it failed when
+        # run standalone or per-file.
+        from aictl.core.sem_cache import get_default_cache
+        get_default_cache().clear()
+
         import aictl
 
         # First call — has a cost

@@ -20,6 +20,12 @@ def register(sub: Any) -> None:
     p = sub.add_parser("gate", help="Run quality gate (compile + import + version + tests + demo)")
     p.add_argument("--skip-demo", action="store_true", help="Skip demo step")
     p.add_argument("--skip-tests", action="store_true", help="Skip test suite")
+    p.add_argument("--parallel", action="store_true",
+                   help="Run the suite file-per-process (much faster). Serial "
+                        "remains the source of truth — use this to iterate, "
+                        "then confirm with a normal run.")
+    p.add_argument("--jobs", type=int, default=0,
+                   help="Worker count for --parallel (default: cores - 1).")
     p.set_defaults(func=run)
 
 
@@ -74,7 +80,20 @@ def run(args: argparse.Namespace) -> int:
     results.append(("Version", match, f"{VERSION} == {toml_version}"))
 
     # 4. Tests
-    if not getattr(args, "skip_tests", False):
+    if getattr(args, "parallel", False) and not getattr(args, "skip_tests", False):
+        # Opt-in acceleration. The suite is ~95% of this gate's runtime, so it
+        # is the only phase worth parallelizing. Reports files rather than
+        # tests: a worker's exit code is per-file, and inventing a test count
+        # from it would be a number we did not actually measure.
+        from aictl.core.partest import run_parallel
+        par = run_parallel(workers=getattr(args, "jobs", 0),
+                           tests_dir=project_root / "tests")
+        detail = (f"{par.passed}/{par.passed + len(par.failed)} files "
+                  f"in {par.elapsed_s:.0f}s on {par.workers} workers")
+        if par.failed:
+            detail += f" — failed: {', '.join(par.failed[:3])}"
+        results.append(("Tests", par.ok, detail))
+    elif not getattr(args, "skip_tests", False):
         tests_dir = project_root / "tests"
         loader = unittest.TestLoader()
         suite = loader.discover(str(tests_dir))
