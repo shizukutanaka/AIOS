@@ -9,10 +9,13 @@ State directory: ~/.aios/
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from aictl.core.constants import STATE_DIR_PERMISSIONS
 from typing import Any
 
 from aictl.core.atomicio import atomic_write_text
@@ -44,6 +47,40 @@ class StackEntry:
     services: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _secure_state_dir(path: Path) -> bool:
+    """Restrict the state directory to its owner. Returns True if changed.
+
+    This directory holds cloud API keys (config.json), the metering ledger,
+    the audit log, and every document indexed into RAG. It was being created
+    with the process umask — 0755 on a typical system — leaving all of that
+    world-readable.
+
+    aictl already knew better in three places and acted in none: the constant
+    STATE_DIR_PERMISSIONS declared 0700, `core/security.py` flagged the loose
+    mode as a HIGH finding, and the remediation it printed was the very chmod
+    performed here. Detecting a problem you can fix, and then only printing
+    advice, is the least useful arrangement of those parts.
+
+    Tightening an existing directory follows ssh's convention: a tool holding
+    credentials is expected to insist on owner-only access rather than warn
+    about it forever. It only ever removes access, never grants it, and is
+    skipped when we do not own the directory — narrowing someone else's
+    permissions is not this function's business.
+    """
+    try:
+        info = path.stat()
+        if (info.st_mode & 0o077) == 0:
+            return False                      # already owner-only
+        if info.st_uid != os.getuid():
+            return False                      # not ours to re-permission
+        path.chmod(STATE_DIR_PERMISSIONS)
+        return True
+    except (OSError, AttributeError):
+        # Windows has no st_uid/getuid, and a read-only mount is a legitimate
+        # deployment. Failing to tighten must never stop aictl from running.
+        return False
+
+
 class StateStore:
     """Filesystem + SQLite state store."""
 
@@ -57,6 +94,7 @@ class StateStore:
         """
         self.dir = Path(state_dir) if state_dir else DEFAULT_STATE_DIR
         self.dir.mkdir(parents=True, exist_ok=True)
+        _secure_state_dir(self.dir)
         self._state_path = self.dir / "state.json"
         self._stacks_path = self.dir / "stacks.json"
         self._db_path = self.dir / "models.db"
