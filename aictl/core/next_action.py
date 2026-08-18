@@ -98,10 +98,3 @@ def suggest(key: str, **context: Any) -> None:
     print()
 
 
-def suggest_after_error(command: str) -> None:
-    """Suggest recovery options after a command fails."""
-    print()
-    print("  Need help?")
-    print("    aictl troubleshoot       # automatic diagnosis")
-    print("    aictl doctor             # system health check")
-    print()

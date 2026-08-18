@@ -11,10 +11,6 @@ that wants to raise a user-friendly exception.
 
 from __future__ import annotations
 
-from typing import Any
-
-import sys
-
 
 class AictlError(Exception):
     """Base class for every user-facing error.
@@ -91,44 +87,6 @@ class NetworkUnavailable(AictlError):
     exit_code = 3
 
 
-class CostBudgetExceeded(AictlError):
-    exit_code = 2
-
-    def __init__(self, budget_usd: float, current_usd: float) -> None:
-        """Initialize the instance with provided arguments."""
-        super().__init__()
-        self.user_message = (
-            f"Monthly spending limit of ${budget_usd:.2f} reached "
-            f"(${current_usd:.2f} used)."
-        )
-        self.suggested_action = (
-            "aictl cost analyze    # see what's consuming the most budget"
-        )
-
-
-class MissingDependency(AictlError):
-    exit_code = 2
-
-    def __init__(self, what: str, install_cmd: str) -> None:
-        """Initialize the instance with provided arguments."""
-        super().__init__()
-        self.user_message = f"{what} is not installed."
-        self.suggested_action = install_cmd
-
-
-class PermissionDenied(AictlError):
-    exit_code = 2
-
-    def __init__(self, path: str) -> None:
-        """Initialize the instance with provided arguments."""
-        super().__init__()
-        self.user_message = f"Cannot write to {path}."
-        self.why = "aictl needs this location to store state and logs."
-        self.suggested_action = (
-            f"sudo chown -R $USER {path}    # or set AIOS_STATE_DIR to another path"
-        )
-
-
 def format_for_user(e: BaseException) -> str:
     """Turn any exception into a human-readable message.
 
@@ -189,8 +147,3 @@ def format_for_user(e: BaseException) -> str:
     )
 
 
-def print_error(e: BaseException, out: Any=None) -> None:
-    """Print an error to stderr with consistent formatting."""
-    if out is None:
-        out = sys.stderr
-    print(format_for_user(e), file=out)

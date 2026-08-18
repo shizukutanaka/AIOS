@@ -175,17 +175,3 @@ def _percentile(values: list[float], pct: int) -> float:
     return s[f] + (s[c] - s[f]) * (k - f)
 
 
-def truncate_if_needed() -> None:
-    """Cap perf.jsonl at _MAX_RECORDS lines. Called on startup."""
-    path = _perf_path()
-    if not path.exists():
-        return
-    try:
-        with open(path, encoding="utf-8") as f:
-            lines = f.readlines()
-        if len(lines) > _MAX_RECORDS:
-            keep = lines[-_MAX_RECORDS:]
-            with open(path, "w", encoding="utf-8") as f:
-                f.writelines(keep)
-    except OSError:
-        pass  # best-effort; failure is non-critical

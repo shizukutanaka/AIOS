@@ -177,23 +177,6 @@ def write_quadlets(units: list[QuadletUnit], rootless: bool = True,
     return written
 
 
-def remove_quadlets(stack_name: str, rootless: bool = True) -> list[Path]:
-    """Remove Quadlet files for a stack."""
-    target_dir = QUADLET_DIR_ROOTLESS if rootless else QUADLET_DIR_ROOT
-    removed: list[Path] = []
-
-    if not target_dir.exists():
-        return removed
-
-    prefix = f"aios-{stack_name}-"
-    for f in target_dir.iterdir():
-        if f.name.startswith(prefix) and f.suffix == ".container":
-            f.unlink()
-            removed.append(f)
-
-    return removed
-
-
 def reload_systemd() -> bool:
     """Reload systemd to pick up new/changed Quadlet units."""
     import subprocess
