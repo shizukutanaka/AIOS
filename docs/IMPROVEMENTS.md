@@ -1384,6 +1384,13 @@ release surface, which is a maintainer's decision, not an agent's.
 
 > **Status:** surfaced by a new `Go port` phase in `gate`
 > (`core/goport.py`). **`go.sum` was left untouched, on purpose.**
+>
+> **Superseded in part by AJ.** The diagnosis below — "a corrupted or
+> hand-edited entry" — was too charitable by an order of magnitude. Looking
+> harder showed four fabricated entries in a file the Go toolchain never wrote.
+> The refusal to write in proxy-derived values survived; the entries were
+> **removed** instead, which restores checksum-database verification rather
+> than retiring it.
 
 - **Found by asking what `gate` does not check.** It is this project's "is
   everything all right?" command and it verified only the Python half — the
@@ -1417,6 +1424,60 @@ release surface, which is a maintainer's decision, not an agent's.
   access to `sum.golang.org`, then verify the resulting `go.sum` against the
   public checksum database before committing.
 - **Validation:** 16 new tests (`tests/test_new_features_211.py`).
+
+## AJ. The `go.sum` was fabricated — ✅ removed, not replaced (Pass 212)
+
+> **Status:** four fabricated entries deleted; `lint_go_sum()` added to
+> `core/goport.py` and run by `gate` on every invocation.
+
+- **Found by questioning the previous pass's own conclusion.** AI reported the
+  checksum as unverifiable and stopped. Two questions had gone unasked: whether
+  the recorded value was even *shaped* like a hash, and how far the damage went.
+- **It was not a hash.** The cobra `h1:` value was 43 base64 characters, which
+  cannot decode to a 32-byte SHA-256. That is decidable locally, in
+  microseconds, with no network and nobody's authority — and it means there was
+  never a competing attestation to weigh against the proxy's.
+- **Four of eight entries were wrong, and the shape is the finding:**
+
+      mousetrap    wN+x4NVGpMsO7ErU QYnwIlCDoM6PDIBo7tSrmkPvXss=   claimed
+                   wN+x4NVGpMsO7ErU n/mUI3vEoE6Jt13X2s0bqwp9tc8=   real
+      blackfriday  +Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55j GbOGsM=   claimed
+                   +Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55j meOWTM=   real
+      cobra (zip)  e5/vxKd/rZsfSJMUX1agtjeTDf+qv1/JdBF8 lex5Gm=    claimed
+                   e5/vxKd/rZsfSJMUX1agtjeTDf+qv1/JdBF8 gg5k9ZM=   real
+
+  Long shared prefix, then a plausible-looking tail. Independent SHA-256 values
+  share essentially no prefix, so 36 characters of agreement is neither chance
+  nor corruption in transit — it is a value reproduced from memory and finished
+  by guesswork. The file also omitted entries a real `go mod tidy` emits
+  (`gopkg.in/check.v1`, `gopkg.in/yaml.v3`). It was a thing shaped like an
+  attestation, attesting to nothing, in a repository whose own `aictl trust`
+  subsystem exists to verify artifacts.
+- **Removed rather than replaced — the direction is the entire point.** Once a
+  hash sits in `go.sum`, Go trusts it and never consults the checksum database
+  again. Writing in proxy-derived values would have turned the gate green by
+  converting *unverified once, in a sandbox* into *unverified permanently, for
+  everyone*. With the entries absent, Go **must** ask `sum.golang.org` and
+  records a verified hash on the first `go mod download` from any machine that
+  can reach it. Removal requires trusting nothing; that is what makes it safe,
+  and it is why the tempting repair was the worse one.
+- **Why the verified values were not simply generated here.** `sum.golang.org`
+  is not in this environment's network allowlist (`proxy.golang.org` is), and
+  no signed checksum-database tiles were cached locally. Both were checked
+  rather than assumed. `GOSUMDB=off` was used exactly once, in a throwaway
+  copy, purely to measure how many entries were wrong — nothing from it was
+  shipped, and a test now asserts no shipped module mentions `GOSUMDB`,
+  `GONOSUMDB`, `GOPRIVATE` or `GOFLAGS`.
+- **The generalisable half.** `lint_go_sum()` checks every entry's
+  well-formedness on each `gate` run: 0.04s, no network, no toolchain, no
+  build. It cannot say an entry is *correct* — only the checksum database can —
+  but a value that no hash function could have produced can never sit in this
+  tree unnoticed again. `gate` also now distinguishes *not yet recorded* from
+  *broken*, so absent checksums no longer read as a Go defect.
+- **For the maintainer:** `cd go-port && go mod download` on a machine with
+  normal network access writes the verified `go.sum`; it is safe to commit.
+  See `go-port/README.md`.
+- **Validation:** 26 new tests (`tests/test_new_features_212.py`).
 
 ## Sources (Part 3)
 
