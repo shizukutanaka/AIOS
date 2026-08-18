@@ -171,12 +171,22 @@ class TestStory3CostConsciousOperator(unittest.TestCase):
 
         import aictl
 
-        # First call — has a cost
+        # First call — a miss, and honestly attributed.
+        #
+        # This previously asserted cost_usd > 0. With no real engine running,
+        # the in-process mock serves the request, so that assertion was
+        # requiring aictl to bill for inference that never happened — the
+        # test encoded the fabrication rather than catching it. A mock
+        # response now reports mock=True, model "mock", and zero cost, so
+        # `tco`/`cost` cannot show spend that did not occur.
         r1 = aictl.ai.ask("What is the speed of light?")
         self.assertFalse(r1.cached)
-        self.assertGreater(r1.cost_usd, 0)
-        cost_str = r1.cost
-        self.assertTrue(cost_str.startswith("$"))
+        if r1.mock:
+            self.assertEqual(r1.cost_usd, 0.0)
+            self.assertEqual(r1.model, "mock")
+        else:
+            self.assertGreater(r1.cost_usd, 0)
+            self.assertTrue(r1.cost.startswith("$"))
 
         # Second call — should be cached
         r2 = aictl.ai.ask("What is the speed of light?")

@@ -111,12 +111,18 @@ def run(args: argparse.Namespace) -> int:
     # 4b. Doc counts. Automating the thing that was hand-edited a dozen times
     #     in one session: CLAUDE.md's counts are the first thing any reader
     #     sees about this codebase's size, and nothing checked them.
+    #     Syncs rather than merely complaining. A check that fails the build
+    #     because a *derived number in a comment* is stale turns the gate's
+    #     verdict into a statement about documentation instead of code — and
+    #     leaves the human doing the sed anyway, which is the manual step this
+    #     was meant to remove. Derived data should be derived. It reports what
+    #     it changed, so the rewrite is never silent.
     try:
-        from aictl.core.docsync import check_counts
-        stale = check_counts(project_root, measured_tests)
-        results.append(("Counts", not stale,
-                        "CLAUDE.md in sync" if not stale
-                        else "; ".join(str(s_) for s_ in stale[:2])))
+        from aictl.core.docsync import sync_counts
+        changed = sync_counts(project_root, measured_tests)
+        results.append(("Counts", True,
+                        "CLAUDE.md in sync" if not changed
+                        else f"updated {len(changed)} stale count(s)"))
     except Exception as e:
         results.append(("Counts", True, f"skipped ({str(e)[:40]})"))
 

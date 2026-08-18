@@ -135,6 +135,7 @@ class _AmbientContext:
 
     def _locate_or_start_engine(self) -> None:
         """Find a running engine, or use the mock if nothing's there."""
+        self._is_mock = False
         # Check user-configured endpoint
         if url := os.environ.get("AICTL_ENDPOINT"):
             self._engine_url = url
@@ -165,20 +166,45 @@ class _AmbientContext:
             return False
 
     def _start_dev_engine(self) -> None:
-        """Launch an in-process mock engine. Invisible to the developer."""
+        """Launch an in-process mock engine so zero-config still works.
+
+        Deliberately NOT invisible any more. The convenience is worth keeping —
+        `import aictl; aictl.ai.ask(...)` working with nothing installed is a
+        real feature — but a caller who cannot tell a mock answer from a real
+        one can ship code that looks correct and returns fabricated text. The
+        response now carries `mock=True`, names the model "mock", and reports
+        zero cost, because no inference was billed and none happened.
+        """
         try:
             from aictl.daemon.mock_engine import start_mock_engine
             port = _find_free_port()
             start_mock_engine(port=port)
             self._engine_url = f"http://127.0.0.1:{port}"
+            self._is_mock = True
             # Server runs on daemon thread; auto-cleans on process exit
         except Exception:
             self._engine_url = None
 
     @property
+    def is_mock(self) -> bool:
+        """True when responses are coming from the in-process mock engine."""
+        return bool(getattr(self, "_is_mock", False))
+
+    @property
     def model(self) -> str:
-        """Return the configured default model name."""
-        return self._default_model or "mock"
+        """Model name that will actually serve requests.
+
+        Reports "mock" when the mock is serving, rather than the
+        hardware-derived default: naming a real model for text a mock produced
+        is the misattribution this exists to prevent.
+        """
+        if getattr(self, "_is_mock", False):
+            return "mock"
+        # "unknown", not "mock": those are different states, and conflating
+        # them means an unconfigured real engine reports the same model name
+        # as fabricated output. That ambiguity is precisely what this pass
+        # exists to remove.
+        return self._default_model or "unknown"
 
     @property
     def endpoint(self) -> str:
@@ -215,6 +241,10 @@ class _Response:
     cached: bool = False
     cost_usd: float = 0.0    # actual cost for this call
     cost_jpy: float = 0.0
+    # True when an in-process mock engine produced this text, not a real
+    # model. Checked rather than assumed: silently returning plausible
+    # fabricated output is worse than returning an error.
+    mock: bool = False
 
     def __str__(self) -> str:
         """Return the string representation."""
@@ -222,7 +252,8 @@ class _Response:
 
     def __repr__(self) -> str:
         """Return the developer-facing representation."""
-        return f"<ai response from {self.model}: {self.text[:40]!r}...>"
+        origin = "MOCK " if self.mock else ""
+        return f"<ai {origin}response from {self.model}: {self.text[:40]!r}...>"
 
     def __add__(self, other: object) -> str:
         """response + 'text' → concatenated string."""
@@ -396,11 +427,17 @@ class _AI:
         # identical prompt for the full TTL.
         if not private and text.strip():
             _cache_store(full, text, chosen_model, tokens)
-        cost = _compute_call_cost(chosen_model, full, tokens, ctx.endpoint)
+        is_mock = ctx.is_mock
+        # No real inference happened, so there is no real cost to report.
+        # A non-zero figure here would show up in `tco`/`cost` reporting as
+        # spend that never occurred.
+        cost = ((0.0, 0.0) if is_mock
+                else _compute_call_cost(chosen_model, full, tokens, ctx.endpoint))
 
         return _Response(
-            text=text, model=chosen_model, tokens=tokens,
+            text=text, model="mock" if is_mock else chosen_model, tokens=tokens,
             latency_ms=latency, cost_usd=cost[0], cost_jpy=cost[1],
+            mock=is_mock,
         )
 
     def classify(
@@ -588,7 +625,8 @@ class _AI:
 
         ctx.note_usage(tokens)
         return _Response(
-            text=text, model=chosen_model, tokens=tokens, latency_ms=latency
+            text=text, model="mock" if ctx.is_mock else chosen_model,
+            tokens=tokens, latency_ms=latency, mock=ctx.is_mock,
         )
 
     def embed(self, text: str | list[str]) -> list[list[float]]:
@@ -620,6 +658,10 @@ class _AI:
             "default_model": ctx._default_model,
             "endpoint": ctx._engine_url,
             "usage": dict(ctx._usage),
+            # "What am I actually running against?" is exactly the question
+            # status() exists to answer, and the mock fallback is the answer a
+            # user is most likely to be surprised by.
+            "mock": ctx.is_mock,
         }
 
 
