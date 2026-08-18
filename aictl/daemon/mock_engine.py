@@ -351,14 +351,3 @@ def start_mock_engine(port: int = 9999) -> ThreadedMockServer:
     return server
 
 
-def run_mock_engine(port: int = 9999) -> None:
-    """Run mock engine in foreground (blocking)."""
-    server = ThreadedMockServer(("127.0.0.1", port), MockEngineHandler)
-    print(f"Mock inference engine listening on http://127.0.0.1:{port}")
-    print("  GET  /v1/models")
-    print("  POST /v1/chat/completions")
-    print("  GET  /metrics")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.shutdown()

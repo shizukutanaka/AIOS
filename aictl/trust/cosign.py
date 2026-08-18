@@ -157,34 +157,6 @@ def verify_attestation(
     return result
 
 
-def get_image_digest(image_ref: str) -> str:
-    """Get the digest of a container image."""
-    for tool in ("cosign", "skopeo", "podman", "docker"):
-        if not shutil.which(tool):
-            continue
-        try:
-            if tool == "cosign":
-                r = subprocess.run(
-                    ["cosign", "triangulate", image_ref],
-                    capture_output=True, text=True, timeout=10,
-                )
-            elif tool == "skopeo":
-                r = subprocess.run(
-                    ["skopeo", "inspect", "--format", "{{.Digest}}", f"docker://{image_ref}"],
-                    capture_output=True, text=True, timeout=10,
-                )
-            else:
-                r = subprocess.run(
-                    [tool, "inspect", "--format", "{{.Digest}}", image_ref],
-                    capture_output=True, text=True, timeout=10,
-                )
-            if r.returncode == 0:
-                return r.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            continue
-    return ""
-
-
 def _parse_cosign_output(stdout: str, result: VerifyResult) -> None:
     """Parse cosign JSON output to extract signer and issuer."""
     try:

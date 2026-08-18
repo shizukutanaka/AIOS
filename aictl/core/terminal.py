@@ -67,16 +67,6 @@ def warning(text: str) -> str:
     return _c("33", text)   # yellow
 
 
-def error_text(text: str) -> str:
-    """Return ANSI-colored error text (red)."""
-    return _c("31", text)   # red
-
-
-def highlight(text: str) -> str:
-    """Return ANSI-colored highlighted text (cyan)."""
-    return _c("36", text)   # cyan
-
-
 # ── Spinner ─────────────────────────────────────────────────
 
 class Spinner:
@@ -149,20 +139,6 @@ def progress_bar(current: int, total: int, width: int = 30, label: str = "") -> 
     return result
 
 
-def print_progress(current: int, total: int, label: str = "") -> None:
-    """Print a progress bar, overwriting the previous line."""
-    bar = progress_bar(current, total, label=label)
-    if sys.stdout.isatty():
-        sys.stdout.write(f"\r  {bar}")
-        sys.stdout.flush()
-        if current >= total:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-    else:
-        if current == total:
-            print(f"  {bar}")
-
-
 # ── Section header ───────────────────────────────────────────
 
 def section(title: str) -> None:
@@ -176,10 +152,3 @@ def section(title: str) -> None:
 
 # ── Key-value pairs with visual hierarchy ────────────────────
 
-def kv_row(key: str, value: str, key_width: int = 16) -> None:
-    """Print a key=value row with dimmed key and bright value."""
-    key_str = key.ljust(key_width)
-    if _COLOR:
-        print(f"  \033[2m{key_str}\033[0m  {value}")
-    else:
-        print(f"  {key_str}  {value}")

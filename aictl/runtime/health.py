@@ -90,39 +90,3 @@ def check_http_health(endpoint: str, path: str = "/health", timeout: int = 5) ->
     return sh
 
 
-def restart_container(container_name: str) -> bool:
-    """Restart a container."""
-    rt = detect_container_runtime()
-    if rt == "none":
-        return False
-
-    try:
-        result = subprocess.run(
-            [rt, "restart", container_name],
-            capture_output=True, timeout=30,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
-def check_all_aios_services() -> list[ServiceHealth]:
-    """Check health of all aios-managed containers."""
-    rt = detect_container_runtime()
-    if rt == "none":
-        return []
-
-    results: list[ServiceHealth] = []
-    try:
-        proc = subprocess.run(
-            [rt, "ps", "-a", "--filter", "name=aios-", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=10,
-        )
-        for name in proc.stdout.strip().splitlines():
-            if name:
-                sh = check_container_health(name)
-                results.append(sh)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass  # best-effort; failure is non-critical
-
-    return results

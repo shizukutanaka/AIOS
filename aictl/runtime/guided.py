@@ -50,11 +50,6 @@ ENGINE_BACKENDS: dict[str, list[str]] = {
 CONSTRAINT_KINDS = ("json", "json_schema", "regex", "choice", "grammar")
 
 
-def list_engines() -> list[str]:
-    """Engines aictl can advise guided-decoding for."""
-    return list(ENGINE_BACKENDS)
-
-
 def recommend_backend(engine: str) -> str | None:
     """Best guided-decoding backend for an engine, or None if engine-native."""
     backends = ENGINE_BACKENDS.get(engine.lower())

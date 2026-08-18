@@ -45,11 +45,6 @@ def _note_probe_error(engine: str, endpoint: str, error: Exception) -> None:
         del _probe_failures[: len(_probe_failures) - _MAX_PROBE_LOG]
 
 
-def get_probe_failures() -> list[str]:
-    """Recent engine probe failures. For diagnostics."""
-    return list(_probe_failures)
-
-
 @dataclass
 class EngineHealth:
     engine: str             # vllm | sglang | ollama | trt-llm

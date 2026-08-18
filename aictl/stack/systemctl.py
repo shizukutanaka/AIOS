@@ -35,48 +35,6 @@ def _systemctl(args: list[str], user: bool = True, timeout: int = 15) -> tuple[i
         return -1, str(e)
 
 
-def daemon_reload(user: bool = True) -> bool:
-    """Daemon reload."""
-    code, _ = _systemctl(["daemon-reload"], user=user)
-    return code == 0
-
-
-def start_unit(unit: str, user: bool = True) -> tuple[bool, str]:
-    """Start unit."""
-    code, out = _systemctl(["start", unit], user=user)
-    if code == 0:
-        return True, f"Started {unit}"
-    return False, out
-
-
-def stop_unit(unit: str, user: bool = True) -> tuple[bool, str]:
-    """Stop unit."""
-    code, out = _systemctl(["stop", unit], user=user)
-    if code == 0:
-        return True, f"Stopped {unit}"
-    return False, out
-
-
-def restart_unit(unit: str, user: bool = True) -> tuple[bool, str]:
-    """Restart unit."""
-    code, out = _systemctl(["restart", unit], user=user)
-    if code == 0:
-        return True, f"Restarted {unit}"
-    return False, out
-
-
-def enable_unit(unit: str, user: bool = True) -> bool:
-    """Enable unit."""
-    code, _ = _systemctl(["enable", unit], user=user)
-    return code == 0
-
-
-def disable_unit(unit: str, user: bool = True) -> bool:
-    """Disable unit."""
-    code, _ = _systemctl(["disable", unit], user=user)
-    return code == 0
-
-
 def get_unit_status(unit: str, user: bool = True) -> UnitStatus:
     """Get detailed status of a systemd unit."""
     us = UnitStatus(name=unit)
@@ -145,20 +103,3 @@ def list_aios_units(user: bool = True) -> list[UnitStatus]:
     return units
 
 
-def get_journal_logs(unit: str, lines: int = 50, follow: bool = False,
-                     user: bool = True) -> "subprocess.Popen[str] | str":
-    """Get journal logs for a unit. If follow=True, returns Popen for streaming."""
-    cmd = ["journalctl"]
-    if user:
-        cmd.append("--user")
-    cmd.extend(["-u", unit, "--no-pager", "-n", str(lines)])
-
-    if follow:
-        cmd.append("-f")
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
-
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        return r.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return ""
