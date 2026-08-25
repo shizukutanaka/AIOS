@@ -164,6 +164,22 @@ def _fp8_near_lossless_note(scores: list[dict[str, Any]],
             "production.")
 
 
+def measured_use_cases() -> list[str]:
+    """Use cases QUANT_DATA carries real quality numbers for.
+
+    The `--use-case` choices are deliberately wider than this: quantizing an
+    embedding model is a real thing to want advice about. But there is no
+    embedding-specific quality data, so the scorer falls back to `q_chat` —
+    and it used to do so silently, printing chat quality under the heading
+    "Use case: embedding". Naming the gap is what turns a fabricated-looking
+    number into an honest proxy.
+    """
+    keys: set[str] = set()
+    for data in QUANT_DATA.values():
+        keys.update(k[2:] for k in data if k.startswith("q_"))
+    return sorted(keys)
+
+
 def run_recommend(args: argparse.Namespace) -> int:
     """Generate a recommendation."""
     from aictl.cmd.fit import _find_model
@@ -216,7 +232,12 @@ def run_recommend(args: argparse.Namespace) -> int:
     print()
     print(f"  Model:    {args.model}")
     print(f"  GPU:      {gpu_name}")
-    print(f"  Use case: {args.use_case}")
+    proxied = args.use_case not in measured_use_cases()
+    if proxied:
+        print(f"  Use case: {args.use_case}  (no {args.use_case}-specific "
+              f"quality data — showing chat quality as a proxy)")
+    else:
+        print(f"  Use case: {args.use_case}")
     print()
     print(f"  Size:     {best['size_mb']/1024:.1f}GB")
     print(f"  Quality:  {best['quality']*100:.0f}% of FP16")
