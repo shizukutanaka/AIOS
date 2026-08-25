@@ -112,3 +112,45 @@ def markdown_command_references(text: str) -> set[str]:
             if match.start() > 0 and line[match.start() - 1] == "`":
                 refs.add(match.group(1))
     return refs
+
+
+def mcp_declared_tools() -> set[str]:
+    """Tool names the MCP server advertises in `tools/list`."""
+    from aictl.mcp_server import TOOLS
+    return {t["name"] for t in TOOLS if isinstance(t, dict) and "name" in t}
+
+
+def mcp_dispatched_tools() -> set[str]:
+    """Tool names `_dispatch_tool` actually routes.
+
+    Read from the dispatcher's AST rather than by calling it: every handler
+    does real work — hardware detection, a security scan, an LLM call — so
+    probing reachability by invocation would make the gate slow and
+    side-effecting. Which names the dispatcher compares against is a static
+    property, so it is read statically, and parsed rather than grepped so a
+    name appearing in a docstring or comment cannot be mistaken for a route.
+
+    The pairing matters more than either number: a tool declared but not
+    dispatched is advertised in `tools/list` and then fails when called, and
+    one dispatched but not declared is unreachable code. A count threshold
+    sees neither.
+    """
+    import ast
+    from pathlib import Path
+
+    import aictl.mcp_server as mcp
+
+    tree = ast.parse(Path(mcp.__file__).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == "_dispatch_tool"):
+            continue
+        for inner in ast.walk(node):
+            if (isinstance(inner, ast.Compare)
+                    and isinstance(inner.left, ast.Name)
+                    and inner.left.id == "name"):
+                for comparator in inner.comparators:
+                    if isinstance(comparator, ast.Constant) and \
+                            isinstance(comparator.value, str):
+                        names.add(comparator.value)
+    return names

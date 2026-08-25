@@ -82,6 +82,7 @@ def check_counts(root: Path | None = None, test_count: int = 0) -> list[CountMis
     base = root or Path(".")
     problems: list[CountMismatch] = []
     actual_files = count_test_files(base)
+    surface = _surface_counts(base)
 
     for name in _TRACKED_DOCS:
         doc = base / name
@@ -102,7 +103,56 @@ def check_counts(root: Path | None = None, test_count: int = 0) -> list[CountMis
                     if documented != test_count:
                         problems.append(CountMismatch(f"{name} tests",
                                                       documented, test_count, i))
+            # The surface numbers. These were documented and never verified:
+            # "80 Python + 29 Go commands" and "19 MCP tools" are the first
+            # claims any reader meets, and nothing compared them to reality.
+            for label, pattern, actual in _surface_claims(surface):
+                if actual is None:
+                    continue
+                for m3 in re.finditer(pattern, line):
+                    documented = int(m3.group(1))
+                    if documented != actual:
+                        problems.append(CountMismatch(f"{name} {label}",
+                                                      documented, actual, i))
     return problems
+
+
+def _surface_counts(base: Path) -> dict[str, int | None]:
+    """The real sizes of the surfaces the docs advertise.
+
+    Each is best-effort and independently degradable: a count that cannot be
+    determined becomes None and is skipped rather than compared against zero,
+    which would report every document as wrong. Comparing a documented number
+    against a number nobody measured is worse than not checking at all — the
+    same rule `test_count=0` already follows.
+    """
+    counts: dict[str, int | None] = {"python": None, "go": None, "mcp": None}
+    try:
+        from aictl.core.cli_surface import registered_commands
+        counts["python"] = len(registered_commands())
+    except Exception:
+        pass
+    try:
+        from aictl.core.goport import go_command_count
+        counts["go"] = go_command_count(base) or None
+    except Exception:
+        pass
+    try:
+        from aictl.core.cli_surface import mcp_declared_tools
+        counts["mcp"] = len(mcp_declared_tools()) or None
+    except Exception:
+        pass
+    return counts
+
+
+def _surface_claims(surface: dict[str, int | None]):
+    """(label, regex, actual) for each surface claim the docs make."""
+    return (
+        ("Python commands", r"(\d+)\s+Python\s*\+", surface["python"]),
+        ("Python commands", r"(\d+)\s+CLI commands", surface["python"]),
+        ("Go commands", r"\+\s*(\d+)\s+Go\b", surface["go"]),
+        ("MCP tools", r"(\d+)\s+MCP tools", surface["mcp"]),
+    )
 
 
 def sync_counts(root: Path | None = None, test_count: int = 0) -> list[CountMismatch]:
@@ -113,6 +163,7 @@ def sync_counts(root: Path | None = None, test_count: int = 0) -> list[CountMism
         return []
 
     actual_files = count_test_files(base)
+    surface = _surface_counts(base)
     for name in _TRACKED_DOCS:
         doc = base / name
         if not doc.is_file():
@@ -127,6 +178,11 @@ def sync_counts(root: Path | None = None, test_count: int = 0) -> list[CountMism
                 line = re.sub(r"\d[\d,]*(\+?\s+tests)",
                               lambda m: (grouped if "," in m.group(0)
                                          else str(test_count)) + m.group(1), line)
+            for _label, pattern, actual in _surface_claims(surface):
+                if actual is not None:
+                    line = re.sub(pattern,
+                                  lambda m, a=actual: m.group(0).replace(
+                                      m.group(1), str(a), 1), line)
             out.append(line)
         doc.write_text("".join(out), encoding="utf-8")
     return fixed

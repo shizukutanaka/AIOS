@@ -278,12 +278,28 @@ def run(args: argparse.Namespace) -> int:
     except Exception as e:
         results.append(("Docs", False, str(e)[:60]))
 
-    # 7. MCP server tool count
+    # 7. MCP server: every advertised tool must actually dispatch.
+    #    This was `len(TOOLS) >= 16` against 19 tools — three could be deleted
+    #    and the gate would still pass, reporting the shortfall as success.
+    #    Worse, a count sees neither direction of the failure that matters: a
+    #    tool declared but not dispatched is advertised in tools/list and then
+    #    errors when called, and one dispatched but not declared is dead code.
     try:
-        from aictl.mcp_server import TOOLS
-        mcp_count = len(TOOLS)
-        ok_mcp = mcp_count >= 16
-        results.append(("MCP", ok_mcp, f"{mcp_count} tools registered"))
+        from aictl.core.cli_surface import mcp_declared_tools, mcp_dispatched_tools
+        declared = mcp_declared_tools()
+        dispatched = mcp_dispatched_tools()
+        undispatched = sorted(declared - dispatched)
+        undeclared = sorted(dispatched - declared)
+        if undispatched or undeclared:
+            problems = []
+            if undispatched:
+                problems.append(f"advertised but not dispatched: {', '.join(undispatched[:3])}")
+            if undeclared:
+                problems.append(f"dispatched but not advertised: {', '.join(undeclared[:3])}")
+            results.append(("MCP", False, "; ".join(problems)))
+        else:
+            results.append(("MCP", True,
+                            f"{len(declared)} tools registered and dispatched"))
     except Exception as e:
         results.append(("MCP", False, str(e)[:40]))
 
