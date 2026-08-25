@@ -154,3 +154,71 @@ def mcp_dispatched_tools() -> set[str]:
                             isinstance(comparator.value, str):
                         names.add(comparator.value)
     return names
+
+
+def rest_endpoint_count(module_path: str | None = None) -> int:
+    """How many `/v1/` REST endpoints the daemon serves. 0 if undeterminable.
+
+    Routes are literal dicts inside the `do_GET`/`do_POST`/... handlers, so
+    they are read from the AST — the same reasoning as `mcp_dispatched_tools`:
+    the alternative is starting a daemon and probing it, which is slow and
+    side-effecting for a number used to check a line of documentation.
+
+    `/metrics` is excluded deliberately. It serves Prometheus text exposition,
+    not JSON, and is not part of the REST API the docs count — which is why
+    "30 REST API endpoints" is right while the handler has 31 routes. An
+    earlier probe that counted routes naively concluded the documentation was
+    wrong by one; it was not.
+    """
+    import ast
+    from pathlib import Path
+
+    if module_path is None:
+        import aictl.daemon.aiosd as aiosd
+        module_path = aiosd.__file__
+    try:
+        tree = ast.parse(Path(module_path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return 0
+
+    paths: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("do_")):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Dict):
+                for key in inner.keys:
+                    if (isinstance(key, ast.Constant)
+                            and isinstance(key.value, str)
+                            and key.value.startswith("/v1/")):
+                        paths.add(key.value)
+    return len(paths)
+
+
+def unregistered_command_modules(root: "object | None" = None) -> list[str]:
+    """Modules in aictl/cmd/ that no registered command corresponds to.
+
+    CLAUDE.md's own workflow says "Register new commands in `__main__.py`",
+    which is a step a person forgets. A module sitting there unregistered is
+    invisible: it imports fine, it has tests, and the command simply does not
+    exist for any user.
+
+    Two modules are named `<command>_cmd.py` because their command name is a
+    Python keyword or builtin (`import`, `cache`), so the suffix is stripped
+    before looking the name up — a convention, not a defect.
+    """
+    from pathlib import Path
+
+    base = Path(root) if root is not None else Path(".")
+    directory = base / "aictl" / "cmd"
+    if not directory.is_dir():
+        return []
+    registered = set(registered_commands())
+    missing = []
+    for module in sorted(directory.glob("*.py")):
+        if module.stem.startswith("__"):
+            continue
+        expected = module.stem[:-4] if module.stem.endswith("_cmd") else module.stem
+        if expected not in registered:
+            missing.append(module.name)
+    return missing

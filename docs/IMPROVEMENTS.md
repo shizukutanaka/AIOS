@@ -1671,6 +1671,45 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 19 new tests (`tests/test_new_features_217.py`); suite
   3948/3948; gate GREEN twice serial and once parallel.
 
+## AO. The last unverified count, and the registration step people forget — ✅ (Pass 218)
+
+> **Status:** every documented surface count is now derived; `gate` catches a
+> command module that was never registered; three command counters became one.
+
+- **"30 REST API endpoints" was the last documented number nothing checked.**
+  Passes 216–217 derived the CLI commands, Go commands and MCP tools; this
+  finishes the set. Routes are literal dicts in the daemon's `do_GET`/`do_POST`
+  handlers, so they are read from the AST rather than by starting a daemon and
+  probing it — slow and side-effecting for a number that checks one line of
+  documentation.
+- **The exclusion is the interesting part.** The handler has **31** routes;
+  `/metrics` serves Prometheus text exposition rather than JSON, so the REST
+  API the docs count is the 30 under `/v1/`. A naive route count earlier in
+  this session concluded the documentation was wrong by one. It was not — the
+  fourth documented figure this session that looked wrong and was right.
+  Counting is not measuring, in both directions.
+- **A command module can exist without being registered.** CLAUDE.md's own
+  workflow says "Register new commands in `__main__.py`" — exactly the kind of
+  step a person forgets. Such a module imports cleanly, may carry its own
+  tests, and the command simply does not exist for any user. Nothing compared
+  the directory against the parser; now `gate` does.
+- **Two modules are deliberately named `<command>_cmd.py`** because their
+  command name is a Python keyword or builtin (`import`, `cache`), so the
+  suffix is stripped before the lookup. A check that flagged those two would
+  have been turned off within a day.
+- **Three places counted the same thing.** `info._count_commands()` walked the
+  parser itself and returned on the *first* subparsers action, so a second
+  would have gone uncounted; it now delegates to the one derived source.
+  `docsync.count_commands()` is retained deliberately — it counts modules on
+  disk, which is a *different* measurement from what the parser registers, and
+  the gap between them is precisely the forgotten-registration check above.
+- **Each new check is proven to catch a fault**, not merely to return clean on
+  a healthy repo: a synthetic handler with two `/v1/` routes and a `/metrics`,
+  a synthetic `aictl/cmd/` holding an unregistered module, and a CLAUDE.md
+  claiming 7 REST endpoints.
+- **Validation:** 16 new tests (`tests/test_new_features_218.py`); suite
+  3964/3964; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
