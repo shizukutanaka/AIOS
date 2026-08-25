@@ -68,6 +68,16 @@ TOOLS_LIST_TTL_MS = 300_000
 TOOLS_LIST_CACHE_SCOPE = "server"
 
 
+def _catalog_use_cases() -> list[str]:
+    """Use cases the model catalog contains. Never raises: a broken import
+    must not stop the MCP server from advertising its tools at all."""
+    try:
+        from aictl.runtime.recommend import catalog_use_cases
+        return catalog_use_cases()
+    except Exception:                        # pragma: no cover - defensive
+        return ["chat", "code", "embedding", "vision", "stt"]
+
+
 # ── Tool Definitions ──
 TOOLS = [
     {
@@ -86,8 +96,13 @@ TOOLS = [
             "properties": {
                 "use_case": {
                     "type": "string",
-                    "description": "Filter: chat, code, embedding, vision, stt",
-                    "enum": ["", "chat", "code", "embedding", "vision", "stt"],
+                    # Derived from the catalog, like the CLI's --use-case
+                    # choices: this enum listed five cases while the catalog
+                    # held six, so an MCP client was told `reasoning` was not
+                    # a valid filter when three models used it.
+                    "description": ("Filter: "
+                                    + ", ".join(_catalog_use_cases())),
+                    "enum": ["", *_catalog_use_cases()],
                 },
                 "max_results": {"type": "integer", "default": 5},
             },

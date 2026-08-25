@@ -1754,6 +1754,44 @@ release surface, which is a maintainer's decision, not an agent's.
   guard that no deployment module hardcodes an engine image again; suite
   3978/3978; gate GREEN twice serial and once parallel.
 
+## AQ. Three models the filter existed to find could not be found — ✅ (Pass 220)
+
+> **Status:** `--use-case` choices and the MCP `use_case` enum are both derived
+> from the catalog via `catalog_use_cases()`.
+
+- **Found by probing the model catalog for unverified external facts** — the
+  same vein that produced the two container images naming nothing. The
+  external half could not be checked (see below), but the *internal* half was
+  checkable and wrong.
+- **The catalog holds six use cases; the flag offered five:**
+
+      catalog: chat(24) code(4) embedding(3) vision(2) stt(1) reasoning(3)
+      flag:    chat     code    embedding    vision    stt
+
+  So `aictl recommend --use-case reasoning` was an argparse error, and
+  `qwen3:7b-thinking`, `qwen3:32b-thinking` and `phi4-reasoning:14b` — the
+  three best local reasoning models in the catalog — were unreachable through
+  the filter that exists to reach them. The MCP tool schema had the same gap,
+  so a client was told `reasoning` was not a valid value.
+- **Both directions are now checked.** A catalogued case the flag cannot offer
+  hides models; a flag choice with no models behind it returns an empty list
+  and reads to the user as a hardware problem rather than a bad filter.
+- **What this pass deliberately did not do.** The catalog also asserts 31
+  Ollama model names, and several look questionable beside a registry that
+  hosts text LLMs — `whisper:large-v3` under runtime `ollama` most obviously.
+  Both `ollama.com` and `registry.ollama.ai` are outside this environment's
+  egress allowlist, verified by two independent paths, so those names could
+  **not** be checked. They are left exactly as they are. Guessing corrections
+  to unverifiable external facts is precisely what produced the fabricated
+  `go.sum` and the two images that named nothing; an unverified name that
+  happens to be right beats a confident one that is wrong.
+- **For the maintainer:** on a machine with registry access, `ollama show
+  <name>` against each catalogued Ollama entry would settle it in one pass.
+- **Validation:** 14 new tests (`tests/test_new_features_220.py`), including a
+  guard that neither interface hardcodes the list again and that the MCP
+  helper never raises; suite 3992/3992; gate GREEN twice serial and once
+  parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

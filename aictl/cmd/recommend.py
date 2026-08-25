@@ -15,8 +15,12 @@ from aictl.runtime.recommend import recommend
 def register(sub: Any) -> None:
     """Register CLI subcommand and arguments."""
     p = sub.add_parser("recommend", help="Recommend models for your hardware")
-    p.add_argument("--use-case", default="", choices=["chat", "code", "embedding", "vision", "stt", ""],
-                   help="Filter by use case")
+    # Derived from the catalog: a hardcoded list drifted from it, so three
+    # models tagged `reasoning` could not be reached by the filter at all.
+    from aictl.runtime.recommend import catalog_use_cases
+    _uses = catalog_use_cases()
+    p.add_argument("--use-case", default="", choices=[*_uses, ""],
+                   help=f"Filter by use case ({', '.join(_uses)})")
     p.add_argument("--top", type=positive_int, default=5, help="Max results")
     p.set_defaults(func=run)
 
