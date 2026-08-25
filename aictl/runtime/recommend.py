@@ -119,6 +119,18 @@ MODELS: list[ModelRec] = [
 ]
 
 
+def catalog_use_cases() -> list[str]:
+    """Every use case the catalog actually contains, sorted.
+
+    Derived so the `--use-case` filter cannot drift from the data it filters.
+    It had: three models were tagged `reasoning` while the CLI offered only
+    chat/code/embedding/vision/stt, so `aictl recommend --use-case reasoning`
+    was an argparse error and the three best local reasoning models could not
+    be found with the flag that exists to find them.
+    """
+    return sorted({m.use_case for m in MODELS if m.use_case})
+
+
 def recommend(
     vram_mb: int = 0,
     ram_mb: int = 0,
