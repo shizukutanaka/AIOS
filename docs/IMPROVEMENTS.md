@@ -1836,6 +1836,55 @@ release surface, which is a maintainer's decision, not an agent's.
   dirty-tree refusal verified live (exited non-zero, left `git tag -l` at
   v1.6.0); suite 3996/3996.
 
+## AO. The installer verified one Python and installed another — ✅ fixed (Pass 220)
+
+> **Status:** `scripts/install.sh` pins the interpreter it verified, and is now
+> testable at all — 20 tests where there were none.
+
+- **Found by walking the first thing a user runs.** `curl … | bash` is the
+  README's documented entry point, and nothing in 4,000 tests touched it.
+- **The verification result was discarded.** The script searched
+  `python3.13 → python3.12 → python3.11 → python3` for an interpreter new
+  enough, printed it, and then wrote the wrapper with a *quoted* heredoc:
+
+      sudo tee "$BIN_LINK" > /dev/null << 'EOF'
+      #!/bin/bash
+      export PYTHONPATH=/opt/aios:${PYTHONPATH:-}
+      exec python3 -m aictl "$@"
+      EOF
+
+  `$PYTHON` never interpolates, so the wrapper always ran `python3`. On a
+  machine where `python3` is 3.9 and `python3.11` exists — exactly the machine
+  the search loop was written for — the installer printed
+  `✓ Python: python3.11`, then `✓ Installation verified`, and left an `aictl`
+  that failed on first use. Reproduced in a sandbox before fixing.
+- **This is the gate's discarded command set again** (item AM), in the first
+  thing a user touches rather than in a maintainer tool. Same shape: a correct
+  check whose answer is computed and thrown away.
+- **Three more, found while confirming the first:**
+  - `cd "$INSTALL_DIR" && git pull` ran unprivileged against a clone made by
+    `sudo git clone`, so **updating an existing install could not work** — and
+    `set -euo pipefail` turned the failure into an abort. It also tested
+    `-d "$INSTALL_DIR"`, so a non-git directory took the pull branch and died.
+  - `if aictl --help` resolved through PATH, **verifying whatever PATH found
+    first** rather than the file just written — an older install, or nothing
+    when `/usr/local/bin` is off PATH.
+  - `[ "$major" -ge 3 ] && [ "$minor" -ge 11 ]` compared the two numbers
+    independently, rejecting a hypothetical 4.0 because 0 is not ≥ 11.
+- **Why none of it was caught: the script had no seams.** A 100-line shell
+  script that installs on import cannot be tested without a real install. It
+  now exposes `detect_python` and `write_wrapper`, honours
+  `AIOS_INSTALL_DIR` / `AIOS_BIN_LINK`, and runs `main` only when
+  `AIOS_INSTALL_LIB` is unset — so `curl | bash` behaves exactly as before
+  while the pieces are reachable from tests.
+- **A recurring habit, now named.** The test asserting the old comparison was
+  gone failed on the *comment quoting it* while explaining the bug — the fifth
+  time this session a substring check caught prose instead of behaviour. The
+  version floor is asserted across the 3.10/3.11 boundary instead.
+- **Validation:** 20 new tests (`tests/test_new_features_220.py`), including an
+  end-to-end check that the generated wrapper starts this checkout's aictl;
+  suite 4002/4002.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
