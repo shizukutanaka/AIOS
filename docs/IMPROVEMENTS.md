@@ -1792,6 +1792,50 @@ release surface, which is a maintainer's decision, not an agent's.
   helper never raises; suite 3992/3992; gate GREEN twice serial and once
   parallel.
 
+## AN. `make release` announced a pipeline that does not exist — ✅ fixed (Pass 219)
+
+> **Status:** the release target now creates the GitHub Release itself when
+> `gh` is present, refuses a dirty tree, and states plainly what it did *not*
+> do when it could not do it.
+
+- **Found by asking why publishing was ever manual.** The v1.7.0 Release object
+  had been reported "blocked" for several passes. Rather than test the
+  permission boundary a seventh time, the better question was why the
+  repository's own release automation had never produced one.
+- **It was documented as doing three things it cannot do:**
+
+      release:  ## Tag and push (triggers CI → PyPI → Docker)
+              @make release-check
+              @git tag v$(VERSION)
+              @git push --tags
+              @echo "✓ v$(VERSION) released."
+
+  There is no `.github/workflows/` directory in this repository — `.github/`
+  holds issue templates, a PR template and `dependabot.yml`. So the tag
+  triggered no CI, published to no PyPI, built no Docker image, and **created
+  no GitHub Release**, which is exactly why the Releases tab sat at v1.6.0
+  while `constants.py` and `CHANGELOG.md` both said 1.7.0. The final line
+  printed `✓ released` for work that never happened. `ci` carried the same
+  stale claim ("runs in GitHub Actions").
+- **It would also have tagged a dirty tree.** When this was found, two files
+  carried uncommitted changes; `make release` would have produced a v1.7.0 tag
+  that omitted them, silently.
+- **Repaired in the direction this session keeps choosing:** not by building a
+  pipeline so the comment becomes true, but by deleting the false claim and
+  making the command state reality. `release` now runs `gh release create
+  v$(VERSION) --notes-file RELEASE.md` when `gh` is available, and when it is
+  not it prints the remaining step and an explicit `✗ GitHub Release NOT
+  created` rather than a checkmark. `release-check` refuses a dirty or staged
+  tree, and verifies the version is in `CHANGELOG.md` and that `RELEASE.md` is
+  non-empty before anything is tagged.
+- **The regression guard is a property, not a substring ban.** The test skips
+  itself if `.github/workflows/*.yml` ever appears, so the day someone adds a
+  real workflow the claim becomes true and the test stops objecting — rather
+  than forbidding the words forever.
+- **Validation:** 18 new tests (`tests/test_new_features_219.py`); the
+  dirty-tree refusal verified live (exited non-zero, left `git tag -l` at
+  v1.6.0); suite 3996/3996.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

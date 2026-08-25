@@ -741,7 +741,14 @@ def _tool_quant(args: dict[str, Any]) -> dict[str, Any]:
     use_case = args.get("use_case", "chat")
     from aictl.cmd.quant import QUANT_DATA
     qk = f"q_{use_case}"
+    from aictl.cmd.quant import measured_use_cases
     lines = [f"Quantization for {model} ({use_case})", ""]
+    if use_case not in measured_use_cases():
+        # Was a silent fallback to q_chat: a client asking about embedding
+        # quantization received chat numbers labelled as embedding.
+        lines.append(f"(no {use_case}-specific quality data — "
+                     f"chat quality shown as a proxy)")
+        lines.append("")
     for n, d in QUANT_DATA.items():
         q = d.get(qk, d["q_chat"]) * 100
         lines.append(f"  {n:<10} quality={q:.0f}%  size={d['size']*100:.0f}%  "

@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,992+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,996+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,11 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **`make release` does what it says.** It was documented as triggering
+  CI → PyPI → Docker and printed `✓ released`; the repository has no
+  `.github/workflows/` at all, so it triggered nothing and never created a
+  GitHub Release. It now publishes the release from `RELEASE.md` via `gh`,
+  refuses to tag a dirty tree, and says explicitly when a step did not run.
 - **Shell completions cover every command.** They were three hand-written lists
   — bash 38 names, zsh 17, fish 38 — against a surface of 80, so most of the CLI
   had no tab completion and `aictl model <TAB>` knew five of its eight
