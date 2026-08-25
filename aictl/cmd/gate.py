@@ -56,6 +56,7 @@ def _docs_issues(project_root) -> tuple[list[str], str]:
         command_references,
         markdown_command_references,
         registered_commands,
+        unregistered_command_modules,
     )
     from aictl.core.constants import DOCS_MIN_TOPIC_COMMANDS
 
@@ -66,6 +67,13 @@ def _docs_issues(project_root) -> tuple[list[str], str]:
     unhelped = sorted(n for n, h in commands.items() if not h)
     if unhelped:
         issues.append(f"no parser help: {', '.join(unhelped[:3])}")
+
+    # CLAUDE.md's own workflow says "Register new commands in __main__.py",
+    # which is a step a person forgets. An unregistered module imports fine and
+    # may even have tests; the command just does not exist for any user.
+    orphans = unregistered_command_modules(project_root)
+    if orphans:
+        issues.append(f"not registered in __main__.py: {', '.join(orphans[:3])}")
 
     topic_refs = command_references("\n".join(TOPICS.values()))
     for ghost in sorted(topic_refs - names):

@@ -9,13 +9,16 @@ from aictl.core.output import ok, print_json, print_kv
 
 
 def _count_commands() -> int:
-    """Count registered CLI commands dynamically."""
+    """Count registered CLI commands dynamically.
+
+    Delegates rather than re-deriving: this used to walk the parser itself and
+    return on the *first* subparsers action, so a second one would have gone
+    uncounted, and it was the third place in the codebase counting the same
+    thing.
+    """
     try:
-        from aictl.__main__ import build_parser
-        p = build_parser()
-        for action in p._actions:
-            if hasattr(action, "choices") and action.choices:
-                return len(action.choices)
+        from aictl.core.cli_surface import registered_commands
+        return len(registered_commands())
     except Exception:
         pass  # best-effort; failure is non-critical
     return 80  # fallback

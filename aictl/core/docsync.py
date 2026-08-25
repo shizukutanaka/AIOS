@@ -126,7 +126,8 @@ def _surface_counts(base: Path) -> dict[str, int | None]:
     against a number nobody measured is worse than not checking at all — the
     same rule `test_count=0` already follows.
     """
-    counts: dict[str, int | None] = {"python": None, "go": None, "mcp": None}
+    counts: dict[str, int | None] = {"python": None, "go": None, "mcp": None,
+                                     "rest": None}
     try:
         from aictl.core.cli_surface import registered_commands
         counts["python"] = len(registered_commands())
@@ -142,6 +143,11 @@ def _surface_counts(base: Path) -> dict[str, int | None]:
         counts["mcp"] = len(mcp_declared_tools()) or None
     except Exception:
         pass
+    try:
+        from aictl.core.cli_surface import rest_endpoint_count
+        counts["rest"] = rest_endpoint_count() or None
+    except Exception:
+        pass
     return counts
 
 
@@ -152,6 +158,7 @@ def _surface_claims(surface: dict[str, int | None]):
         ("Python commands", r"(\d+)\s+CLI commands", surface["python"]),
         ("Go commands", r"\+\s*(\d+)\s+Go\b", surface["go"]),
         ("MCP tools", r"(\d+)\s+MCP tools", surface["mcp"]),
+        ("REST endpoints", r"(\d+)\s+REST", surface["rest"]),
     )
 
 
