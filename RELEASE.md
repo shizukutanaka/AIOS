@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,996+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,002+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,14 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **The one-line installer no longer installs the wrong Python.** It searched
+  for an interpreter new enough to run aictl, printed the one it found, and
+  then wrote a wrapper hardcoded to `python3` — so on a system where `python3`
+  is 3.9 and `python3.11` is present, it reported success and left a broken
+  `aictl`. It now pins the interpreter it verified. Updating an existing
+  install also works (`git pull` ran without the privileges the clone was made
+  with), and the post-install check verifies the file it just wrote rather than
+  whatever `aictl` PATH happens to resolve.
 - **`make release` does what it says.** It was documented as triggering
   CI → PyPI → Docker and printed `✓ released`; the repository has no
   `.github/workflows/` at all, so it triggered nothing and never created a
