@@ -1628,6 +1628,49 @@ release surface, which is a maintainer's decision, not an agent's.
   3929/3929; gate GREEN twice serial and once parallel; `bash -n` parses the
   generated completion; all three shells verified to cover 80/80.
 
+## AN. A threshold that lied, and two counts nobody checked — ✅ derived (Pass 217)
+
+> **Status:** the MCP phase now asserts declared/dispatched parity instead of
+> `>= 16`; `docsync` verifies the Python, Go and MCP surface counts the docs
+> advertise.
+
+- **Found by finishing pass 216's own leftovers.** That pass derived the CLI
+  command surface and left two siblings in place, both the same disease.
+- **`len(TOOLS) >= 16` against 19 tools.** Three could be deleted and the gate
+  would still pass, printing "16 tools registered" as a success line. Worse, a
+  count cannot see the failure that matters in *either* direction: a tool
+  **declared but not dispatched** is advertised in `tools/list` and then errors
+  when a client calls it — undisclosed degradation, this session's recurring
+  theme — and one **dispatched but not declared** is unreachable code. The
+  pairing is the invariant; the number never was. Both sets are 19 today, so
+  this fixes the check rather than a live defect.
+- **Reachability is read from the AST, deliberately.** Every handler does real
+  work — hardware detection, a security scan, an LLM call — so probing by
+  invocation would make the gate slow and side-effecting. Which names
+  `_dispatch_tool` compares against is a static property, so it is read
+  statically, and *parsed* rather than grepped: every tool name also appears in
+  the module's comments, so a grep-based reader would agree by accident rather
+  than by fact. The fourth time this session that parsing beat grepping.
+- **"80 Python + 29 Go commands" and "19 MCP tools" were never verified.**
+  `check_counts` compared test files and test counts and stopped, so the first
+  claims any reader meets were hand-maintained and right only by luck. Now
+  derived: Python from the parser, MCP from the declared tools, Go from the
+  single `root.AddCommand(...)` block.
+- **The Go count is read from source, avoiding a trap.** Cobra adds its own
+  `help` and `completion`, so the built binary lists 31 while the port defines
+  29. The documentation claims the registrations — 29 is correct, and a check
+  built on `--help` would have "fixed" a number that was already right. Third
+  time this session a figure looked wrong and was not.
+- **Each count degrades independently to None and is skipped**, never compared
+  against zero, which would report every document as wrong. The same rule
+  `test_count=0` already followed.
+- **The checkers are themselves checked**: a test asserts the declared set is
+  non-empty (two empty sets are equal, which would make the parity check
+  vacuously true forever), and each new count check is proven to *catch* a
+  wrong number rather than merely returning clean on a correct repo.
+- **Validation:** 19 new tests (`tests/test_new_features_217.py`); suite
+  3948/3948; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

@@ -249,3 +249,28 @@ def check_go_port(root: Path | None = None,
     first = next((line for line in stderr.splitlines() if line.strip()), "")
     return GoStatus(present=True, toolchain=True, builds=False,
                     detail=f"go build failed: {first[:70]}")
+
+
+# Commands are registered in one `root.AddCommand(...)` block in main.go.
+_GO_ROOT_BLOCK = re.compile(r"root\.AddCommand\((.*?)\n\t\)", re.S)
+_GO_CMD_CALL = re.compile(r"\b(cmd[A-Z]\w*)\(\)")
+
+
+def go_command_count(root: Path | None = None) -> int:
+    """How many commands the Go port registers. 0 if it cannot be determined.
+
+    Read from the source rather than by running `aictl --help` in the Go
+    binary: that needs a toolchain and a build, and this is consulted while
+    checking documentation counts. It also avoids a trap — Cobra adds its own
+    `help` and `completion` commands, so the built binary lists 31 while the
+    port defines 29. Counting the registrations is what the documentation
+    actually claims.
+    """
+    base = (root or Path(".")) / "go-port" / "cmd" / "aictl" / "main.go"
+    try:
+        block = _GO_ROOT_BLOCK.search(base.read_text(encoding="utf-8"))
+    except OSError:
+        return 0
+    if not block:
+        return 0
+    return len(set(_GO_CMD_CALL.findall(block.group(1))))
