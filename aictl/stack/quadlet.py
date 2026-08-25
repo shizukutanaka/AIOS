@@ -57,13 +57,8 @@ def _resolve_image(svc: ServiceDef) -> str:
     if svc.image:
         return svc.image
 
-    IMAGE_MAP = {
-        "vllm": "vllm/vllm-openai:latest",
-        "sglang": "lmsysorg/sglang:latest",
-        "trt-llm": "nvcr.io/nvidia/tritonserver:latest",
-        "ollama": "docker.io/ollama/ollama:latest",
-    }
-    return IMAGE_MAP.get(svc.runtime, "")
+    from aictl.core.constants import RUNTIME_IMAGES
+    return RUNTIME_IMAGES.get(svc.runtime, "")
 
 
 def _build_container_unit(svc: ServiceDef, manifest: StackManifest,

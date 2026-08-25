@@ -11,19 +11,12 @@ Based on research (April 2026):
 """
 
 from __future__ import annotations
-from aictl.core.constants import VLLM_IMAGE
+from aictl.core.constants import RUNTIME_IMAGES
 
 from dataclasses import dataclass
 from typing import Any
 
 from aictl.stack.manifest import StackManifest, ServiceDef
-
-
-RUNTIME_IMAGES = {
-    "vllm": VLLM_IMAGE,
-    "sglang": "lmsysorg/sglang:latest",
-    "ollama": "docker.io/ollama/ollama:v0.20.4",
-}
 
 VLLM_PERFORMANCE_MODES = ("balanced", "interactivity", "throughput")
 

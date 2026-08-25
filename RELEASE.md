@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,964+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,978+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -127,6 +127,15 @@
 - **`aictl help advanced` tells the truth about its own size.** It advertised
   "the full 65-command surface" while aictl shipped 80, and listed commands in a
   hand-maintained table. It now generates the listing from the parser.
+- **Engine images are pinned, and two of them were unpullable.** `aictl apply`
+  emitted `vllm/vllm-openai:latest` while `aictl deploy modelservice` pinned
+  `v0.19.0`, so the same product deployed different vLLM builds depending on
+  which path you took — and the local one changed under you without warning.
+  All engine paths now share one pinned map. Two constants also turned out to
+  name images that do not exist: `lmsys/sglang` (the org is `lmsysorg`) and
+  `ollama/ollama:0.20` (the tag is `0.20.0`). Both were unused, which is why
+  nothing had broken. Generated Quadlet units and KServe CRDs now name a
+  specific build, which is what makes them verifiable by `aictl trust`.
 
 ### Catalog & advisors
 - New models (GLM-5.2, Kimi K2.6); Medusa speculative-decoding method; vLLM v0.19 CPU KV-offload hints; NVFP4 quant sweet-spot notes; Apple-Silicon unified-memory fit math; 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio — all opt-in, OpenAI-compatible).

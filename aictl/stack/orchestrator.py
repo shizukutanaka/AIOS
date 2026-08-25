@@ -166,12 +166,8 @@ def _apply_inference_engine(
     svc: ServiceDef, stack_name: str, rt: str, dry_run: bool
 ) -> RunningService:
     """Start vLLM / SGLang / TRT-LLM as a container."""
-    IMAGE_MAP = {
-        "vllm": "vllm/vllm-openai:latest",
-        "sglang": "lmsysorg/sglang:latest",
-        "trt-llm": "nvcr.io/nvidia/tritonserver:latest",
-    }
-    image = IMAGE_MAP.get(svc.runtime, svc.image)
+    from aictl.core.constants import RUNTIME_IMAGES
+    image = RUNTIME_IMAGES.get(svc.runtime, svc.image)
     if not image:
         rs = RunningService(name=svc.name, stack=stack_name, runtime=svc.runtime)
         rs.status = "error"

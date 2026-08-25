@@ -99,9 +99,33 @@ STATE_DIR_PERMISSIONS = 0o700
 MAX_REQUEST_BODY = 1 * 1024 * 1024   # 1 MiB — daemon POST body cap
 
 # ── Container / K8s ──────────────────────────────────
+# Engine images, pinned. Every value here was checked against the registry:
+# `lmsys/sglang` did not exist (404 — the org is `lmsysorg`), and
+# `ollama/ollama:0.20` did not exist either (the tag scheme is
+# MAJOR.MINOR.PATCH, so the intended v0.20 is `0.20.0`). Both were wrong and
+# both were unused, which is why nothing had broken: the constant that was
+# used — VLLM_IMAGE — is the one that was right.
+#
+# Pinned deliberately. A `:latest` tag in a generated Quadlet unit or KServe
+# CRD is unpullable-by-digest, silently changes under the operator, and cannot
+# be verified by the `aictl trust` subsystem this product ships.
 VLLM_IMAGE = "vllm/vllm-openai:v0.19.0"
-SGLANG_IMAGE = "lmsys/sglang:v0.5.9"
-OLLAMA_IMAGE = "ollama/ollama:0.20"
+SGLANG_IMAGE = "lmsysorg/sglang:v0.5.9"
+OLLAMA_IMAGE = "ollama/ollama:0.20.0"
+TRTLLM_IMAGE = "nvcr.io/nvidia/tritonserver:latest"
+
+# Runtime name -> pinned image, so the Quadlet, orchestrator and KServe paths
+# cannot disagree about what "vllm" means. They did: two emitted
+# `vllm/vllm-openai:latest` while four used VLLM_IMAGE, so the same product
+# deployed different vLLM builds depending on which path you took.
+RUNTIME_IMAGES = {
+    "vllm": VLLM_IMAGE,
+    "sglang": SGLANG_IMAGE,
+    "ollama": OLLAMA_IMAGE,
+    # NGC, not Docker Hub, so the tag could not be verified the same way and is
+    # deliberately left floating rather than pinned to a guess.
+    "trt-llm": TRTLLM_IMAGE,
+}
 BOOTC_BASE_IMAGE = "quay.io/fedora/fedora-bootc:42"
 
 # ── Model Defaults ────────────────────────────────────
