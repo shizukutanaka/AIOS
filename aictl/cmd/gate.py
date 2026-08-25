@@ -29,6 +29,81 @@ def register(sub: Any) -> None:
     p.set_defaults(func=run)
 
 
+def _docs_issues(project_root) -> tuple[list[str], str]:
+    """Documentation checks, every one derived from the real command surface.
+
+    Returns (issues, success_detail). Replaces two frozen lists: a 10-name
+    "critical commands" list from the v1.6.0 era and a 5-name README list —
+    while the CHANGELOG check three lines below them was already derived from
+    VERSION, with a comment explaining exactly why literals rot. Now the same
+    reasoning applies to all of it:
+
+      * every registered command must carry an argparse help string;
+      * documentation must not reference commands that do not exist (both the
+        help topics and the markdown docs — ghosts are how docs betray users);
+      * the curated topics must reference at least DOCS_MIN_TOPIC_COMMANDS
+        registered commands — a floor that catches the help collapsing without
+        pretending the 8 curated guides are a per-command reference;
+      * the README scan finding zero references at all fails, because a
+        matcher that matches nothing would make the ghost check vacuously
+        green forever.
+    """
+    from pathlib import Path
+
+    from aictl.__main__ import VERSION
+    from aictl.cmd.help import TOPICS
+    from aictl.core.cli_surface import (
+        command_references,
+        markdown_command_references,
+        registered_commands,
+    )
+    from aictl.core.constants import DOCS_MIN_TOPIC_COMMANDS
+
+    issues: list[str] = []
+    commands = registered_commands()
+    names = set(commands)
+
+    unhelped = sorted(n for n, h in commands.items() if not h)
+    if unhelped:
+        issues.append(f"no parser help: {', '.join(unhelped[:3])}")
+
+    topic_refs = command_references("\n".join(TOPICS.values()))
+    for ghost in sorted(topic_refs - names):
+        issues.append(f"ghost in help topics: aictl {ghost}")
+
+    readme_refs: set[str] = set()
+    for doc_name in ("README.md", "CLAUDE.md"):
+        doc_path = Path(project_root) / doc_name
+        if not doc_path.is_file():
+            continue
+        refs = markdown_command_references(doc_path.read_text(errors="replace"))
+        if doc_name == "README.md":
+            readme_refs = refs
+        for ghost in sorted(refs - names):
+            issues.append(f"ghost in {doc_name}: aictl {ghost}")
+
+    covered = len(topic_refs & names)
+    if covered < DOCS_MIN_TOPIC_COMMANDS:
+        issues.append(f"help topics reference {covered} commands "
+                      f"(< {DOCS_MIN_TOPIC_COMMANDS})")
+
+    if (Path(project_root) / "README.md").is_file() and not readme_refs:
+        issues.append("no aictl command references found in README.md")
+
+    # Derived, not hardcoded: a literal here has to be hand-edited at every
+    # version bump, and a forgotten edit makes the check pass against the
+    # *previous* release forever.
+    expected_release = f"v{VERSION}"
+    changelog = Path(project_root) / "CHANGELOG.md"
+    cl_text = changelog.read_text(errors="replace") if changelog.is_file() else ""
+    if expected_release not in cl_text:
+        issues.append(f"{expected_release} missing from CHANGELOG")
+
+    detail = (f"{len(names)} commands: help text ok, {covered} in topics, "
+              f"0 ghosts, {expected_release} in CHANGELOG")
+    return issues, detail
+
+
 def run(args: argparse.Namespace) -> int:
     """Execute the gate command."""
     results: list[tuple[str, bool, str]] = []
@@ -189,42 +264,17 @@ def run(args: argparse.Namespace) -> int:
     else:
         results.append(("Demo", True, "skipped"))
 
-    # 6. Documentation consistency
+    # 6. Documentation consistency — every check derived from the registered
+    #    command surface. This phase used to build the full parser, compute
+    #    set(a.choices.keys()) — the true surface — and throw it away
+    #    unassigned, then check a 10-name list frozen at v1.6.0.
     try:
-        from aictl.cmd.help import TOPICS
-        all_help = "\n".join(TOPICS.values())
-
-        # Build parser to get registered commands
-        from aictl.__main__ import build_parser
-        p = build_parser()
-        for a in p._actions:
-            if hasattr(a, "choices") and a.choices:
-                set(a.choices.keys())
-
-        # Verify critical v1.6.0+ commands are in help
-        critical = ["diff", "prompt", "route", "eval", "spec",
-                    "guard", "rag", "tco", "quota", "batch"]
-        missing_help = [c for c in critical if f"aictl {c}" not in all_help]
-
-        # Verify README mentions key commands
-        readme_text = (project_root / "README.md").read_text(errors="replace")
-        missing_readme = [c for c in ["diff", "prompt", "route", "guard", "tco"]
-                          if f"aictl {c}" not in readme_text]
-
-        # Verify CHANGELOG documents the current release
-        cl_text = (project_root / "CHANGELOG.md").read_text(errors="replace")
-        # Derived, not hardcoded: a literal here has to be hand-edited at
-        # every version bump, and a forgotten edit makes the check pass
-        # against the *previous* release forever.
-        expected_release = f"v{VERSION}"
-        has_changelog = expected_release in cl_text
-
-        doc_issues = missing_help + missing_readme + (
-            [] if has_changelog else [f"{expected_release} missing from CHANGELOG"])
+        doc_issues, doc_detail = _docs_issues(project_root)
         if doc_issues:
-            results.append(("Docs", False, f"missing: {', '.join(doc_issues[:3])}"))
+            results.append(("Docs", False,
+                            f"{len(doc_issues)} issue(s): {'; '.join(doc_issues[:3])}"))
         else:
-            results.append(("Docs", True, f"{len(critical)} commands in help, README, CHANGELOG"))
+            results.append(("Docs", True, doc_detail))
     except Exception as e:
         results.append(("Docs", False, str(e)[:60]))
 

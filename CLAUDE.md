@@ -2,7 +2,7 @@
 
 ## What
 `aictl` — CLI for local AI inference infrastructure on immutable Linux.
-80 Python + 29 Go commands, 3903+ tests, zero external Python deps. v1.7.0.
+80 Python + 29 Go commands, 3929+ tests, zero external Python deps. v1.7.0.
 
 ## Map
 ```
@@ -19,7 +19,7 @@ aictl/trust/      verify baseline cosign oras
 aictl/metrics/    slo otel prometheus collector_config genai_spans
 aictl/mcp_server  MCP server (19 tools, JSON-RPC 2.0 stdio)
 go-port/          29 Go commands (Cobra)
-tests/            282 test files, 3903+ tests
+tests/            283 test files, 3929+ tests
 docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART, IMPROVEMENTS
                   REVIEW_v1.7.0, INSTRUCTIONS_OPUS, INSTRUCTIONS_SONNET
 .claude/          3 agents, 5 commands, 8 skills
@@ -49,7 +49,7 @@ docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART, IMPROVEMENTS
 ## Workflows
 ```bash
 # Verify everything works
-aictl gate                         # Compile + import + version + 3903 tests + demo (~58s)
+aictl gate                         # Compile + import + version + 3929 tests + demo (~58s)
 aictl gate --parallel              # Same, file-per-process (~30s). Serial is the source of truth.
 
 # Add a new command

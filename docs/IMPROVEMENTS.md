@@ -1581,6 +1581,53 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** suite 3882/3882 (44 in passes 211–212 rerun green), `go vet`
   clean, `go test ./...` passing across three packages, gate GREEN.
 
+## AM. The command surface was hand-copied four times — ✅ derived (Pass 216)
+
+> **Status:** `core/cli_surface.py` is the single derived source; `gate`'s Docs
+> phase, `help advanced` and all three shell completions now consult it.
+
+- **Found by finishing an earlier pass's unfinished business.** Pass 213 noticed
+  that `gate`'s Docs phase built the full parser, computed
+  `set(a.choices.keys())` — the true 80-command surface — and **threw it away
+  unassigned**, then checked a 10-name list frozen at v1.6.0. Three lines below
+  it, the CHANGELOG check was already *derived* from `VERSION`, with a comment
+  explaining exactly why hardcoded literals rot. The argument had been applied
+  to one check and not the two beside it.
+- **Three more copies of the same fact, all drifted:**
+  - `help.py` told users this was "the full 65-command surface" — it is 80 — and
+    hand-maintained a category listing that the gate's own check could never
+    verify, because the names were written without the `aictl ` prefix it greps.
+  - `completion.py` hardcoded **three** lists: bash 38 names, zsh 17, fish 38.
+    Up to 63 of 80 commands had no tab completion, and the bash subcommand table
+    knew five of `model`'s eight subcommands. This failure mode is invisible by
+    construction: you cannot tab-complete a command you do not know exists, and
+    you never learn the completion script was at fault.
+- **One derived source, consulted at call time** so plugin-registered commands
+  ride along. `build_parser` is imported lazily inside each function — the
+  pattern `gate.py` and `help.py` already used — so `aictl.core` importing the
+  CLI surface cannot cycle with `aictl.__main__`.
+- **The Docs phase also gained the reverse direction:** documentation naming a
+  command that does not exist. The matching rule is *structural*, not a stopword
+  list — an earlier probe's `\s` crossed newlines and turned prose into ghost
+  commands, and markdown legitimately says "aictl does" — so only fenced or
+  backticked contexts count. Two checks guard the checkers: a README scan that
+  finds zero references fails (a matcher matching nothing is vacuously green
+  forever), and a test patches the derivation to `{}` and asserts the Docs
+  verdict *changes* — the one thing the discarded-set version could not do.
+- **The floor is honest about being a floor.** `DOCS_MIN_TOPIC_COMMANDS = 25`
+  replaces the frozen critical list; the 8 curated topics cover 33 and are
+  guides, not a per-command reference, so the check catches the help collapsing
+  rather than pretending every command needs a guide.
+- **Two tests corrected rather than deleted.** Pass 207's CHANGELOG test read
+  `gate.run`'s source for `expected_release`, which moved into `_docs_issues`;
+  it now reads the helper *and* asserts the behaviour with a stale CHANGELOG.
+  A new test of mine grepped `help.py` for "65" and failed on the comment
+  explaining this history — the prose-versus-behaviour mistake made three times
+  this session, now checking what users actually see.
+- **Validation:** 24 new tests (`tests/test_new_features_216.py`); suite
+  3929/3929; gate GREEN twice serial and once parallel; `bash -n` parses the
+  generated completion; all three shells verified to cover 80/80.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
