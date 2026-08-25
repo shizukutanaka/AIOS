@@ -182,10 +182,39 @@ def _find_price(model: str) -> ModelPrice | None:
     return None
 
 
+# Below this, six decimal places render as $0.000000 — showing a real cost as
+# free. Say "less than" rather than inventing a zero.
+COST_DISPLAY_FLOOR = 0.000001
+
+
+def format_usd(amount: float, cached: bool = False) -> str:
+    """A USD cost string that means exactly one thing.
+
+    Sub-$0.0001 costs used to render as `f"${amount * 1000:.4f}m"` — millidollars
+    with a bare `m`. Two problems, and they compounded. The unit is ambiguous:
+    "$0.0470m" reads as millions at least as readily as thousandths, and the
+    other call site's comment called it "millicents", which it is not. And the
+    README documented `print(r.cost)  # "$0.000047"` — an output the code could
+    not produce, because 0.000047 came out as "$0.0470m".
+
+    Worse at the bottom of the range: a genuinely free response (the in-process
+    mock, which is what zero-config gives a new user) printed "$0.0000m".
+
+    Six decimals cover everything the milli form did, in dollars, with no suffix
+    to misread. Anything truly below display resolution says so instead of
+    rounding to a confident zero.
+    """
+    if cached:
+        return "$0.000000 (cached)"
+    if amount <= 0:
+        return "$0.000000"
+    if amount < COST_DISPLAY_FLOOR:
+        return f"<${COST_DISPLAY_FLOOR:.6f}"
+    return f"${amount:.6f}"
+
+
 def format_cost(cost: CallCost, currency: str = "usd") -> str:
     """Human-readable cost string."""
     if currency.lower() == "jpy":
         return f"¥{cost.cost_jpy:.4f}"
-    if cost.cost_usd < 0.0001:
-        return f"${cost.cost_usd * 1000:.4f}m"  # millicents
-    return f"${cost.cost_usd:.6f}"
+    return format_usd(cost.cost_usd)
