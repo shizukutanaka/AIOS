@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,002+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,023+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,13 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **Per-call costs are readable again.** Anything under $0.0001 printed as
+  millidollars with a bare `m` suffix (`$0.0470m`), which reads as millions as
+  easily as thousandths — and a free response printed `$0.0000m`. Costs now
+  render in dollars to six decimals, or `<$0.000001` when genuinely below that.
+  `aictl route cascade` was also summing costs by string concatenation, so an
+  escalating cascade reported two price tags glued together; it now accumulates
+  numerically and its `--json` output carries `total_cost_usd`.
 - **The one-line installer no longer installs the wrong Python.** It searched
   for an interpreter new enough to run aictl, printed the one it found, and
   then wrote a wrapper hardcoded to `python3` — so on a system where `python3`

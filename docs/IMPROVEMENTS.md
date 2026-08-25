@@ -1885,6 +1885,48 @@ release surface, which is a maintainer's decision, not an agent's.
   end-to-end check that the generated wrapper starts this checkout's aictl;
   suite 4002/4002.
 
+## AP. The documented cost example could not be produced — ✅ fixed (Pass 221)
+
+> **Status:** one USD formatter in `core/cost_per_call.py`; `sdk` and
+> `cost_per_call` both delegate; `route cascade` sums numerically.
+
+- **Found by running the README's quick start rather than reading it.** All
+  five CLI commands worked. The Python snippet did not.
+- **`print(r.cost)  # "$0.000047"` was unreachable.** Anything under $0.0001
+  rendered as `f"${cost_usd * 1000:.4f}m"` — millidollars with a bare `m` — so
+  0.000047 came out as **`$0.0470m`**. The documented output could not be
+  produced for the documented value.
+- **The unit was ambiguous, and the two copies disagreed about it.**
+  `$0.0470m` reads as millions at least as readily as thousandths, and the
+  second copy of the formula (`core/cost_per_call.py:190`) commented it
+  "millicents" — which it is not. Two call sites, one formula, two different
+  claims about what the number meant.
+- **A free response printed `$0.0000m`.** That is the in-process mock, which is
+  what zero-config gives a first-time user, so the malformed string was the
+  most likely output anyone would ever see.
+- **`route cascade` summed costs by string concatenation.** `total_cost` was
+  initialised as a float, reassigned to `r1.cost` (a *string*), then
+  `total_cost += r2.cost`. An escalating cascade reported
+  **`$0.0000m$0.0000m`** — in the `--json` payload a script would parse as well
+  as on screen. Reproduced before fixing:
+
+      escalated : True
+      total_cost: '$0.0000m$0.0000m'
+
+- **Fixes.** One `format_usd()`: dollars, six decimals, no suffix to misread,
+  `<$0.000001` when genuinely below display resolution rather than rounding a
+  real cost to a confident zero. Costs accumulate numerically and are formatted
+  once at the boundary, and the JSON payload gained `total_cost_usd` so callers
+  never parse a currency string back into a number.
+- **The habit, hit again.** The test asserting "millicents" was gone failed on
+  the docstring that *explains* the wrong unit — the sixth substring check this
+  session to catch prose instead of behaviour, and the second after naming the
+  pattern in AM. It now parses both modules and asserts the milli formula is
+  absent from executable code, docstrings stripped. Grepping source for a
+  property about code is the habit; parsing is the fix.
+- **Validation:** 21 new tests (`tests/test_new_features_221.py`); suite
+  4023/4023.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

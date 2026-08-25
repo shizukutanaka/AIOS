@@ -315,11 +315,8 @@ class _Response:
     @property
     def cost(self) -> str:
         """Human-readable cost string."""
-        if self.cached:
-            return "$0.000000 (cached)"
-        if self.cost_usd < 0.0001:
-            return f"${self.cost_usd * 1000:.4f}m"
-        return f"${self.cost_usd:.6f}"
+        from aictl.core.cost_per_call import format_usd
+        return format_usd(self.cost_usd, cached=self.cached)
 
 
 class _AI:

@@ -41,6 +41,7 @@ import threading
 import time
 from pathlib import Path
 
+from aictl.core.cost_per_call import format_usd
 from aictl.core.output import ok, warn, err, print_json
 from aictl.core.argtypes import positive_int
 from aictl.core.atomicio import atomic_write_text
@@ -497,7 +498,7 @@ def run_cascade(args: argparse.Namespace) -> int:
             r = aictl.ai.ask(prompt, model=model)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             response_text = str(r)
-            total_cost = r.cost
+            total_cost = r.cost_usd
         except Exception as e:
             warn(f"Inference failed: {e}")
             return 1
@@ -518,7 +519,7 @@ def run_cascade(args: argparse.Namespace) -> int:
             r1 = aictl.ai.ask(prompt, model=first_model)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             first_response = str(r1)
-            total_cost = r1.cost
+            total_cost = r1.cost_usd
         except Exception as e:
             warn(f"Simple model failed: {e}")
             return 1
@@ -535,7 +536,11 @@ def run_cascade(args: argparse.Namespace) -> int:
                 r2 = aictl.ai.ask(prompt, model=complex_model)
                 elapsed_ms += int((time.perf_counter() - t0) * 1000)
                 response_text = str(r2)
-                total_cost += r2.cost
+                # Numeric, not `r2.cost`. That property returns a formatted
+                # string, so `+=` concatenated two price tags: an escalating
+                # cascade reported "$0.0000m$0.0000m", in the --json payload a
+                # script would parse as well as on screen.
+                total_cost += r2.cost_usd
             except Exception as e:
                 warn(f"Complex model also failed: {e}")
                 return 1
@@ -552,7 +557,8 @@ def run_cascade(args: argparse.Namespace) -> int:
             "final_model": model,
             "escalated": escalated,
             "response": response_text,
-            "total_cost": total_cost,
+            "total_cost": format_usd(total_cost),
+            "total_cost_usd": total_cost,
             "latency_ms": elapsed_ms,
         }
         if first_response and escalated:
@@ -568,7 +574,8 @@ def run_cascade(args: argparse.Namespace) -> int:
         print(response_text)
         print()
         label = "escalated" if escalated else "direct"
-        print(f"  Cost: {total_cost}  Latency: {elapsed_ms}ms  Path: {label}")
+        print(f"  Cost: {format_usd(total_cost)}  Latency: {elapsed_ms}ms  "
+              f"Path: {label}")
         print()
     _record_cascade_stat(escalated)
     return 0

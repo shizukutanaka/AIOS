@@ -93,7 +93,7 @@ aictl route ask "Explain quantum entanglement"      # → large model (COMPLEX)
 import aictl
 r = aictl.ai.ask("Summarize this", context=text)
 print(r)           # the answer
-print(r.cost)      # "$0.000047"
+print(r.cost)      # "$0.000047"  (or "$0.000000" with no engine running)
 print(r.cached)    # True if semantic cache hit
 ```
 
