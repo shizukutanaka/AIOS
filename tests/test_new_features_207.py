@@ -193,13 +193,28 @@ class TestGateIntegration(unittest.TestCase):
     def test_changelog_check_is_derived_not_hardcoded(self):
         # A literal version here needs a hand-edit at every bump, and a
         # forgotten edit leaves the check passing against the old release.
+        #
+        # The check moved out of run() into gate._docs_issues when the whole
+        # Docs phase became derived, so this reads the helper rather than the
+        # caller. Asserting on the *behaviour* as well as the source: a
+        # CHANGELOG naming only some other version must be reported.
         import inspect
+        import tempfile
 
+        from aictl.__main__ import VERSION
         from aictl.cmd import gate
 
-        source = inspect.getsource(gate.run)
+        source = inspect.getsource(gate._docs_issues)
         self.assertIn("expected_release", source)
         self.assertNotIn('"v1.7.0" in cl_text', source)
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "README.md").write_text("```\naictl doctor\n```\n")
+            (root / "CHANGELOG.md").write_text("## v0.0.1 — ancient\n")
+            issues, _ = gate._docs_issues(root)
+            self.assertTrue(any(f"v{VERSION}" in i for i in issues),
+                            "a stale CHANGELOG must be reported")
 
     def test_this_repo_is_in_sync(self):
         # The automation checking itself: if this fails, CLAUDE.md is lying.

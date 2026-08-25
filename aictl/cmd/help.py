@@ -1,6 +1,6 @@
 """aictl help — guided discovery, not a wall of options.
 
-Apple principle: show 5 things you actually do, not 65 things you
+Apple principle: show 5 things you actually do, not everything you
 *could* do. Progressive disclosure: power users find more by typing
 `aictl help <topic>`.
 """
@@ -35,7 +35,7 @@ Next, explore:
   aictl help cost          Track what you're spending
   aictl help quality       Eval, diff, routing
   aictl help compliance    Regulatory reporting
-  aictl help advanced      The full 65-command surface
+  aictl help advanced      Every command, one line each
 """,
 
     "everyday": """\
@@ -158,25 +158,11 @@ Cluster operations:
     "advanced": """\
 aictl — Advanced (Power User Mode)
 
-For the full 65-command surface:
-
-  AICTL_EXPERT=1 aictl --help
-
-Or query a specific command directly:
+The listing below is generated from the registered parser, so it is always
+the real surface. For grouped views, see the other aictl help topics; for
+one command's options:
 
   aictl <command> --help
-
-All commands by category:
-  Lifecycle:      init, setup, upgrade, snapshot, gate, selftest, health, info, update
-  Cluster:        cluster, node, scale, fabric, mig, net
-  Deployment:     apply, deploy, recipe, image, convert
-  Observability:  watch, logs, log, otel, trace, audit, bench, perf
-  Tenancy:        tenant, apikey, meter, security
-  Inference:      proxy, warmup, spec, lora, context, chat, completion
-  Cost:           tco, quota, batch, cache, cost
-  AI Safety:      guard, route
-  RAG:            rag
-  Quality:        eval, diff, prompt
 """,
 }
 
@@ -210,6 +196,19 @@ def run(args: argparse.Namespace) -> int:
 
     if topic in TOPICS:
         print(TOPICS[topic])
+        if topic == "advanced":
+            # Generated, not maintained: the hand-written predecessor of this
+            # listing claimed a 65-command surface while aictl shipped 80, and
+            # nothing could have caught it because the names were written
+            # without the `aictl ` prefix the gate's docs check looks for.
+            try:
+                from aictl.core.cli_surface import registered_commands
+                commands = registered_commands()
+                print(f"All {len(commands)} commands:")
+                for name in sorted(commands):
+                    print(f"  aictl {name:<14} {commands[name]}")
+            except Exception:
+                pass  # best-effort; the static topic already printed
         return 0
 
     # Maybe a command name

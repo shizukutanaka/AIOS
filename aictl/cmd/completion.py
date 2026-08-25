@@ -1,4 +1,17 @@
-"""aictl completion — generate shell completions."""
+"""aictl completion — generate shell completions.
+
+The command lists are derived from the registered parser, not maintained by
+hand. They used to be three separate hardcoded lists — bash 38 names, zsh 17,
+fish 38 — against a surface of 80 commands, so most of the CLI had no tab
+completion at all, and the bash subcommand table knew five of `model`'s eight
+subcommands. Nothing failed; the completions were just silently wrong, which
+for completions is invisible: a user cannot tab-complete a command they don't
+know exists, and never learns it was the completion script's fault.
+
+Each generator accepts explicit lists for tests and derives from
+`aictl.core.cli_surface` when called bare, so `aictl completion <shell>`
+always describes the parser it shipped with — plugin commands included.
+"""
 
 from __future__ import annotations
 
@@ -26,16 +39,19 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _bash_completion() -> str:
-    """Generate bash completion script."""
-    return r'''# aictl bash completion — add to ~/.bashrc:
+def _surface() -> tuple[dict[str, str], dict[str, list[str]]]:
+    from aictl.core.cli_surface import registered_commands, registered_subcommands
+    return registered_commands(), registered_subcommands()
+
+
+_BASH_TEMPLATE = r'''# aictl bash completion — add to ~/.bashrc:
 # eval "$(aictl completion bash)"
 _aictl() {
     local cur prev commands
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    commands="init doctor ps apply down recipe model upgrade serve node cluster logs config status snapshot otel recommend bench setup watch proxy warmup net mig audit apikey image fabric context scale tenant trace cost security convert deploy completion selftest"
+    commands="__AICTL_COMMANDS__"
 
     if [ $COMP_CWORD -eq 1 ]; then
         COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -43,65 +59,70 @@ _aictl() {
     fi
 
     case "$prev" in
-        recipe) COMPREPLY=($(compgen -W "list run" -- "$cur")) ;;
-        model) COMPREPLY=($(compgen -W "list register pull verify cache" -- "$cur")) ;;
-        fabric) COMPREPLY=($(compgen -W "detect policy" -- "$cur")) ;;
-        context) COMPREPLY=($(compgen -W "save restore list gc" -- "$cur")) ;;
-        scale) COMPREPLY=($(compgen -W "keda hpa" -- "$cur")) ;;
-        tenant) COMPREPLY=($(compgen -W "classes namespace cgroup" -- "$cur")) ;;
-        cost) COMPREPLY=($(compgen -W "estimate compare" -- "$cur")) ;;
-        deploy) COMPREPLY=($(compgen -W "plan manifest dynamo kvbm" -- "$cur")) ;;
-        convert) COMPREPLY=($(compgen -W "bank model" -- "$cur")) ;;
-        config) COMPREPLY=($(compgen -W "show set reset" -- "$cur")) ;;
-        cluster) COMPREPLY=($(compgen -W "promote export" -- "$cur")) ;;
-        snapshot) COMPREPLY=($(compgen -W "create list restore diff" -- "$cur")) ;;
-        image) COMPREPLY=($(compgen -W "build formats" -- "$cur")) ;;
-        apply) COMPREPLY=($(compgen -f -- "$cur")) ;;
+__AICTL_SUBCOMMAND_CASES__
     esac
 }
-complete -F _aictl aictl
-complete -F _aictl python3\ -m\ aictl'''
+# -o default: when nothing above matched, fall back to filename completion —
+# covers `aictl apply <manifest>` and friends without a per-command special case.
+complete -o default -F _aictl aictl
+complete -o default -F _aictl python3\ -m\ aictl'''
 
 
-def _zsh_completion() -> str:
+def _bash_completion(commands: dict[str, str] | None = None,
+                     subs: dict[str, list[str]] | None = None) -> str:
+    """Generate bash completion script."""
+    if commands is None or subs is None:
+        commands, subs = _surface()
+    cases = "\n".join(
+        f'        {name}) COMPREPLY=($(compgen -W "{" ".join(subnames)}" -- "$cur")) ;;'
+        for name, subnames in sorted(subs.items()))
+    # str.replace rather than an f-string: the template is full of ${...}
+    # shell parameter braces that format() and f-strings both fight with.
+    return (_BASH_TEMPLATE
+            .replace("__AICTL_COMMANDS__", " ".join(sorted(commands)))
+            .replace("__AICTL_SUBCOMMAND_CASES__", cases))
+
+
+def _zsh_completion(commands: dict[str, str] | None = None) -> str:
     """Generate zsh completion script."""
-    return r'''#compdef aictl
-# aictl zsh completion — add to ~/.zshrc:
-# eval "$(aictl completion zsh)"
-_aictl() {
-    local -a commands=(
-        'init:Initialize node'
-        'doctor:System diagnosis'
-        'ps:List services'
-        'apply:Apply stack'
-        'down:Stop stack'
-        'recipe:Manage recipes'
-        'model:Model management'
-        'serve:Start daemon'
-        'deploy:Zero-config deploy'
-        'status:Dashboard'
-        'recommend:Model recommendations'
-        'fabric:Memory fabric'
-        'cost:Cost estimation'
-        'security:Security scan'
-        'scale:Autoscaling'
-        'tenant:Multi-tenant'
-        'trace:Request tracing'
+    if commands is None:
+        commands, _ = _surface()
+    entries = []
+    for name in sorted(commands):
+        # _describe splits name from description on the first colon, so the
+        # name side must escape colons; the description side need not. The
+        # single-quote escape is load-bearing: `troubleshoot`'s help contains
+        # a bare apostrophe, which would end the string mid-entry.
+        desc = (commands[name] or name).replace("\n", " ").replace("'", "'\\''")
+        entries.append(f"        '{name.replace(':', chr(92) + ':')}:{desc}'")
+    body = "\n".join(entries)
+    return (
+        "#compdef aictl\n"
+        "# aictl zsh completion — add to ~/.zshrc:\n"
+        '# eval "$(aictl completion zsh)"\n'
+        "_aictl() {\n"
+        "    local -a commands=(\n"
+        f"{body}\n"
+        "    )\n"
+        "    _describe 'command' commands\n"
+        "}\n"
+        "compdef _aictl aictl"
     )
-    _describe 'command' commands
-}
-compdef _aictl aictl'''
 
 
-def _fish_completion() -> str:
+def _fish_completion(commands: dict[str, str] | None = None,
+                     subs: dict[str, list[str]] | None = None) -> str:
     """Generate fish completion script."""
-    cmds = ["init", "doctor", "ps", "apply", "down", "recipe", "model",
-            "serve", "deploy", "status", "recommend", "fabric", "cost",
-            "security", "scale", "tenant", "trace", "net", "watch",
-            "proxy", "warmup", "bench", "audit", "apikey", "image",
-            "otel", "config", "cluster", "snapshot", "logs", "upgrade",
-            "setup", "mig", "context", "convert", "completion", "selftest", "node"]
-    lines = ["# aictl fish completion", "# add to ~/.config/fish/completions/aictl.fish"]
-    for c in cmds:
-        lines.append(f'complete -c aictl -n "__fish_use_subcommand" -a {c}')
+    if commands is None or subs is None:
+        commands, subs = _surface()
+    lines = ["# aictl fish completion",
+             "# add to ~/.config/fish/completions/aictl.fish"]
+    for name in sorted(commands):
+        desc = (commands[name] or name).replace("\n", " ")
+        desc = desc.replace("\\", "\\\\").replace("'", "\\'")
+        lines.append(f'complete -c aictl -n "__fish_use_subcommand" '
+                     f"-a {name} -d '{desc}'")
+    for name, subnames in sorted(subs.items()):
+        lines.append(f'complete -c aictl -n "__fish_seen_subcommand_from {name}" '
+                     f'-a "{" ".join(subnames)}"')
     return "\n".join(lines)

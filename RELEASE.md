@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **3,903+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **3,929+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,15 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **Shell completions cover every command.** They were three hand-written lists
+  — bash 38 names, zsh 17, fish 38 — against a surface of 80, so most of the CLI
+  had no tab completion and `aictl model <TAB>` knew five of its eight
+  subcommands. All three are now generated from the registered parser, with
+  per-command descriptions and nested subcommands. Re-run
+  `aictl completion <shell>` to pick them up.
+- **`aictl help advanced` tells the truth about its own size.** It advertised
+  "the full 65-command surface" while aictl shipped 80, and listed commands in a
+  hand-maintained table. It now generates the listing from the parser.
 
 ### Catalog & advisors
 - New models (GLM-5.2, Kimi K2.6); Medusa speculative-decoding method; vLLM v0.19 CPU KV-offload hints; NVFP4 quant sweet-spot notes; Apple-Silicon unified-memory fit math; 3 new engine adapters (LMDeploy, TensorRT-LLM, LM Studio — all opt-in, OpenAI-compatible).

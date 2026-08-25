@@ -47,6 +47,13 @@ EMBEDDING_MODEL_DETECT_TIMEOUT = 3   # aictl.sdk._detect_embedding_model /v1/mod
 RERANK_TIMEOUT = 5   # aictl.core.rerank.rerank TEI-compatible /rerank POST
 CONFORMANCE_PROBE_TIMEOUT = 5   # aictl.runtime.conformance per-probe HTTP timeout
 
+# Minimum number of registered commands the curated help topics must reference
+# for the gate's Docs phase to pass. A floor, not a target: the topics cover 33
+# today, and they are curated guides, not a per-command reference — the floor
+# only catches the help collapsing (deleted topics, mass renames), replacing a
+# 10-name list that had been frozen at v1.6.0.
+DOCS_MIN_TOPIC_COMMANDS = 25
+
 # vLLM OffloadingConnector (KV prefix-cache offload to pinned host memory).
 # cpu_bytes_to_use is PINNED (page-locked) host memory: it is unswappable and
 # taken away from the OS for the engine's lifetime, so over-allocating it
