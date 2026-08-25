@@ -1710,6 +1710,50 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 16 new tests (`tests/test_new_features_218.py`); suite
   3964/3964; gate GREEN twice serial and once parallel.
 
+## AP. Two pinned constants named images that do not exist — ✅ (Pass 219)
+
+> **Status:** one `RUNTIME_IMAGES` map in `constants.py`; `:latest` removed
+> from every engine path; both wrong images corrected against the registry.
+
+- **Found by following CLAUDE.md's own rule** — "All constants in
+  `constants.py` — no hardcoded ports/versions" — into the deployment paths,
+  where three modules hardcoded engine images instead.
+- **The same product emitted different vLLM versions per path.** `VLLM_IMAGE`
+  (`v0.19.0`) was used by disagg, modelservice, kserve and deploy, while
+  quadlet and orchestrator shipped `vllm/vllm-openai:latest`. A user comparing
+  a local `aictl apply` against `aictl deploy modelservice` was running two
+  different builds, and the local one changed under them silently.
+- **Then the constants themselves were wrong, and which ones is the finding:**
+
+      VLLM_IMAGE    vllm/vllm-openai:v0.19.0   used by 4 modules   exists
+      SGLANG_IMAGE  lmsys/sglang:v0.5.9        used by nobody      404
+      OLLAMA_IMAGE  ollama/ollama:0.20         used by nobody      404
+
+  The two nobody used were never exercised, so nothing discovered they were
+  unpullable. `lmsys/sglang` does not exist at all — the SGLang project
+  publishes to `lmsysorg` (11.6M pulls) — and `ollama/ollama:0.20` does not
+  exist because the tag scheme is MAJOR.MINOR.PATCH, so the intended v0.20 is
+  `0.20.0`. Same signature as the fabricated `go.sum`: values that were never
+  exercised were never verified, and they were wrong.
+- **Verification changed the fix.** "Single-source the deployment paths through
+  `SGLANG_IMAGE`" is the obvious tidy-up and would have pointed three *working*
+  paths at a repository that cannot be pulled. Every value was checked against
+  the registry before being wired in. The tidy version of this change was the
+  broken one.
+- **`:latest` is gone from every engine path.** A floating tag in a generated
+  Quadlet unit or KServe CRD cannot be pinned by digest, changes under the
+  operator without warning, and cannot be verified by the `aictl trust`
+  subsystem this product ships. `trt-llm` stays floating **deliberately**: it
+  is on NGC rather than Docker Hub, so its tag could not be checked the same
+  way, and pinning it to a guess would be the same error inverted — the
+  reasoning that governed `go.sum`.
+- **Left alone, and stated:** the `:latest` tags on ComfyUI, Tabby and Whisper
+  in `manifest.py` are third-party *application* recipes rather than inference
+  engines, and pinning them would need three more upstreams verified.
+- **Validation:** 14 new tests (`tests/test_new_features_219.py`), including a
+  guard that no deployment module hardcodes an engine image again; suite
+  3978/3978; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
