@@ -1,165 +1,174 @@
-"""Pass 219: two pinned constants pointed at images that do not exist.
+"""Pass 219: quantization advice for a use case nobody measured, and a
+release target that announced work it never did.
 
-Found by following CLAUDE.md's own rule — "All constants in
-`aictl/core/constants.py` — no hardcoded ports/versions" — into the deployment
-paths, where three modules hardcoded engine images instead.
+Two findings, both the same disease this session keeps turning up — a
+confident-looking output with nothing behind it.
 
-The same product emitted **different vLLM versions depending on which path you
-took**. `VLLM_IMAGE = "vllm/vllm-openai:v0.19.0"` was used by four modules
-(disagg, modelservice, kserve, deploy) while quadlet and orchestrator shipped
-`vllm/vllm-openai:latest`. A user comparing a local `aictl apply` against
-`aictl deploy modelservice` was running two different builds, and the local one
-changed under them without warning.
+**Proxied quality numbers.** `aictl quant recommend --use-case embedding`
+accepted `embedding` (quantizing an embedding model is a real thing to want
+advice about) and then scored it with `d.get("q_embedding", d["q_chat"])`.
+There is no `q_embedding` anywhere in `QUANT_DATA`, so every number printed
+under the heading "Use case: embedding" was chat quality wearing a different
+label. The fix is not to remove the choice — it is to say so. `measured_use_cases()`
+derives the answer from the data (`q_*` keys) rather than hardcoding a list
+that would drift the moment someone adds `q_embedding` for real.
 
-Then the constants themselves turned out to be wrong — and the pattern in
-*which* ones is the finding:
+**A release target that lied.** `make release` was documented as "Tag and push
+(triggers CI → PyPI → Docker)" and ended by printing `✓ v1.7.0 released.` The
+repository has no `.github/workflows/` directory at all, so the tag triggered
+nothing: no CI, no PyPI, no Docker, and — the reason this matters — no GitHub
+Release object, which is exactly why the Releases tab sat at v1.6.0 while
+`constants.py` and `CHANGELOG.md` both said 1.7.0. A maintainer ran it, read a
+success line, and waited for a package that was never coming.
 
-    VLLM_IMAGE    vllm/vllm-openai:v0.19.0   used by 4 modules   exists
-    SGLANG_IMAGE  lmsys/sglang:v0.5.9        used by nobody      404
-    OLLAMA_IMAGE  ollama/ollama:0.20         used by nobody      404
-
-The two nobody used were never exercised, so nothing ever discovered they were
-unpullable. `lmsys/sglang` does not exist at all (the org is `lmsysorg`, 11.6M
-pulls); `ollama/ollama:0.20` does not exist because the tag scheme is
-MAJOR.MINOR.PATCH and the intended v0.20 is `0.20.0`. Both were verified
-against the registry rather than guessed — and the verification mattered:
-"single-sourcing" the deployment paths through `SGLANG_IMAGE`, which is the
-obvious tidy-up, would have pointed three working paths at a repository that
-cannot be pulled. The tidy version of this change was the broken one.
-
-`:latest` is gone from every engine path. A floating tag in a generated Quadlet
-unit or KServe CRD cannot be pinned by digest, silently changes under the
-operator, and cannot be verified by the `aictl trust` subsystem this product
-ships. `trt-llm` stays floating deliberately: it is on NGC rather than Docker
-Hub, so the tag could not be checked the same way, and pinning it to a guess
-would be the same mistake in the other direction.
+The repair is the one this session has reached for repeatedly: not to build a
+fake pipeline so the comment becomes true, but to delete the false claim and
+make the command state what actually happened. `release` now creates the
+GitHub Release itself when `gh` is available, and when it is not it prints the
+remaining step rather than a checkmark. It also refuses to tag a dirty tree —
+the previous version would happily have tagged a release that omitted the
+uncommitted work sitting beside it.
 """
 
 from __future__ import annotations
 
+import argparse
+import io
 import re
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
-from aictl.core.constants import (
-    OLLAMA_IMAGE,
-    RUNTIME_IMAGES,
-    SGLANG_IMAGE,
-    VLLM_IMAGE,
-)
+from aictl.cmd.quant import QUANT_DATA, measured_use_cases
 
 
-class TestVerifiedImageValues(unittest.TestCase):
-    """Pinned to what the registry actually serves, checked entry by entry."""
+class TestMeasuredUseCasesIsDerived(unittest.TestCase):
+    def test_matches_the_data_not_a_hardcoded_list(self):
+        expected = set()
+        for entry in QUANT_DATA.values():
+            expected.update(k[2:] for k in entry if k.startswith("q_"))
+        self.assertEqual(set(measured_use_cases()), expected)
 
-    def test_sglang_uses_the_org_that_exists(self):
-        # `lmsys/sglang` is a 404; the SGLang project publishes to `lmsysorg`.
-        self.assertTrue(SGLANG_IMAGE.startswith("lmsysorg/sglang:"),
-                        f"{SGLANG_IMAGE} — `lmsys/sglang` does not exist")
+    def test_chat_is_measured(self):
+        # The fallback everything proxies to; if this were missing the
+        # disclaimer would fire for every use case.
+        self.assertIn("chat", measured_use_cases())
 
-    def test_ollama_tag_has_a_patch_component(self):
-        # Ollama tags are MAJOR.MINOR.PATCH; bare `0.20` is a 404.
-        tag = OLLAMA_IMAGE.split(":", 1)[1]
-        self.assertRegex(tag, r"^\d+\.\d+\.\d+",
-                         f"{OLLAMA_IMAGE} — bare MAJOR.MINOR is not a real tag")
+    def test_embedding_is_not_measured(self):
+        # The concrete gap: an accepted --use-case with no quality data.
+        self.assertNotIn("embedding", measured_use_cases())
 
-    def test_vllm_image_is_unchanged(self):
-        # The one constant that was in use was the one that was correct.
-        self.assertEqual(VLLM_IMAGE, "vllm/vllm-openai:v0.19.0")
-
-
-class TestEnginePathsAgree(unittest.TestCase):
-    """The defect: the same runtime resolved to different images per path."""
-
-    def test_quadlet_and_kserve_resolve_vllm_identically(self):
-        from aictl.stack.kserve import RUNTIME_IMAGES as kserve_images
-        from aictl.stack.manifest import ServiceDef
-        from aictl.stack.quadlet import _resolve_image
-
-        svc = ServiceDef(name="x", runtime="vllm", model="m")
-        self.assertEqual(_resolve_image(svc), kserve_images["vllm"])
-        self.assertEqual(_resolve_image(svc), VLLM_IMAGE)
-
-    def test_every_runtime_resolves_through_the_shared_map(self):
-        from aictl.stack.manifest import ServiceDef
-        from aictl.stack.quadlet import _resolve_image
-
-        for runtime, image in RUNTIME_IMAGES.items():
-            svc = ServiceDef(name="x", runtime=runtime, model="m")
-            self.assertEqual(_resolve_image(svc), image, runtime)
-
-    def test_an_explicit_service_image_still_wins(self):
-        # Single-sourcing must not override what a user pinned themselves.
-        from aictl.stack.manifest import ServiceDef
-        from aictl.stack.quadlet import _resolve_image
-
-        svc = ServiceDef(name="x", runtime="vllm", model="m",
-                         image="my.registry/vllm:custom")
-        self.assertEqual(_resolve_image(svc), "my.registry/vllm:custom")
-
-    def test_unknown_runtime_yields_empty(self):
-        from aictl.stack.manifest import ServiceDef
-        from aictl.stack.quadlet import _resolve_image
-
-        self.assertEqual(
-            _resolve_image(ServiceDef(name="x", runtime="nope", model="m")), "")
-
-    def test_kserve_shares_the_constant_object(self):
-        from aictl.stack import kserve
-
-        self.assertIs(kserve.RUNTIME_IMAGES, RUNTIME_IMAGES)
+    def test_result_is_sorted_and_deduplicated(self):
+        cases = measured_use_cases()
+        self.assertEqual(cases, sorted(set(cases)))
 
 
-class TestNoFloatingTagsInEnginePaths(unittest.TestCase):
-    """A `:latest` engine image cannot be verified by `aictl trust`."""
+class TestTheChoiceIsWiderThanTheData(unittest.TestCase):
+    """Deliberately: the fix is disclosure, not removing the option."""
 
-    _PINNED = ("vllm", "sglang", "ollama")
+    def _choices(self) -> set[str]:
+        source = Path("aictl/cmd/quant.py").read_text()
+        match = re.search(r'"--use-case".*?choices=\[([^\]]*)\]', source, re.S)
+        self.assertIsNotNone(match, "--use-case choices not found")
+        return set(re.findall(r'"([a-z]+)"', match.group(1)))
 
-    def test_docker_hub_engines_are_pinned(self):
-        for runtime in self._PINNED:
-            self.assertNotIn(":latest", RUNTIME_IMAGES[runtime], runtime)
+    def test_every_measured_case_is_offered(self):
+        self.assertTrue(set(measured_use_cases()) <= self._choices())
 
-    def test_every_pinned_image_carries_a_version_tag(self):
-        for runtime in self._PINNED:
-            tag = RUNTIME_IMAGES[runtime].split(":", 1)[1]
-            self.assertRegex(tag, r"^v?\d+\.\d+", f"{runtime}: {tag}")
-
-    def test_trt_llm_is_left_floating_on_purpose(self):
-        # NGC rather than Docker Hub, so the tag could not be verified the
-        # same way. Pinning it to a guess would be the same error inverted.
-        self.assertIn(":latest", RUNTIME_IMAGES["trt-llm"])
-
-    def test_deployment_modules_no_longer_hardcode_engine_images(self):
-        # The rule CLAUDE.md states and these three modules broke.
-        pattern = re.compile(r'"(?:docker\.io/)?(?:vllm|lmsysorg|lmsys|ollama)/[^"]*:')
-        for name in ("quadlet.py", "orchestrator.py", "kserve.py"):
-            source = Path("aictl/stack") / name
-            offenders = pattern.findall(source.read_text())
-            self.assertEqual(offenders, [], f"{name} hardcodes an engine image")
+    def test_at_least_one_offered_case_is_proxied(self):
+        # If this ever becomes empty the disclaimer is dead code and should go.
+        self.assertTrue(self._choices() - set(measured_use_cases()))
 
 
-class TestGeneratedArtifactsUseThePinnedImages(unittest.TestCase):
-    def test_a_quadlet_unit_names_the_pinned_image(self):
-        from aictl.stack.manifest import ServiceDef, StackManifest
-        from aictl.stack.quadlet import _resolve_image
+class TestCliDisclosesTheProxy(unittest.TestCase):
+    def _recommend(self, use_case: str) -> str:
+        from aictl.cmd.quant import run_recommend
 
-        svc = ServiceDef(name="engine", runtime="vllm", model="llama3.1:8b")
-        StackManifest(name="s", services=[svc])
-        self.assertIn("v0.19.0", _resolve_image(svc))
+        namespace = argparse.Namespace(model="llama3.1:8b", gpu="H100",
+                                       use_case=use_case, json=False)
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            run_recommend(namespace)
+        return buffer.getvalue()
 
-    def test_no_engine_path_can_emit_latest(self):
-        # The property a user cares about: whatever path they take, the
-        # generated artifact names a specific build.
-        from aictl.stack.manifest import ServiceDef
-        from aictl.stack.quadlet import _resolve_image
+    def test_measured_use_case_says_nothing_extra(self):
+        output = self._recommend("chat")
+        self.assertIn("Use case: chat", output)
+        self.assertNotIn("proxy", output)
 
-        for runtime in self._pinned_runtimes():
-            svc = ServiceDef(name="x", runtime=runtime, model="m")
-            self.assertNotIn(":latest", _resolve_image(svc), runtime)
+    def test_unmeasured_use_case_names_the_gap(self):
+        output = self._recommend("embedding")
+        self.assertIn("no embedding-specific quality data", output)
+        self.assertIn("proxy", output)
 
-    @staticmethod
-    def _pinned_runtimes():
-        return ("vllm", "sglang", "ollama")
+    def test_the_disclaimer_sits_with_the_number_it_qualifies(self):
+        # On the "Use case:" line rather than a footnote, because a caveat
+        # printed far from the figure it qualifies is one nobody reads.
+        line = next(l for l in self._recommend("embedding").splitlines()
+                    if "Use case:" in l)
+        self.assertIn("proxy", line)
+
+
+class TestMcpToolDisclosesTheSameGap(unittest.TestCase):
+    """The MCP client sees numbers too, and had the identical silent fallback."""
+
+    def _quant(self, use_case: str) -> str:
+        from aictl.mcp_server import _tool_quant
+
+        result = _tool_quant({"model": "llama3.1:8b", "use_case": use_case})
+        return str(result)
+
+    def test_unmeasured_use_case_is_disclosed(self):
+        self.assertIn("no embedding-specific quality data",
+                      self._quant("embedding"))
+
+    def test_measured_use_case_is_not(self):
+        self.assertNotIn("proxy", self._quant("chat"))
+
+    def test_both_surfaces_use_one_source(self):
+        # Two copies of "which use cases are measured" would drift apart the
+        # first time someone added q_embedding.
+        source = Path("aictl/mcp_server.py").read_text()
+        self.assertIn("measured_use_cases", source)
+
+
+class TestReleaseTargetTellsTheTruth(unittest.TestCase):
+    """The Makefile must not advertise machinery the repo does not have."""
+
+    def setUp(self):
+        self.makefile = Path("Makefile").read_text()
+        self.has_workflows = any(Path(".github/workflows").glob("*.yml")) \
+            if Path(".github/workflows").is_dir() else False
+
+    def test_no_claim_of_github_actions_without_workflows(self):
+        # A property check, not a substring ban: this starts passing honestly
+        # the day someone actually adds a workflow.
+        if self.has_workflows:
+            self.skipTest("workflows exist; the claim would be true")
+        for phrase in ("runs in GitHub Actions", "triggers CI"):
+            self.assertNotIn(phrase, self.makefile,
+                             f"Makefile claims {phrase!r} with no workflows")
+
+    def test_release_does_not_announce_an_untriggered_pipeline(self):
+        if self.has_workflows:
+            self.skipTest("workflows exist; the claim would be true")
+        self.assertNotIn("PyPI", self.makefile,
+                         "nothing in this repo publishes to PyPI")
+
+    def test_release_refuses_a_dirty_tree(self):
+        # Tagging with uncommitted changes produces a tag that omits them.
+        self.assertIn("git diff --quiet", self.makefile)
+
+    def test_release_creates_the_github_release_when_it_can(self):
+        self.assertIn("gh release create", self.makefile)
+
+    def test_release_notes_come_from_the_maintained_file(self):
+        self.assertIn("RELEASE.md", self.makefile)
+        self.assertTrue(Path("RELEASE.md").read_text().strip())
+
+    def test_release_check_verifies_the_changelog(self):
+        # `make release` must not tag a version the CHANGELOG never mentions.
+        self.assertIn("CHANGELOG.md", self.makefile)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ VERSION := $(shell python3 -c "from aictl.core.constants import AICTL_VERSION; p
 
 all: lint test gate  ## Run lint + tests + gate
 
-ci: lint test gate  ## CI pipeline (runs in GitHub Actions)
+ci: lint test gate  ## Full local check (this repo has no CI service configured)
 
 help:  ## Show this help
 	@grep -E '^[a-z].*:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
@@ -91,6 +91,10 @@ print('✓ SDK surface OK')"
 
 release-check:  ## Pre-release checklist (run before tagging)
 	@echo "=== Pre-release checklist ==="
+	@git diff --quiet || { echo "✗ Working tree is dirty — a tag would omit those changes. Commit or stash first."; exit 1; }
+	@git diff --cached --quiet || { echo "✗ Staged but uncommitted changes — commit first."; exit 1; }
+	@grep -q "v$(VERSION)" CHANGELOG.md || { echo "✗ v$(VERSION) is not documented in CHANGELOG.md"; exit 1; }
+	@test -s RELEASE.md || { echo "✗ RELEASE.md is missing or empty — it becomes the release notes."; exit 1; }
 	@make lint
 	@make test-quick
 	@make gate
@@ -99,15 +103,21 @@ release-check:  ## Pre-release checklist (run before tagging)
 	@make sdk-check
 	@echo ""
 	@echo "✓ All checks passed. Ready to release v$(VERSION)."
-	@echo ""
-	@echo "  git tag v$(VERSION)"
-	@echo "  git push --tags"
 
-release:  ## Tag and push (triggers CI → PyPI → Docker)
+release:  ## Tag, push, and publish the GitHub Release from RELEASE.md
 	@make release-check
-	@git tag v$(VERSION)
-	@git push --tags
-	@echo "✓ v$(VERSION) released."
+	@git tag -a v$(VERSION) -m "v$(VERSION)"
+	@git push origin v$(VERSION)
+	@if command -v gh >/dev/null 2>&1; then \
+		gh release create v$(VERSION) --title "v$(VERSION)" --notes-file RELEASE.md && \
+		echo "✓ v$(VERSION) tagged, pushed, and published."; \
+	else \
+		echo ""; \
+		echo "✓ v$(VERSION) tagged and pushed."; \
+		echo "✗ GitHub Release NOT created — gh is not installed, so this step did not run."; \
+		echo "   Install gh and run:  gh release create v$(VERSION) --notes-file RELEASE.md"; \
+		echo "   Or publish it here:  https://github.com/shizukutanaka/aios/releases/new?tag=v$(VERSION)"; \
+	fi
 
 # ── Go ──────────────────────────────────────────
 
