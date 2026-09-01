@@ -11,7 +11,7 @@ from typing import Any
 import argparse
 
 import json
-from aictl.core.constants import AICTL_VERSION, MOCK_ENGINE_PORT, DAEMON_PORT
+from aictl.core.constants import AICTL_VERSION, MOCK_ENGINE_PORT, DAEMON_PORT, DAEMON_HOST
 import signal
 import tempfile
 import threading
@@ -28,6 +28,9 @@ def register(sub: Any) -> None:
     p.add_argument("--engine-port", type=int, default=MOCK_ENGINE_PORT)
     p.add_argument("--daemon-port", type=int, default=DAEMON_PORT)
     p.add_argument("--auto", action="store_true", help="Auto-run demo scenario then exit")
+    p.add_argument("--host", default=DAEMON_HOST,
+                   help="Address to bind (default: loopback). Use 0.0.0.0 only "
+                        "in a container — nothing here is authenticated.")
     p.set_defaults(func=run)
 
 
@@ -36,11 +39,12 @@ def run(args: argparse.Namespace) -> int:
     engine_port = getattr(args, "engine_port", MOCK_ENGINE_PORT)
     daemon_port = getattr(args, "daemon_port", DAEMON_PORT)
     auto = getattr(args, "auto", False)
+    host = getattr(args, "host", DAEMON_HOST)
 
     # Start mock engine
     from aictl.daemon.mock_engine import start_mock_engine
     ok(f"Starting mock inference engine on :{engine_port}")
-    mock = start_mock_engine(port=engine_port)
+    mock = start_mock_engine(port=engine_port, host=host)
     time.sleep(0.3)
 
     # Verify mock engine
@@ -63,7 +67,7 @@ def run(args: argparse.Namespace) -> int:
     ))
     AIOSHandler.store = store
     try:
-        daemon = ThreadedHTTPServer(("127.0.0.1", daemon_port), AIOSHandler)
+        daemon = ThreadedHTTPServer((host, daemon_port), AIOSHandler)
         daemon._start_time = time.time()
         daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
         daemon_thread.start()
@@ -77,12 +81,13 @@ def run(args: argparse.Namespace) -> int:
         return code
 
     print()
-    print(f"  Mock engine:  http://127.0.0.1:{engine_port}")
-    print(f"  Daemon API:   http://127.0.0.1:{daemon_port}")
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    print(f"  Mock engine:  http://{shown}:{engine_port}")
+    print(f"  Daemon API:   http://{shown}:{daemon_port}")
     print()
     print("  Try:")
-    print(f"    curl http://127.0.0.1:{daemon_port}/v1/health")
-    print(f'    curl -X POST http://127.0.0.1:{engine_port}/v1/chat/completions \\')
+    print(f"    curl http://{shown}:{daemon_port}/v1/health")
+    print(f'    curl -X POST http://{shown}:{engine_port}/v1/chat/completions \\')
     print('      -H "Content-Type: application/json" \\')
     print('      -d \'{"model":"mock-llama3-8b","messages":[{"role":"user","content":"hello"}]}\'')
     print()

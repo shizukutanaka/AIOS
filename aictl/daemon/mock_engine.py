@@ -343,9 +343,17 @@ class ThreadedMockServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-def start_mock_engine(port: int = 9999) -> ThreadedMockServer:
-    """Start a mock engine in a background thread. Returns server instance."""
-    server = ThreadedMockServer(("127.0.0.1", port), MockEngineHandler)
+def start_mock_engine(port: int = 9999,
+                      host: str = "127.0.0.1") -> ThreadedMockServer:
+    """Start a mock engine in a background thread. Returns server instance.
+
+    `host` defaults to loopback and should stay that way for local use: this
+    engine answers every request without authentication, so binding it to all
+    interfaces is a deliberate act. Containers pass 0.0.0.0 explicitly, because
+    inside a container loopback is the container's own and a published port
+    reaches nothing.
+    """
+    server = ThreadedMockServer((host, port), MockEngineHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server

@@ -1927,6 +1927,54 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 21 new tests (`tests/test_new_features_221.py`); suite
   4023/4023.
 
+## AQ. The Docker Quick Start failed at every step — ✅ fixed (Pass 222)
+
+> **Status:** compose command valid, long-lived, reachable, ports matched;
+> `demo --host` added with a loopback default. Plus a Socratic re-questioning
+> of `docs/REVIEW_v1.7.0.md` (追補 2026-09).
+
+- **Found by running the last documented path nobody had run.** README:
+  `docker compose up -d` then two curls. **Every step failed**, four
+  independent ways, each fatal alone:
+  1. **The container never started.** `deploy/docker/Dockerfile` sets
+     `ENTRYPOINT ["aictl"]`, so the compose `command:` is appended as
+     *arguments to aictl*. It read `["python3","-m","aictl","demo","--auto"]`,
+     so the container ran `aictl python3 -m aictl demo --auto` →
+     `invalid choice: 'python3'`, exit 2.
+  2. **`--auto` exits** ("Auto-run demo scenario **then exit**"). A compose
+     service whose command terminates is a dead container; the healthcheck
+     could never pass. `demo` *without* `--auto` was the long-lived form the
+     file wanted all along.
+  3. **Both servers bound `127.0.0.1`** — inside a container, its own
+     loopback. A published port reaches nothing.
+  4. **Port 9999 was never published** (compose mapped 7700 and 8080; the
+     Dockerfile `EXPOSE`s 9999, but `EXPOSE` does not publish). Meanwhile 8080
+     *was* published and nothing served it — the header advertised a proxy
+     `demo` does not start. The header also claimed 22 REST endpoints; it is 30.
+- **The default stayed safe.** Binding `0.0.0.0` by default would expose an
+  unauthenticated mock engine and daemon on every interface for everyone
+  running `aictl demo` locally — a security regression traded for a container
+  convenience. `--host` defaults to loopback; containers opt in explicitly.
+- **Tested as a property, not a string.** One test binds `0.0.0.0` and fetches
+  `/v1/models` over the host's own LAN address; its partner asserts a
+  loopback-bound engine *refuses* that same address, so the first test proves
+  something.
+- **A live false claim, found by re-questioning the review's own weakness 3.**
+  `CHANGELOG.md` listed "GitHub Actions CI (Python 3.11-3.13 + Go 1.23)" under
+  v1.6.0's Added. No `.github/workflows/` has ever existed. Corrected with a
+  strikethrough and a "never shipped" note rather than deleted, so the record
+  shows what was claimed.
+- **One weakness turned out to be overstated.** The review's item 1 claimed a
+  version bump needs **20 file edits**. Measured: **3** files hold the version
+  as a value (`constants.py`, `pyproject.toml`, `go-port/cmd/aictl/main.go`);
+  the other five merely mention it in prose. The real residual was that gate
+  compared only two of the three, so a bump could leave `aictl-go --version`
+  reporting the previous release silently. Gate now checks all three, and a
+  test pins the set so a fourth copy is noticed. Third time this session a
+  surface count proved wrong — *counting is not measuring*, in both directions.
+- **Validation:** 21 new tests (`tests/test_new_features_222.py`); suite
+  4044/4044.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

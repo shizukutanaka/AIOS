@@ -194,7 +194,10 @@ external dependencies, still stdlib-only):
 - bootc Containerfile (Fedora 42)
 - systemd service unit
 - Makefile (20 targets)
-- GitHub Actions CI (Python 3.11-3.13 + Go 1.23)
+- ~~GitHub Actions CI (Python 3.11-3.13 + Go 1.23)~~ — **never shipped.**
+  No `.github/workflows/` has ever existed in this repository. Corrected
+  in v1.7.0 rather than deleted, so the record shows what was claimed.
+  `make ci` runs the equivalent checks locally.
 
 ### Quality
 - 676 tests (659 Python + 17 Go)
