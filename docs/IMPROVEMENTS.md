@@ -1975,6 +1975,44 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 21 new tests (`tests/test_new_features_222.py`); suite
   4044/4044.
 
+## AR. The re-inventory drifted from the code it was inventorying — ✅ fixed (Pass 223)
+
+> **Status:** `REVIEW_v1.7.0.md`'s addendum corrected; `CLAUDE.md`'s gate
+> description now names all 12 phases; a parsed guard pins both.
+
+- **Found by re-asking a question already answered.** The 2026-09 addendum
+  re-questioned every July claim against the code — the right method, and it
+  produced real answers. Its own 「次に効果が大きい 3 件」 then listed
+  **`go-port` version verification** as priority #2. That verification had
+  shipped **in the same commit** (#44): gate already reported
+  `1.7.0 == pyproject.toml == go-port`, pinned by
+  `tests/test_new_features_222.py:240`.
+- **A document about documentation drift drifted, in its own diff.** The
+  implementer wrote the residual-work list minutes after writing the code and
+  did not re-read it. Found only by doing the same thing again — re-checking
+  every claim rather than trusting the most recent one. All other addendum
+  claims re-verified and held: 289 test files, 80 commands, 30 REST endpoints,
+  19 MCP tools, CI still absent, 2 `_load_config`, counts in sync, suite
+  hermetic. Only the measured test total had moved (4,041 → 4,044).
+- **`CLAUDE.md` had the same error, and longer.** It described `aictl gate` as
+  "Compile + import + version + tests + demo (~58s)" — **5 of 12 phases**, at
+  roughly two-thirds of the measured runtime. The seven omitted are the ones
+  added most recently (Counts, Go port, Docs, MCP, Security, Ruff, MyPy), which
+  is precisely the direction such a list rots. The description now names every
+  phase, using the labels the gate prints so a reader can match output to doc,
+  and states no absolute wall-clock time — a number that rots on every machine
+  it is read from.
+- **The guard is parsed, not grepped.** `_gate_phase_names()` reads the string
+  literals `gate.run` appends to its results list via AST, and the test asserts
+  the documented list covers all of them. Grepping documentation for a property
+  about behaviour is the habit that has now failed **seven** times this
+  session; a companion test guards the guard, failing if the append pattern
+  changes and the parser silently returns an empty set.
+- **Recorded as a finding in the review itself**, per that document's own
+  standard of recording what actually happened rather than what was intended.
+- **Validation:** 9 new tests (`tests/test_new_features_223.py`); suite
+  4053/4053.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
