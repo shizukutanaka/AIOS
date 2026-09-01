@@ -159,8 +159,28 @@ def run(args: argparse.Namespace) -> int:
             if line.startswith("version"):
                 toml_version = line.split('"')[1]
                 break
-    match = VERSION == toml_version
-    results.append(("Version", match, f"{VERSION} == {toml_version}"))
+    # The Go port hardcodes the version too, and nothing checked it: a bump
+    # that updated constants.py and pyproject.toml left `aictl-go --version`
+    # reporting the previous release, silently. These three are the only
+    # places the version exists as a value — everything else derives it or
+    # merely mentions it in prose.
+    go_version = ""
+    go_main = project_root / "go-port" / "cmd" / "aictl" / "main.go"
+    if go_main.is_file():
+        import re as _re
+        found = _re.search(r'version\s*=\s*"([^"]+)"', go_main.read_text())
+        if found:
+            go_version = found.group(1)
+
+    sources = {"pyproject.toml": toml_version}
+    if go_version:
+        sources["go-port"] = go_version
+    mismatched = [f"{name}={value}" for name, value in sources.items()
+                  if value != VERSION]
+    match = not mismatched
+    detail = (f"{VERSION} == {' == '.join(sources)}" if match
+              else f"{VERSION} but {', '.join(mismatched)}")
+    results.append(("Version", match, detail))
 
     # 4. Tests
     if getattr(args, "parallel", False) and not getattr(args, "skip_tests", False):

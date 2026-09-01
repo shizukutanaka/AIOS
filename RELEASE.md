@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,023+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,044+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,13 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **The Docker Quick Start works.** `docker compose up -d` previously failed
+  four independent ways: the compose `command:` was appended to the
+  Dockerfile's `aictl` ENTRYPOINT and died on an argparse error; `--auto` runs
+  the demo *then exits*, so the container was dead on arrival; both servers
+  bound loopback, unreachable from the host; and the mock engine's port was
+  never published. `aictl demo` gained `--host` (default loopback — nothing in
+  the demo is authenticated), and the compose file now matches what runs.
 - **Per-call costs are readable again.** Anything under $0.0001 printed as
   millidollars with a bare `m` suffix (`$0.0470m`), which reads as millions as
   easily as thousandths — and a free response printed `$0.0000m`. Costs now
