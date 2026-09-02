@@ -2192,6 +2192,47 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 8 new tests (`tests/test_new_features_227.py`); suite
   4114/4114; gate GREEN twice serial and once parallel.
 
+## AW. Every relative link in the docs was broken — ✅ fixed (Pass 228)
+
+> **Status:** 25 of 25 dead links repaired; `examples/ollama.container` pinned;
+> the unimplemented control-plane spec labelled as a design document.
+
+- **A documentation index with a 100% failure rate.** `docs/ai_os/README.md` is
+  the entry point to nine specifications, three OpenAPI files, six example
+  manifests and three CSVs — and **all 19 of its links were dead**, as were the
+  6 in its sibling documents. 25 of 25 relative links repo-wide. Two mechanical
+  causes: Windows `\` separators, which no markdown renderer resolves, and
+  repo-root-relative paths (`docs\ai_os\X.md`) written inside files that
+  already live in `docs/ai_os/`. **Every target existed the whole time** — the
+  documents were fine, only the way in was broken.
+- **An example that taught the opposite of the product's policy.**
+  `examples/ollama.container` shipped `Image=docker.io/ollama/ollama:latest`
+  with `AutoUpdate=registry`. `constants.py` pins `OLLAMA_IMAGE` and its comment
+  says exactly why: a `:latest` tag in a Quadlet unit "is unpullable-by-digest,
+  silently changes under the operator, and cannot be verified by the `aictl
+  trust` subsystem this product ships". The example demonstrated the practice
+  the constant exists to prevent, in the artifact type the comment names. Now
+  pinned to the constant, with `AutoUpdate=registry` dropped — it re-introduces
+  the same drift.
+- **A spec for an API that does not exist.** `control-plane.openapi.yaml`
+  documents 13 paths; **11 have no implementation**. It read as API
+  documentation and sat in the index beside a spec that is real. Now labelled
+  `DESIGN SPECIFICATION — NOT IMPLEMENTED` in the spec itself and in the index,
+  pointing readers to `aiosd-openapi.yaml`. Checked rather than assumed:
+  `runtime-broker.openapi.yaml` turned out to be **fully** implemented (17/17
+  served), so only one of the two needed the label.
+- **The guard is the general property**: a relative link in a document must
+  resolve, and no `Image=` directive may use `:latest`. Both are cheap and
+  total, and a companion test asserts the link scanner finds links at all —
+  zero found would pass forever.
+- **Ninth prose-versus-construct mistake, and the rule that fixes it.** The
+  first `:latest` test searched the raw file and failed on the comment
+  explaining the removal. Asserting on a file's *text* when the property is
+  about a *construct* has now failed nine times this session; checking the
+  construct (here, `Image=` lines only) is what works.
+- **Validation:** 11 new tests (`tests/test_new_features_228.py`); suite
+  4125/4125; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

@@ -20,9 +20,9 @@ v1 のテーマは以下の3つとする。
 
 関連文書:
 
-- [AI向けOS 比較調査メモ](docs\ai_os\OS_COMPARATIVE_RESEARCH.md)
-- [AI向けOS 意思決定マトリクスとロードマップ](docs\ai_os\OS_DECISION_MATRIX_AND_ROADMAP.md)
-- [AI特化Linux OS ローカル運用・内蔵オーケストレーション仕様](docs\ai_os\LOCAL_ORCHESTRATION_SPEC.md)
+- [AI向けOS 比較調査メモ](OS_COMPARATIVE_RESEARCH.md)
+- [AI向けOS 意思決定マトリクスとロードマップ](OS_DECISION_MATRIX_AND_ROADMAP.md)
+- [AI特化Linux OS ローカル運用・内蔵オーケストレーション仕様](LOCAL_ORCHESTRATION_SPEC.md)
 
 ## 2. v1 の対象ユーザー
 

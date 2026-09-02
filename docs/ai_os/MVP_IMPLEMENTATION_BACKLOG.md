@@ -11,8 +11,8 @@
 
 関連文書:
 
-- [AI特化Linux OS v1 製品要求仕様書](docs\ai_os\PRODUCT_REQUIREMENTS_V1.md)
-- [AI向けOS 意思決定マトリクスとロードマップ](docs\ai_os\OS_DECISION_MATRIX_AND_ROADMAP.md)
+- [AI特化Linux OS v1 製品要求仕様書](PRODUCT_REQUIREMENTS_V1.md)
+- [AI向けOS 意思決定マトリクスとロードマップ](OS_DECISION_MATRIX_AND_ROADMAP.md)
 
 ## 2. 実装方針
 

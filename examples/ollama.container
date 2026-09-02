@@ -8,8 +8,14 @@ After=network-online.target
 
 [Container]
 ContainerName=ollama
-Image=docker.io/ollama/ollama:latest
-AutoUpdate=registry
+# Pinned, matching OLLAMA_IMAGE in aictl/core/constants.py. That
+# constant's own comment says a `:latest` tag in a Quadlet unit is
+# unpullable-by-digest, changes silently under the operator, and
+# cannot be verified by the `aictl trust` subsystem this product
+# ships — and this example shipped `:latest`.
+Image=docker.io/ollama/ollama:0.20.0
+# AutoUpdate=registry deliberately omitted: it re-introduces exactly
+# the silent drift the pin exists to prevent. Bump the tag instead.
 Volume=/var/lib/aios/models:/root/.ollama
 PublishPort=11434:11434
 AddDevice=nvidia.com/gpu=all

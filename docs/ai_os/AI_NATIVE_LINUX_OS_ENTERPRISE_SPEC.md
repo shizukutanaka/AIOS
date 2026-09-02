@@ -405,4 +405,4 @@ GPUDirect Storageそのものは存在するが、OSレベルのモデル配布�
 - ローカル導入から部門標準へ段階的に広げやすい
 - 高度なAttestationやModel Vault機能を後から載せやすい
 
-詳細仕様は [LOCAL_ORCHESTRATION_SPEC.md](docs\ai_os\LOCAL_ORCHESTRATION_SPEC.md) を参照する。
+詳細仕様は [LOCAL_ORCHESTRATION_SPEC.md](LOCAL_ORCHESTRATION_SPEC.md) を参照する。
