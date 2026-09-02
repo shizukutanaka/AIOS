@@ -36,7 +36,7 @@ from pathlib import Path
 # Documents whose counts are kept honest. RELEASE.md matters most: it is the
 # text that becomes the public release announcement, so a stale number there
 # is a false claim shipped to everyone, not just a stale comment.
-_TRACKED_DOCS = ("CLAUDE.md", "RELEASE.md")
+_TRACKED_DOCS = ("CLAUDE.md", "RELEASE.md", "README.md", "Makefile")
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,053+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,063+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,13 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **The documented MCP setup now works.** The README had two contradictory
+  `## MCP Server` sections; the more inviting one showed a config that was not
+  valid JSON (a `//` comment inside a ```json fence) and omitted the
+  `mcpServers` wrapper, so no host would load it. The server itself was always
+  fine. There is now one correct section, a copy-pasteable config matching the
+  `claude_desktop_config.json` this repo ships, and a one-line command to
+  verify the server without a host.
 - **The Docker Quick Start works.** `docker compose up -d` previously failed
   four independent ways: the compose `command:` was appended to the
   Dockerfile's `aictl` ENTRYPOINT and died on an argparse error; `--auto` runs

@@ -17,7 +17,7 @@ print(answer.cost)  # '$0.000047' — per-call cost, always visible
 設定不要。モデル選定不要。aictl が自動で適切なモデルを選び、起動し、結果を返します。
 
 ```
-1840 tests | 150 modules | 25,000+ lines | zero external Python deps
+4063 tests | 182 modules | 40,000+ lines | zero external Python deps
 ```
 
 ## What aictl does that competitors don't
@@ -169,7 +169,7 @@ aictl scale keda <stack>               # KEDA ScaledObject
 ## Architecture
 
 ```
-CLI (66 Python + 29 Go)
+CLI (80 Python + 29 Go)
 ├── Runtime   Broker → Router → AutoScaler → Fabric → Isolation
 ├── Daemon    30 REST API + Proxy + SLO Governor + Mock Engine
 ├── Stack     10 Recipes + Quadlet + KServe + Gateway API + llm-d
@@ -202,23 +202,10 @@ curl http://localhost:7700/v1/health   # Daemon API
 curl http://localhost:9999/v1/models   # Mock engine
 ```
 
-## MCP Server
-
-```json
-{
-  "mcpServers": {
-    "aictl": {
-      "command": "python3",
-      "args": ["-m", "aictl.mcp_server"]
-    }
-  }
-}
-```
-
 ## Testing
 
 ```bash
-make test       # 1840 Python tests
+make test       # 4053 Python tests
 make go-test    # 17 Go tests
 make gate       # Full quality gate
 make demo       # E2E demo
@@ -238,14 +225,25 @@ MIT
 
 aictl exposes 19 tools via the Model Context Protocol (MCP). Any MCP-compatible host can use them (the table below lists a representative selection).
 
+Add this to your host's MCP config file — for Claude Desktop that is
+`claude_desktop_config.json` (this repository ships a copy at its root):
+
 ```json
-// Claude Desktop config (~/.config/claude/mcp_servers.json):
 {
-  "aictl": {
-    "command": "python3",
-    "args": ["-m", "aictl.mcp_server"]
+  "mcpServers": {
+    "aictl": {
+      "command": "python3",
+      "args": ["-m", "aictl.mcp_server"]
+    }
   }
 }
+```
+
+Verify it without a host:
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | python3 -m aictl.mcp_server
 ```
 
 Then in Claude Desktop, ask naturally:
