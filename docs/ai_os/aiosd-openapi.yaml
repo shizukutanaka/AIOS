@@ -1,10 +1,11 @@
 openapi: "3.0.3"
 info:
   title: aiosd — AI Native Linux OS Daemon API
-  version: "1.5.0"
+  version: "1.7.0"
   description: |
     REST API for the AI Native Linux OS daemon (aiosd).
-    22 GET endpoints + 4 POST endpoints for inference orchestration.
+    22 GET endpoints + 8 POST endpoints for inference orchestration,
+    plus /metrics (Prometheus text exposition, not JSON).
 servers:
   - url: http://127.0.0.1:7700
 paths:
@@ -89,3 +90,18 @@ paths:
   /v1/broker/drain:
     post:
       summary: Drain an engine for maintenance
+  /v1/scheduler:
+    get:
+      summary: Scheduled jobs and their next run times
+  /v1/models/register:
+    post:
+      summary: Register a model in the local registry
+  /v1/recipes/run:
+    post:
+      summary: Run a deployment recipe
+  /v1/stacks/apply:
+    post:
+      summary: Apply a Stack manifest
+  /v1/stacks/down:
+    post:
+      summary: Stop a deployed stack

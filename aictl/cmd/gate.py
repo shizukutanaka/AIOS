@@ -172,9 +172,24 @@ def run(args: argparse.Namespace) -> int:
         if found:
             go_version = found.group(1)
 
+    # The daemon's OpenAPI spec carries its own version and shipped two
+    # releases stale (1.5.0 against 1.7.0), because nothing compared them.
+    # Same reasoning as go-port above: it is a place the version exists as a
+    # value, so it belongs in the same check.
+    spec_version = ""
+    spec_path = project_root / "docs" / "ai_os" / "aiosd-openapi.yaml"
+    if spec_path.is_file():
+        import re as _re
+        found = _re.search(r'^\s*version:\s*"([^"]+)"', spec_path.read_text(),
+                           _re.M)
+        if found:
+            spec_version = found.group(1)
+
     sources = {"pyproject.toml": toml_version}
     if go_version:
         sources["go-port"] = go_version
+    if spec_version:
+        sources["openapi"] = spec_version
     mismatched = [f"{name}={value}" for name, value in sources.items()
                   if value != VERSION]
     match = not mismatched

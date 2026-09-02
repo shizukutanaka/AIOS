@@ -2157,6 +2157,41 @@ release surface, which is a maintainer's decision, not an agent's.
   data, deferred under cumulative and admitted under a window. Suite
   4097/4097; gate GREEN twice serial and once parallel.
 
+## AV. The API spec described 26 of the daemon's 30 endpoints — ✅ fixed (Pass 227)
+
+> **Status:** five routes added; spec version joins `gate`'s Version phase as a
+> fourth source; a parity test derives both sides.
+
+- **Found by questioning a pairing nobody had checked.** `CLAUDE.md` advertises
+  an OpenAPI spec under `docs/`, and the daemon serves 30 `/v1/` routes. Nothing
+  had ever compared them.
+- **Three kinds of drift at once, in one file:**
+  - **Five routes undocumented** — `/v1/scheduler`, `/v1/models/register`,
+    `/v1/recipes/run`, `/v1/stacks/apply`, `/v1/stacks/down`. Four of the five
+    are POSTs: the state-changing half of the API, which is exactly the part a
+    consumer needs a spec for. Reading it, you would not know they exist.
+  - **Version said `1.5.0`** — two releases behind. `gate` already reconciled
+    `constants.py`, `pyproject.toml` and the Go port; the spec is a fourth
+    place the version exists *as a value*, so it now joins them. Gate reads
+    `1.7.0 == pyproject.toml == go-port == openapi`.
+  - **Its own summary was wrong about itself**: it claimed "22 GET + 4 POST"
+    while documenting 21 GET + 4 POST, against a real 22 + 8. A document can be
+    stale about the code and about its own contents simultaneously.
+- **The guard derives both sides.** Routes come from the handler's AST (the
+  same source `rest_endpoint_count()` uses), paths from the spec's `paths:`
+  keys, so neither number is written anywhere a person maintains. It checks
+  both directions — an undocumented endpoint and a documented one that 404s —
+  and a companion test asserts both sides are non-empty, because two empty sets
+  are equal and would pass forever.
+- **Verified it has teeth**: deleting one path from the spec makes the parity
+  test fail; restoring it passes.
+- **One self-correction**: the first version of the version-reaches-comparison
+  test contained a dead `inspect.getsource(gate.run) if False else None`, which
+  is the same discarded-computation pattern this session has removed from the
+  gate, the installer and the proxy. Deleted before commit.
+- **Validation:** 8 new tests (`tests/test_new_features_227.py`); suite
+  4114/4114; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
