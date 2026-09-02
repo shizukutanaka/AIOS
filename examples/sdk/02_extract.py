@@ -1,7 +1,20 @@
 """Example: extract structured data from unstructured text.
 
 Run:  python3 examples/sdk/02_extract.py
+
+Needs a real model. Structured output requires the engine to emit JSON, and
+the in-process mock returns prose — the other examples in this directory work
+with no engine running, this one does not.
 """
+
+import sys
+from pathlib import Path
+
+# Run straight from a clone, exactly as the README's install describes
+# (`git clone && cd aios`) — no `pip install` step. Without this, running
+# `python3 examples/sdk/<name>.py` puts examples/sdk/ on sys.path instead of
+# the repository root, and `import aictl` fails with ModuleNotFoundError.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import aictl
 

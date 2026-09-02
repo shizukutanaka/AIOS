@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,125+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,139+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -125,6 +125,15 @@
   (`fair_share_window_seconds`); set it to `0` for the old behaviour.
   `aictl tco fairshare --window SECONDS` applies the same to the report, which
   still defaults to cumulative.
+- **`ai.classify()` tells you when it did not actually classify.** When the
+  model's answer matched none of your categories it returned the first one
+  silently, indistinguishable from a confident result — the shipped example
+  labelled every message, including complaints, "positive". The return value is
+  still a plain string, now carrying `.matched` (and `.mock`) for callers who
+  want to check.
+- **The SDK examples run.** None of the five could be executed as documented
+  (`import aictl` failed from a clone), `05_cost.py` called a property as a
+  method, and `02_extract.py` needs a real engine without saying so.
 - **The daemon's OpenAPI spec covers the whole API.** It documented 26 of the
   30 `/v1/` endpoints — the five missing ones being mostly POSTs
   (`/v1/stacks/apply`, `/v1/stacks/down`, `/v1/models/register`,

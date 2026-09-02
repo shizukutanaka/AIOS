@@ -6,6 +6,15 @@ aictl picks an embedding model that fits your hardware (often
 nomic-embed-text on a small GPU, or a larger one if you have it).
 """
 
+import sys
+from pathlib import Path
+
+# Run straight from a clone, exactly as the README's install describes
+# (`git clone && cd aios`) — no `pip install` step. Without this, running
+# `python3 examples/sdk/<name>.py` puts examples/sdk/ on sys.path instead of
+# the repository root, and `import aictl` fails with ModuleNotFoundError.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import aictl
 
 # A tiny "knowledge base"

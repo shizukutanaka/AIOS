@@ -319,6 +319,42 @@ class _Response:
         return format_usd(self.cost_usd, cached=self.cached)
 
 
+class Classification(str):
+    """The chosen category, and whether it was actually determined.
+
+    `classify()` returns a string so callers can use it directly, which left
+    nowhere to record that a result was a guess. The fallback branch returned
+    `categories[0]` under a comment claiming it would "flag unknown" — it
+    flagged nothing, so an unmatched answer was indistinguishable from a
+    confident one. That is how `examples/sdk/01_classify.py` came to label
+    "I've been on hold for an hour. This is unacceptable." as *positive*, along
+    with every other message, with no sign anything had gone wrong.
+
+    Subclassing `str` keeps every existing caller working — comparisons,
+    f-strings, JSON serialisation and dict keys all behave as before — while
+    giving the ones that care somewhere to look:
+
+        result = aictl.ai.classify(text, categories=[...])
+        if not result.matched:
+            ...                     # the model did not pick any of them
+    """
+
+    matched: bool
+    mock: bool
+
+    def __new__(cls, value: str, *, matched: bool = True,
+                mock: bool = False) -> "Classification":
+        obj = super().__new__(cls, value)
+        obj.matched = matched
+        obj.mock = mock
+        return obj
+
+    def __repr__(self) -> str:
+        flags = "" if self.matched else " UNMATCHED"
+        flags += " MOCK" if self.mock else ""
+        return f"Classification({str.__repr__(self)}{flags})"
+
+
 class _AI:
     """The `ai` namespace. Intentionally tiny.
 
@@ -471,16 +507,20 @@ class _AI:
         response = self.ask(prompt, mode="factual", model=model, private=private)
         answer = str(response).strip().strip(".,!?'\"").lower()
 
+        is_mock = bool(getattr(response, "mock", False))
+
         # Exact match first
         for cat in categories:
             if cat.lower() == answer:
-                return cat
+                return Classification(cat, mock=is_mock)
         # Substring match (model might say 'positive feedback' for 'positive')
         for cat in categories:
             if cat.lower() in answer or answer in cat.lower():
-                return cat
-        # Last resort: return the first category but flag unknown
-        return categories[0]
+                return Classification(cat, mock=is_mock)
+        # No category matched. Still returns one, so existing callers keep
+        # working, but says so — the previous comment here promised to "flag
+        # unknown" and then flagged nothing.
+        return Classification(categories[0], matched=False, mock=is_mock)
 
     def structured(
         self,
@@ -540,6 +580,16 @@ class _AI:
             result: dict[str, Any] = json.loads(cleaned)
             return result
         except json.JSONDecodeError as e:
+            # The in-process mock returns prose, so structured() against it
+            # always lands here. "Model did not return valid JSON" is true but
+            # sends the reader looking for a schema or prompt problem, when the
+            # actual cause is that no engine is running at all.
+            if ctx.is_mock:
+                raise ValueError(
+                    "structured() needs a real model: the in-process mock "
+                    "engine returns prose, not JSON. Start an engine (e.g. "
+                    "`ollama serve`) or point aictl at one, then retry."
+                ) from e
             raise ValueError(
                 f"Model did not return valid JSON. "
                 f"Got: {cleaned[:200]!r} (error: {e})"
