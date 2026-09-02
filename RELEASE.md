@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,139+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,151+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -125,6 +125,12 @@
   (`fair_share_window_seconds`); set it to `0` for the old behaviour.
   `aictl tco fairshare --window SECONDS` applies the same to the report, which
   still defaults to cumulative.
+- **`aictl apply` no longer crashes on multi-document YAML.** Every Kubernetes
+  manifest is `---`-separated, and pointing `apply` at one produced
+  "Unexpected error: ComposerError" with a request to file a bug. All YAML
+  parse errors are now reported as what they are — bad input — and
+  multi-document files get a message naming `kubectl` and `aictl cluster
+  export`.
 - **`ai.classify()` tells you when it did not actually classify.** When the
   model's answer matched none of your categories it returned the first one
   silently, indistinguishable from a confident result — the shipped example

@@ -70,9 +70,28 @@ def parse_file(path: str | Path) -> StackManifest:
     elif ext in (".yaml", ".yml"):
         try:
             import yaml  # type: ignore[import-untyped]
-            data = yaml.safe_load(text)
         except ImportError:
             raise StackParseError("PyYAML not installed — use JSON or TOML")
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as e:
+            # Only ImportError was caught here, so every YAML *parse* error
+            # escaped to the CLI's generic handler and told the user to file a
+            # bug about their own malformed file. JSON and TOML never had this
+            # problem because JSONDecodeError and TOMLDecodeError are
+            # ValueError subclasses, which the handler already treats as bad
+            # input; yaml.YAMLError derives from Exception and is not.
+            if "expected a single document" in str(e):
+                # The likeliest way to hit this: every Kubernetes manifest is
+                # `---`-separated, and this repository ships such files in
+                # examples/k8s/, so `aictl apply -f` on one crashed.
+                raise StackParseError(
+                    f"{p.name} contains multiple YAML documents (separated by "
+                    f"'---'). `aictl apply` takes a single Stack manifest. "
+                    f"This looks like a Kubernetes manifest — apply it with "
+                    f"kubectl, or generate one with `aictl cluster export`."
+                ) from e
+            raise StackParseError(f"Invalid YAML in {p.name}: {e}") from e
     else:
         # Try JSON first, then TOML
         try:
