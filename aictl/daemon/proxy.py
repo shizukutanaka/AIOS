@@ -201,13 +201,22 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 # all-time cumulative service meant a tenant heavy last month
                 # kept yielding indefinitely.
                 usage = meter.window_usage(window)
-                if usage.complete:
+                if usage.buckets:
                     # WindowBucket is shaped like TokenBucket for exactly this
                     # substitution; the scheduler is unchanged.
+                    #
+                    # Used even when `complete` is False. The reader walks the
+                    # log newest-first and stops at a cap, so an incomplete
+                    # window is not corrupted data — it is a *shorter* window,
+                    # with every entity covered equally over that span. The
+                    # first version of this fell back to cumulative instead,
+                    # which is backwards: caps are hit under heavy traffic,
+                    # exactly when fairness matters most, and cumulative is the
+                    # measure this whole change exists to stop using.
                     buckets = usage.as_list()
-                # An incomplete window means a cap was hit before the window was
-                # covered. Deferring a tenant on service we failed to measure is
-                # worse than not deferring, so fall back to cumulative.
+                # No buckets at all (an unreadable log) leaves `buckets` as the
+                # cumulative list; with genuinely no usage data should_admit
+                # fails open on its own.
             decision = should_admit(
                 entity_id, buckets,
                 yield_ratio=float(getattr(config, "fair_share_yield_ratio", 2.0)),
