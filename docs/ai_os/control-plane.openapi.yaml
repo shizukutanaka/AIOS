@@ -4,8 +4,13 @@ info:
   version: 0.1.0
   summary: Control plane for enterprise AI-native Linux OS
   description: >
-    This API defines the control surface for workload admission, model attestation,
-    memory fabric placement, context continuity, and GPU slice management.
+    DESIGN SPECIFICATION — NOT IMPLEMENTED. This describes a proposed control
+    surface for workload admission, model attestation, memory fabric placement,
+    context continuity, and GPU slice management. It is a design document, not
+    a description of a shipping API: 11 of its 13 paths have no implementation
+    in aiosd today (only /v1/recipes and /v1/stacks exist, and those are served
+    by the daemon, whose real contract is aiosd-openapi.yaml). Read it as a
+    roadmap. For the API that actually runs, see aiosd-openapi.yaml.
 servers:
   - url: https://aios-control.example.internal
 tags:
