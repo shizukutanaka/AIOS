@@ -114,6 +114,10 @@ def register(sub: Any) -> None:
         help="Fair-share advisory: Jain's fairness index over per-entity token usage.",
     )
     fairshare.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    fairshare.add_argument(
+        "--window", type=float, default=0.0, metavar="SECONDS",
+        help="Measure over a rolling window instead of all-time "
+             "(e.g. --window 3600). 0 = cumulative.")
     fairshare.set_defaults(func=run_fairshare)
 
     p.set_defaults(func=run_summary)
@@ -338,20 +342,43 @@ def run_carbon(args: argparse.Namespace) -> int:
 def run_fairshare(args: argparse.Namespace) -> int:
     """Fair-share advisory: Jain's fairness index over per-entity token usage.
 
-    Advisory only -- reads existing metering.py data, makes no scheduling or
-    admission decisions. See core/fairness.py for the metric and its
-    rationale (IMPROVEMENTS.md item M).
+    Advisory only -- this command reads metering data and makes no scheduling
+    or admission decisions. (The proxy's opt-in fair-share gate does; see
+    `fair_share_policy`.) `--window` measures a rolling window instead of
+    all-time, which is what the gate uses by default. See core/fairness.py for
+    the metric and its rationale (IMPROVEMENTS.md item M).
     """
     from dataclasses import asdict
     from aictl.core.metering import TokenMeter
     from aictl.core.fairness import compute_fairness
 
-    report = compute_fairness(TokenMeter().list_usage())
+    meter = TokenMeter()
+    window = float(getattr(args, "window", 0.0) or 0.0)
+    buckets = meter.list_usage()
+    windowed = None
+    if window > 0:
+        windowed = meter.window_usage(window)
+        # Report the window even when incomplete — a reader can see the caveat
+        # and judge. That differs from the admission gate, which falls back to
+        # cumulative: being told a number is partial is fine, being throttled
+        # on one is not.
+        buckets = windowed.as_list()
+
+    report = compute_fairness(buckets)
     use_json = getattr(args, "json", False)
 
     if use_json:
-        print_json(asdict(report))
+        payload = asdict(report)
+        if windowed is not None:
+            payload["window"] = windowed.to_dict()
+        print_json(payload)
         return 0
+
+    if windowed is not None:
+        note = (f"  Window: last {window:.0f}s "
+                f"({windowed.events_scanned} events scanned)")
+        print(note if windowed.complete
+              else note + " — INCOMPLETE, older usage not counted")
 
     if report.entity_count == 0:
         warn("No metered entities yet — run some requests through aictl and retry.")

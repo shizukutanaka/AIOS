@@ -2100,6 +2100,51 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 19 new tests (`tests/test_new_features_225.py`); suite
   4080/4080; gate GREEN twice serial and once parallel.
 
+## AU. Fairness measured all-time, so last month throttled you forever — ✅ fixed (Pass 226)
+
+> **Status:** the admission gate measures a rolling window by default
+> (`fair_share_window_seconds`, 3600s); `aictl tco fairshare --window` offers
+> the same for the report, opt-in.
+
+- **改善案 #6, the last open item blocked by nothing but effort.** Both fairness
+  consumers read `TokenBucket.total_tokens` — cumulative since the entity first
+  appeared — so a tenant heavy last month kept yielding indefinitely, long
+  after it stopped contending for anything.
+- **The reader half already existed and nothing called it.**
+  `TokenMeter.window_usage()` was fully built (tail read, byte and event caps,
+  a `complete` flag) with a docstring specifying the contract for throttling
+  callers. Sixth time this session the backlog listed as "to do" something
+  already partly built. The delta was the config and two call sites.
+- **Two deliberate asymmetries, both about who is harmed by a partial answer:**
+  - *The gate falls back to cumulative on an incomplete window; the report
+    shows it with a caveat.* Being told a number is partial is fine; being
+    throttled on one is not.
+  - *The gate defaults to a window; the report defaults to cumulative.*
+    Admission is about who is contending now. A report is a question the reader
+    asked, and silently changing what `aictl tco fairshare` means would be the
+    same undisclosed behaviour change this session keeps finding.
+- **`WindowBucket` was shaped like `TokenBucket` for one consumer, not both.**
+  Its docstring said the substitution needed no scheduler change — true;
+  `weighted_service` reads two fields. `compute_fairness` reads a third
+  (`entity_type`), so the report crashed on the first real substitution.
+  Carried now, defaulting to the same `"apikey"` `record()` defaults to rather
+  than being invented per event.
+- **Behaviour change on upgrade, documented in RELEASE.md.** Anyone running
+  `fair_share_policy=enforce` gets window-based admission; `0` restores the
+  cumulative behaviour exactly.
+- **A pre-existing hole found while testing the new field.** `aictl config set`
+  never called `_validate_config` — that ran only on `validate` and `import` —
+  so it accepted anything the type coercion allowed. `fair_share_policy bogus`
+  saved happily, and the gate reads it as "not off, not enforce", i.e. **warn**:
+  a typo silently downgraded enforcement to a warning, and the operator had no
+  way to know. Now validated on `set`, refusing only problems that name the key
+  being set, so a pre-existing invalid value elsewhere cannot block the edit
+  that fixes it.
+- **Validation:** 24 new tests (`tests/test_new_features_226.py`), including
+  the pair that proves the change is real — the same entity, same gate, same
+  data, deferred under cumulative and admitted under a window. Suite
+  4097/4097; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

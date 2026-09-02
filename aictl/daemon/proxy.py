@@ -192,7 +192,22 @@ class ProxyHandler(BaseHTTPRequestHandler):
         try:
             from aictl.core.fair_scheduler import should_admit
             from aictl.core.metering import TokenMeter
-            buckets = TokenMeter(self.store.dir).list_usage()
+
+            meter = TokenMeter(self.store.dir)
+            window = float(getattr(config, "fair_share_window_seconds", 3600.0))
+            buckets = meter.list_usage()
+            if window > 0:
+                # Fairness is about who is contending for the GPU now. Reading
+                # all-time cumulative service meant a tenant heavy last month
+                # kept yielding indefinitely.
+                usage = meter.window_usage(window)
+                if usage.complete:
+                    # WindowBucket is shaped like TokenBucket for exactly this
+                    # substitution; the scheduler is unchanged.
+                    buckets = usage.as_list()
+                # An incomplete window means a cap was hit before the window was
+                # covered. Deferring a tenant on service we failed to measure is
+                # worse than not deferring, so fall back to cumulative.
             decision = should_admit(
                 entity_id, buckets,
                 yield_ratio=float(getattr(config, "fair_share_yield_ratio", 2.0)),

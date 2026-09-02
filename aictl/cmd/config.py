@@ -167,6 +167,21 @@ def run_set(args: argparse.Namespace) -> int:
 
     # Rebuild config
     config = _dict_to_config(d)
+
+    # Validate before saving. `config set` accepted anything the type coercion
+    # allowed, so `fair_share_policy bogus` was stored happily — and the gate
+    # reads it as "not off, not enforce", which silently downgrades enforcement
+    # to a warning. `_validate_config` already knew every one of these rules;
+    # it was simply never consulted on this path, only on `validate`/`import`.
+    #
+    # Only problems naming the key being set are refused. Validating the whole
+    # config would let a pre-existing invalid value elsewhere block an
+    # unrelated edit — including the edit that fixes it.
+    problems = [p for p in _validate_config(config) if last in p or args.key in p]
+    if problems:
+        err(f"Refusing to set {args.key}: {problems[0]}")
+        return 1
+
     save_config(config, state_dir)
 
     from aictl.core.hooks import on_config_changed
@@ -243,6 +258,17 @@ def _validate_config(config: Any) -> list[str]:
     except (TypeError, ValueError):
         problems.append("fair_share_yield_ratio must be a number, got "
                         f"{d.get('fair_share_yield_ratio')!r}")
+
+    # A negative window is meaningless; 0 is the documented "cumulative" escape
+    # hatch, so it must not be rejected along with it.
+    try:
+        window = float(d.get("fair_share_window_seconds", 3600.0))
+        if window < 0:
+            problems.append(
+                f"fair_share_window_seconds must be >= 0 (0 = cumulative), got {window}")
+    except (TypeError, ValueError):
+        problems.append("fair_share_window_seconds must be a number, got "
+                        f"{d.get('fair_share_window_seconds')!r}")
 
     # cache_similarity_floor must be a valid cosine-similarity bound: 0 (or
     # below) would match everything indiscriminately, and cosine similarity
@@ -480,6 +506,7 @@ def _dict_to_config(d: dict[str, Any]) -> Config:
         rag_screen_policy=d.get("rag_screen_policy", "off"),
         fair_share_policy=d.get("fair_share_policy", "off"),
         fair_share_yield_ratio=d.get("fair_share_yield_ratio", 2.0),
+        fair_share_window_seconds=d.get("fair_share_window_seconds", 3600.0),
         guard_model_check_endpoint=d.get("guard_model_check_endpoint", ""),
         guard_model_check_model=d.get("guard_model_check_model", "llama-guard3"),
         cache_similarity_floor=d.get("cache_similarity_floor", 0.92),

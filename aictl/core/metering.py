@@ -42,6 +42,49 @@ class TokenBucket:
     minute_start: float = 0.0        # epoch seconds of the current 60s window
 
 
+@dataclass(frozen=True)
+class WindowBucket:
+    """Windowed usage for one entity, shaped like TokenBucket on purpose.
+
+    Both fairness consumers substitute this for cumulative usage without
+    changing their own logic: `fair_scheduler.weighted_service()` reads
+    `.prompt_tokens` / `.completion_tokens`, and `fairness.compute_fairness()`
+    reads `.entity_id`, `.entity_type` and `.total_tokens`. `entity_type` is
+    carried for that second consumer — the first version omitted it, which
+    made the window usable by the gate and not by the report.
+
+    The metering log records no entity_type, so it defaults to the same
+    "apikey" that `TokenMeter.record()` defaults to rather than being invented
+    per event.
+    """
+    entity_id: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    entity_type: str = "apikey"
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+@dataclass(frozen=True)
+class WindowedUsage:
+    """The result of a windowed read, including whether it is trustworthy."""
+    buckets: dict[str, WindowBucket]
+    window_seconds: float
+    complete: bool
+    events_scanned: int
+
+    def as_list(self) -> list[WindowBucket]:
+        return list(self.buckets.values())
+
+    def to_dict(self) -> dict[str, object]:
+        return {"window_seconds": self.window_seconds,
+                "complete": self.complete,
+                "events_scanned": self.events_scanned,
+                "entities": len(self.buckets)}
+
+
 @dataclass
 class MeteringRecord:
     """Single metering event."""
@@ -133,6 +176,90 @@ class TokenMeter:
             f.write(json.dumps(asdict(record)) + "\n")
 
         return True
+
+    def window_usage(self, window_seconds: float, *,
+                     now: float | None = None,
+                     max_events: int | None = None,
+                     tail_bytes: int | None = None) -> "WindowedUsage":
+        """Per-entity prompt/completion tokens within a recent time window.
+
+        metering_log.jsonl was written by `record()` and read by nothing — a
+        write-only, unbounded log. It is the only place carrying a per-event
+        prompt/completion split with a real timestamp, so it is what a rolling
+        window has to be built from: `TokenBucket.tokens_today` and friends
+        reset on calendar boundaries rather than sliding, and carry no split,
+        so a windowed weighted service is simply not expressible from them.
+
+        Read from the tail, newest first, under two caps so the cost cannot
+        grow with the log. If either cap is hit before the window is covered,
+        the result is marked `complete=False` — the caller then has partial
+        data and knows it, rather than a confident-looking undercount. Callers
+        that throttle must fall back to cumulative in that case: deferring a
+        tenant on a window you failed to measure is worse than not deferring.
+        """
+        from aictl.core.constants import (
+            METERING_WINDOW_MAX_EVENTS,
+            METERING_WINDOW_TAIL_BYTES,
+        )
+
+        cap_events = METERING_WINDOW_MAX_EVENTS if max_events is None else max_events
+        cap_bytes = METERING_WINDOW_TAIL_BYTES if tail_bytes is None else tail_bytes
+        cutoff = (time.time() if now is None else now) - max(0.0, window_seconds)
+
+        totals: dict[str, list[int]] = {}
+        scanned = 0
+        complete = True
+        try:
+            size = self._log_path.stat().st_size
+            with open(self._log_path, "rb") as handle:
+                start = max(0, size - cap_bytes)
+                handle.seek(start)
+                chunk = handle.read()
+            lines = chunk.split(b"\n")
+            if start > 0 and lines:
+                lines.pop(0)          # a partial line the seek cut in half
+            truncated = start > 0
+            reached_start = True
+            for raw in reversed(lines):
+                if not raw.strip():
+                    continue
+                if scanned >= cap_events:
+                    complete = False
+                    reached_start = False
+                    break
+                try:
+                    event = json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    continue          # a torn line; skip it, do not fail the read
+                if not isinstance(event, dict):
+                    continue
+                scanned += 1
+                if float(event.get("timestamp", 0.0)) < cutoff:
+                    reached_start = True
+                    break
+                entity = str(event.get("entity_id", ""))
+                if not entity:
+                    continue
+                bucket = totals.setdefault(entity, [0, 0])
+                bucket[0] += int(event.get("prompt_tokens", 0) or 0)
+                bucket[1] += int(event.get("completion_tokens", 0) or 0)
+            else:
+                # Ran out of lines without crossing the cutoff. That only
+                # covers the window if we read the whole file.
+                reached_start = not truncated
+            if not reached_start:
+                complete = False
+        except FileNotFoundError:
+            # No log yet: an empty window is the truthful answer, and it is
+            # complete — there genuinely is no usage in it.
+            return WindowedUsage({}, window_seconds, True, 0)
+        except OSError:
+            return WindowedUsage({}, window_seconds, False, 0)
+
+        return WindowedUsage(
+            {name: WindowBucket(name, counts[0], counts[1])
+             for name, counts in totals.items()},
+            window_seconds, complete, scanned)
 
     def get_usage(self, entity_id: str) -> TokenBucket | None:
         """Get usage."""
