@@ -66,8 +66,20 @@ class _EmbeddingStub:
     def _read_body(self):
         return self._body
 
-    def _error(self, status, message, extra=None):
+    def _error(self, status, message, extra=None, headers=None):
         self.errors.append((status, message))
+
+    # Borrowed from the real handler rather than faked, so this stub exercises
+    # the actual gate the embedding path now runs (Pass 225). With the default
+    # fair_share_policy of "off" it admits, leaving these tests about trust —
+    # but if the gate's own behaviour regressed, they would notice.
+    def _entity_id(self):
+        from aictl.daemon.proxy import ProxyHandler
+        return ProxyHandler._entity_id(self)
+
+    def _check_fair_share(self, entity_id):
+        from aictl.daemon.proxy import ProxyHandler
+        return ProxyHandler._check_fair_share(self, entity_id)
 
     def _get_router(self):
         stub = self

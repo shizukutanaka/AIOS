@@ -25,6 +25,17 @@ from aictl.core.constants import PROXY_PORT, DAEMON_HOST
 _MAX_BODY_BYTES = 100 * 1024 * 1024  # 100 MB cap to prevent memory exhaustion
 
 
+def _retry_after() -> dict[str, str]:
+    """Retry-After for a fair-share deferral.
+
+    The comment beside the 503 has always said "503 with Retry-After"; the
+    header was never actually sent. A 503 without it invites an immediate
+    retry from exactly the client that was just asked to yield.
+    """
+    from aictl.core.constants import FAIR_SHARE_RETRY_AFTER_SECONDS
+    return {"Retry-After": str(FAIR_SHARE_RETRY_AFTER_SECONDS)}
+
+
 class ProxyHandler(BaseHTTPRequestHandler):
     store: StateStore
     router: BrokerRouter | None = None
@@ -308,7 +319,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # not a permission failure.
         fair_ok, fair_reason = self._check_fair_share(self._entity_id())
         if not fair_ok:
-            self._error(503, fair_reason)
+            self._error(503, fair_reason, headers=_retry_after())
             return
 
         # Route
@@ -411,6 +422,16 @@ class ProxyHandler(BaseHTTPRequestHandler):
         guard_ok, guard_reason = self._check_guard(body)
         if not guard_ok:
             self._error(400, guard_reason)
+            return
+
+        # Same fair-share gate as _proxy_completion, in the same position
+        # (after trust and guard). Embeddings were exempt, which is a hole in
+        # an opt-in fairness control rather than a design choice: an entity
+        # deferred on /v1/chat/completions could keep consuming the same GPU
+        # through /v1/embeddings, and those tokens are metered identically.
+        fair_ok, fair_reason = self._check_fair_share(self._entity_id())
+        if not fair_ok:
+            self._error(503, fair_reason, headers=_retry_after())
             return
 
         router = self._get_router()
@@ -668,12 +689,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         length = min(length, _MAX_BODY_BYTES)
         return json.loads(self.rfile.read(length))
 
-    def _json(self, status: int, data: Any) -> None:
+    def _json(self, status: int, data: Any,
+              headers: dict[str, str] | None = None) -> None:
         """Serialize and send a JSON response."""
         body = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -684,12 +708,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _error(self, status: int, msg: str, extra: dict[str, Any] | None = None) -> None:
+    def _error(self, status: int, msg: str, extra: dict[str, Any] | None = None,
+               headers: dict[str, str] | None = None) -> None:
         """Build a JSON-RPC 2.0 error response dict."""
         data = {"error": {"message": msg, "type": "aios_proxy_error"}}
         if extra:
             data["error"].update(extra)
-        self._json(status, data)
+        self._json(status, data, headers=headers)
 
 
 def serve_proxy(host: str = DAEMON_HOST, port: int = PROXY_PORT,

@@ -54,6 +54,11 @@ CONFORMANCE_PROBE_TIMEOUT = 5   # aictl.runtime.conformance per-probe HTTP timeo
 # 10-name list that had been frozen at v1.6.0.
 DOCS_MIN_TOPIC_COMMANDS = 25
 
+# How long a fair-share-deferred client should wait before retrying. A 503
+# without Retry-After invites an immediate retry storm from exactly the client
+# that was just asked to yield, which is the opposite of what deferral is for.
+FAIR_SHARE_RETRY_AFTER_SECONDS = 5
+
 # vLLM OffloadingConnector (KV prefix-cache offload to pinned host memory).
 # cpu_bytes_to_use is PINNED (page-locked) host memory: it is unswappable and
 # taken away from the OS for the engine's lifetime, so over-allocating it

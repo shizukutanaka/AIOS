@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,063+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,080+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,11 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **Fair-share now covers embeddings, and its 503 is retryable.** With
+  `fair_share_policy` enabled, `/v1/embeddings` was exempt from the gate, so a
+  deferred entity could keep consuming the same GPU through that path. It is
+  now gated at the same point in the pipeline as completions, and both send the
+  `Retry-After` header the code had always claimed to send.
 - **The documented MCP setup now works.** The README had two contradictory
   `## MCP Server` sections; the more inviting one showed a config that was not
   valid JSON (a `//` comment inside a ```json fence) and omitted the

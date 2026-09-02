@@ -222,28 +222,25 @@ class TestConfigWiring(unittest.TestCase):
 
 
 class TestProxyGateShape(unittest.TestCase):
-    def test_gate_runs_after_trust_and_guard(self):
-        # daemon/CLAUDE.md pins trust -> guard ordering. Fair-share must come
-        # after both: an unsafe or untrusted request should be refused on those
-        # grounds regardless of whose quota it lands in.
-        import inspect
-        from aictl.daemon import proxy
+    """Superseded by tests/test_new_features_225.py.
 
-        source = inspect.getsource(proxy)
-        trust = source.index("allowed, reason = self._model_trust_ok(model)")
-        guard = source.index("guard_ok, guard_reason = self._check_guard(body)")
-        fair = source.index("fair_ok, fair_reason = self._check_fair_share(")
-        self.assertLess(trust, guard, "trust gate must precede guard")
-        self.assertLess(guard, fair, "fair-share gate must follow guard")
+    This class used to search the *whole proxy module* for the gate's source
+    text and assert "503" appeared within 220 characters of it. Both checks
+    passed for two passes while `_proxy_embedding` had no fair-share gate at
+    all -- a module-wide search matches the ordering in one path and says
+    nothing about the other -- and while the "503 with Retry-After" comment
+    beside the gate described a header the code never sent.
 
-    def test_deferral_uses_a_retryable_status(self):
-        # Being deferred is transient; 403 would imply a permission failure.
-        import inspect
-        from aictl.daemon import proxy
+    Pass 225 replaced them with tests that drive a real request and read the
+    real response, scoped per path. Kept as a pointer rather than deleted
+    silently, so the reason a substring check was not enough stays on record.
+    """
 
-        source = inspect.getsource(proxy)
-        idx = source.index("fair_ok, fair_reason")
-        self.assertIn("503", source[idx:idx + 220])
+    def test_the_behavioural_tests_exist(self):
+        from tests import test_new_features_225 as behavioural
+
+        self.assertTrue(hasattr(behavioural, "TestBothProxiedPathsAreGated"))
+        self.assertTrue(hasattr(behavioural, "TestTheDeferralIsRetryable"))
 
 
 if __name__ == "__main__":
