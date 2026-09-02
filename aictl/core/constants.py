@@ -59,6 +59,24 @@ DOCS_MIN_TOPIC_COMMANDS = 25
 # that was just asked to yield, which is the opposite of what deferral is for.
 FAIR_SHARE_RETRY_AFTER_SECONDS = 5
 
+# Default rolling window for fair-share admission. The gate measured *all-time*
+# cumulative service, so a tenant that was heavy last month kept yielding
+# indefinitely — fairness is about who is contending for the GPU now, not who
+# ever has. 0 restores the cumulative behaviour for anyone who wants it.
+FAIR_SHARE_WINDOW_SECONDS = 3600
+
+# Rolling-window fairness. The admission gate and the fairness report both read
+# *cumulative* service, so a tenant that was heavy last month yields forever.
+# A real window is computed from metering_log.jsonl, which carries the
+# prompt/completion split that TokenBucket's calendar counters do not.
+#
+# Both bounds exist so the scan cost cannot grow with the log: the tail read is
+# capped in bytes, and the walk is capped in events. If either cap is reached
+# before the window is covered, the window is reported INCOMPLETE and callers
+# fall back to cumulative rather than throttling on partial data.
+METERING_WINDOW_TAIL_BYTES = 4 * 1024 * 1024
+METERING_WINDOW_MAX_EVENTS = 20_000
+
 # vLLM OffloadingConnector (KV prefix-cache offload to pinned host memory).
 # cpu_bytes_to_use is PINNED (page-locked) host memory: it is unswappable and
 # taken away from the OS for the engine's lifetime, so over-allocating it

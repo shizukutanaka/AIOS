@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,080+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,104+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -118,6 +118,18 @@
   place, and never loosened.
 - **`aictl gate` no longer writes into your real `~/.aios`.** 53 of the 280 test
   files did.
+- **Fair-share now measures a rolling window, not all time.** The admission
+  gate compared *cumulative* usage since an entity first appeared, so a tenant
+  that was heavy last month kept being deferred long after it stopped
+  contending. It now measures the last hour by default
+  (`fair_share_window_seconds`); set it to `0` for the old behaviour.
+  `aictl tco fairshare --window SECONDS` applies the same to the report, which
+  still defaults to cumulative.
+- **`aictl config set` now rejects invalid values.** It type-coerced and saved
+  without ever running the validation that `config validate` and `config
+  import` use, so `aictl config set fair_share_policy bogus` was accepted — and
+  the gate reads an unrecognised policy as neither "off" nor "enforce", which
+  silently downgraded enforcement to a warning.
 - **Fair-share now covers embeddings, and its 503 is retryable.** With
   `fair_share_policy` enabled, `/v1/embeddings` was exempt from the gate, so a
   deferred entity could keep consuming the same GPU through that path. It is
@@ -255,6 +267,20 @@ trusting it:
 
 Nothing is deleted from `~/.aios`; once `aictl status` looks right, remove it
 yourself.
+
+**If you set `fair_share_policy` to `enforce` or `warn`,** its measurement
+window changed. It compared all-time cumulative service; it now compares the
+last hour. This is the fix for a tenant being throttled today because of load
+it generated last month, and for most deployments it is what you wanted. To
+keep the previous behaviour exactly:
+
+```bash
+aictl config set fair_share_window_seconds 0
+```
+
+The gate still falls back to cumulative on its own if the window cannot be
+measured completely, and `fair_share_policy` still defaults to `off`, so
+deployments that never enabled it are unaffected.
 
 Precedence is now explicit: `--state-dir` beats `AIOS_STATE_DIR`, which beats
 the `AICTL_STATE_DIR` alias, which beats `~/.aios`. An empty value means unset

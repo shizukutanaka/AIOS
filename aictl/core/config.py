@@ -104,6 +104,8 @@ class Config:
     # the first thing here that can refuse a request on fairness grounds.
     fair_share_policy: str = "off"     # enforce | warn | off
     fair_share_yield_ratio: float = 2.0  # defer above this multiple of an even share
+    # Rolling window the gate measures service over. 0 = all-time cumulative.
+    fair_share_window_seconds: float = 3600.0
     # Optional model-based content check (IMPROVEMENTS.md item G, proposal 3):
     # empty endpoint = disabled (zero-dep default, no network call ever made).
     # Set both to point the proxy's guard gate at a local Llama-Guard-style
@@ -200,6 +202,8 @@ def load_config(state_dir: Path | None = None) -> Config:
         c.fair_share_policy = data.get("fair_share_policy", c.fair_share_policy)
         c.fair_share_yield_ratio = data.get("fair_share_yield_ratio",
                                             c.fair_share_yield_ratio)
+        c.fair_share_window_seconds = data.get("fair_share_window_seconds",
+                                               c.fair_share_window_seconds)
         c.guard_model_check_endpoint = data.get("guard_model_check_endpoint",
                                                 c.guard_model_check_endpoint)
         c.guard_model_check_model = data.get("guard_model_check_model",
