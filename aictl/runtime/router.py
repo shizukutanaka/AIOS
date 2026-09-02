@@ -32,6 +32,11 @@ from aictl.metrics.slo import InferenceMetrics, SLOTarget, check_slo, read_psi
 class RouteRequest:
     model: str
     objective: str = "balanced"   # latency | throughput | cost | balanced
+    # Accepted by the /v1/broker/route REST endpoint (daemon/aiosd.py) and
+    # carried on the request, but no routing decision reads it today: the
+    # router scores engines, not entities. Removing it breaks that endpoint's
+    # contract, so it stays — the gap is that tenant-aware routing does not
+    # exist, not that the field is unused input.
     tenant: str = ""
     latency_slo_ms: float = 0.0
 

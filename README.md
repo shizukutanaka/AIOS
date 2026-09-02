@@ -17,7 +17,7 @@ print(answer.cost)  # '$0.000047' — per-call cost, always visible
 設定不要。モデル選定不要。aictl が自動で適切なモデルを選び、起動し、結果を返します。
 
 ```
-4063 tests | 182 modules | 40,000+ lines | zero external Python deps
+4080 tests | 182 modules | 40,000+ lines | zero external Python deps
 ```
 
 ## What aictl does that competitors don't

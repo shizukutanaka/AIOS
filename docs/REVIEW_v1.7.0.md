@@ -67,7 +67,7 @@
 |---|------|------|------|
 | 1 | **バージョン単一情報源化**: `constants.AICTL_VERSION` を唯一の源とし、テストのピンを定数参照+正規表現形式検証に置換、Go port は生成 or テスト同期のみに | 短所1 | Sonnet |
 | 2 | **CI 追加**: gate（--skip-demo）+ suite を GitHub Actions 化。前提: App への `workflows` 権限付与 | 短所3,4 | Opus（設計）→ Sonnet（YAML 保守） |
-| 3 | **live fair-share スケジューラ**（IMPROVEMENTS.md 項目 M 残り）: governor/router に per-tenant 概念を導入し、Pass 190 の advisory を実制御に昇格。VTC 式カウンタ or DRR。要 opt-in 設計 | 項目 M | Opus |
+| 3 | ~~**live fair-share スケジューラ**~~ → **Pass 198 で実装済み**（`core/fair_scheduler.py` + proxy の opt-in 503 ゲート）。追補§4 参照 | 項目 M | — |
 | 4 | **G-4: クロスリクエスト injection 文脈**: セッション単位の finding 履歴永続化。データモデル設計から必要 | 項目 G | Opus |
 | 5 | **N-3: MCP セッション永続化** + **MCP Tasks 拡張**（2026-07-28 final spec 確定後） | 項目 N | Opus |
 | 6 | **rolling-window fairness**: `tco fairshare` の全期間累計を窓付きに（metering に窓カウンタ追加が必要と Pass 190 で文書化済み） | fairness.py 記載 | Sonnet |
@@ -177,13 +177,18 @@
 （それぞれ pass 207 / #41）。**#2（CI 追加）は権限待ちで不変**。**#1 も完了**（当初の見積り
 が過大だったうえ、残作業としていた `go-port/main.go` の検証も #44 で実装済み。
 gate は現在 `1.7.0 == pyproject.toml == go-port` と 3 情報源を照合し、
-`tests/test_new_features_222.py:240` が固定している）。#3–#7, #9 は未着手のまま有効。
+`tests/test_new_features_222.py:240` が固定している）。**#3 も実装済みだった**（Pass 198。`should_admit()` が実際の可否判定を行い、proxy が opt-in で 503 を返す。governor ではなく proxy に置いたのは、governor が 15 秒間隔のエンジン単位ポーリングでリクエスト単位の識別子を持たないため）。本追補の初版はこれを「未着手」と書いており、**本文書が同じ誤りを二度繰り返した**ことになる（前回は go-port バージョン検証）。#4–#7, #9 は未着手のまま有効。
 
 **次に効果が大きい 3 件**（本追補時点の判断）:
 
 1. **CI**（提案 #2）— 権限が付与され次第。ローカル gate は強固だが、サーバ側検証は
    依然ゼロ。唯一、外部要因で止まっている項目。
-2. **rolling-window fairness**（提案 #6）— `tco fairshare` の全期間累計を窓付きに。
-   metering への窓カウンタ追加が前提であることは Pass 190 で文書化済み。小さく完結。
-3. **live fair-share スケジューラ**（提案 #3）— advisory から実制御への昇格。
+2. **rolling-window fairness**（提案 #6）— 全期間累計を窓付きに。これは
+   `tco fairshare` の表示だけの問題ではない: **実際の admission ゲートも
+   累計を見ている**ため、先月重かったテナントが今月ずっと譲り続ける。
+   `TokenBucket` の `tokens_today` 等は暦境界でリセットされる別物で、
+   prompt/completion の内訳も持たないため窓付き `weighted_service` は今の
+   スキーマでは表現できない。`metering_log.jsonl` から計算する方が安価。
+3. **fair-share のキューイング**（提案 #3 の残り）— 現在は拒否であって
+   queue-and-release ではない。IMPROVEMENTS.md:895 に既知の限界として記載済み。
    設計判断を要するため Opus 向き。

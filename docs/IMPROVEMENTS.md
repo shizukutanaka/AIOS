@@ -2053,6 +2053,53 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 10 new tests (`tests/test_new_features_224.py`); suite
   4063/4063; gate GREEN twice serial and once parallel.
 
+## AT. The fair-share gate had a hole, an unkept promise, and no real test — ✅ fixed (Pass 225)
+
+> **Status:** embeddings gated; `Retry-After` actually sent; the two
+> source-substring integration tests replaced with tests that drive a request.
+
+- **The backlog was stale a fifth time.** 改善案 #3 asked to "promote the
+  fair-share advisory to real control"; that shipped in Pass 198.
+  `IMPROVEMENTS.md:852` recorded it, `REVIEW_v1.7.0.md` did not, and would have
+  sent a future session to rebuild it. **This document made the same mistake
+  twice** — the previous one was the go-port version check (item AR).
+- **Embeddings bypassed the gate.** `_proxy_embedding` ran trust and guard and
+  then skipped fair-share, so an entity deferred on `/v1/chat/completions`
+  could keep consuming the same GPU through `/v1/embeddings` — tokens
+  `_meter_tokens` counts identically. A hole in an opt-in control, not a
+  design choice. Now gated at the same pipeline position.
+- **The 503 promised a header it never sent.** The comment read "503 with
+  Retry-After"; `_error()` set no headers. A 503 without `Retry-After` invites
+  an immediate retry from exactly the client just asked to yield.
+  `FAIR_SHARE_RETRY_AFTER_SECONDS` added; `_json`/`_error` take optional
+  headers so the change stays local and other callers are untouched.
+- **Nothing tested the rejection.** The integration was two
+  `inspect.getsource()` checks that found `"fair_ok, fair_reason"` and asserted
+  `"503"` within 220 characters. Both passed for two passes *while the
+  embedding path had no gate at all* — a module-wide search matches one path
+  and says nothing about the other. Eighth substring-instead-of-behaviour
+  check this session. Replaced with tests that construct the handler, seed
+  skewed metering buckets, and read the real status and headers; **verified by
+  removing the embedding gate and confirming three of them fail.**
+- **A correction I got wrong mid-pass.** I deleted `RouteRequest.tenant` as a
+  dead field after grepping `aictl/runtime/` and `tests/` — and not
+  `aictl/daemon/`. `aiosd.py:366` reads it: it is part of the
+  `/v1/broker/route` request contract, and removing it broke that endpoint
+  (`tests/test_phase2.py::test_broker_route`). Restored, with the narrower true
+  observation recorded: the field is accepted and carried but no routing
+  decision consults it — a missing feature, not dead code. Same failure mode as
+  the three earlier "counting is not measuring" retractions: a search scoped
+  too narrowly, treated as proof.
+- **Still open, and now stated accurately:** the gate reads *cumulative*
+  service, so a tenant heavy last month yields indefinitely. That is 改善案 #6,
+  and it affects the live gate, not just the `tco fairshare` report.
+  `TokenBucket`'s `tokens_today`/`tokens_this_month` reset on calendar
+  boundaries and carry no prompt/completion split, so a windowed
+  `weighted_service` is not expressible from today's schema;
+  `metering_log.jsonl` is the cheaper route.
+- **Validation:** 19 new tests (`tests/test_new_features_225.py`); suite
+  4080/4080; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
