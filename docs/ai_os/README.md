@@ -20,6 +20,9 @@
 
 ## 宣言ファイル例
 
+> これらは **設計仕様（`aios/v1alpha1`）の例** であり、未実装 API を対象とする。`aictl apply` が受け付ける実際の形式は
+> [examples/stack.local-rag.yaml](../../examples/stack.local-rag.yaml) を参照。
+
 - [FabricPolicy 例](examples/fabric-policy.enterprise.yaml)
 - [ModelBundle 例](examples/model-bundle.attested.yaml)
 - [InferenceService 例](examples/workload.low-latency.yaml)

@@ -2281,6 +2281,44 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 14 new tests (`tests/test_new_features_229.py`); suite
   4139/4139; gate GREEN twice serial and once parallel.
 
+## AY. `aictl apply` crashed on the Kubernetes manifests this repo ships — ✅ fixed (Pass 230)
+
+> **Status:** YAML parse errors are user errors; multi-document input gets a
+> specific message; the `aios/v1alpha1` design examples are labelled.
+
+- **Found by using a tool on the repo's own files.** `aictl apply
+  --validate-only` exists precisely to check manifests, and nothing had run it
+  over the ten shipped ones. Two files in `examples/k8s/` crashed:
+
+      Unexpected error: ComposerError: expected a single document in the stream
+
+  Every Kubernetes manifest is `---`-separated, so the tool crashed on its own
+  examples and told the user to file a bug about it.
+- **The root cause is one line narrower than it looks.** The loader wrapped
+  `yaml.safe_load` in `except ImportError` **only**, so every YAML parse error
+  escaped to the CLI's generic handler. JSON and TOML never had this problem
+  for a precise reason: `json.JSONDecodeError` and `tomllib.TOMLDecodeError`
+  are `ValueError` subclasses, which the handler already treats as bad input,
+  while `yaml.YAMLError` derives from `Exception` and is not. Three
+  structurally identical branches; different exception ancestry; one broken.
+  **Verified rather than assumed** — malformed JSON and TOML already produced
+  clean `Invalid input:` messages.
+- **A conclusion I nearly got wrong.** Eight of the ten shipped manifests fail
+  the stack validator, and the first reading was "eight broken examples". They
+  are not: `tenant-class.regulated.yaml`, `model-bundle.attested.yaml` and the
+  rest are CRD-style resources for a different API, so a *stack* validator
+  rejecting them is correct. Counting failures is not measuring them — the
+  fourth time this session that distinction changed a finding.
+- **What was genuinely wrong there:** `docs/ai_os/examples/` holds design
+  examples for `aios/v1alpha1`, the control-plane API labelled NOT IMPLEMENTED
+  in pass 228 — including one named `stack.local-rag.yaml`, sharing a filename
+  with the real working manifest in `examples/` and incompatible with it. The
+  spec got labelled last pass; its examples did not. Now each carries the
+  caveat and points at the format `aictl apply` accepts.
+- **Validation:** 12 new tests (`tests/test_new_features_230.py`), including
+  one asserting no supported format reports a user's malformed file as an
+  aictl bug; suite 4151/4151; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

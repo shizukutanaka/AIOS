@@ -1,3 +1,7 @@
+# DESIGN EXAMPLE — apiVersion: aios/v1alpha1 is NOT IMPLEMENTED.
+# This illustrates the proposed control-plane API (see control-plane.openapi.yaml,
+# which carries the same caveat). `aictl apply` does not accept this format.
+# For a manifest the shipped tool actually applies, see examples/stack.local-rag.yaml.
 apiVersion: aios/v1alpha1
 kind: FabricPolicy
 metadata:
