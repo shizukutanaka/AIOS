@@ -358,10 +358,10 @@ def run_fairshare(args: argparse.Namespace) -> int:
     windowed = None
     if window > 0:
         windowed = meter.window_usage(window)
-        # Report the window even when incomplete — a reader can see the caveat
-        # and judge. That differs from the admission gate, which falls back to
-        # cumulative: being told a number is partial is fine, being throttled
-        # on one is not.
+        # Reported even when incomplete, with the caveat shown. The gate does
+        # the same now: an incomplete window is a *shorter* window (the reader
+        # walks newest-first and stops at a cap), not corrupted data, so there
+        # is no reason for either consumer to fall back to all-time.
         buckets = windowed.as_list()
 
     report = compute_fairness(buckets)

@@ -137,25 +137,60 @@ class TestTheGateStopsPunishingOldUsage(_MeteredCase):
                          float(FAIR_SHARE_WINDOW_SECONDS))
 
 
-class TestIncompleteWindowsDoNotThrottle(_MeteredCase):
-    """Deferring on service you failed to measure is worse than not deferring."""
+class TestIncompleteWindowsAreStillWindows(_MeteredCase):
+    """A correction to the previous pass, from questioning its own design.
 
-    def test_an_incomplete_window_is_reported_as_such(self):
-        # A cap hit before the window is covered.
+    That pass fell back to *cumulative* when a window came back incomplete,
+    on the reasoning that throttling on a measurement you failed to complete
+    is worse than not throttling. Re-reading `window_usage` showed the premise
+    was wrong: it walks the log **newest-first** and stops at a cap, so an
+    incomplete window is not corrupted or partial-in-a-biased-way — it is a
+    strictly *shorter* window, with every entity covered equally across it.
+
+    Falling back to cumulative was therefore backwards. Caps are hit under
+    heavy traffic, which is exactly when fairness matters most, and cumulative
+    is the measure the whole change exists to stop using. The shorter window is
+    the better signal of who is contending right now.
+
+    Genuinely unreadable data still fails open, via should_admit's own
+    no-buckets rule rather than a second mechanism here.
+    """
+
+    def test_an_incomplete_window_is_still_reported_as_such(self):
+        # The flag stays honest; only what the gate does with it changed.
         usage = self.meter.window_usage(86400, max_events=1)
         self.assertFalse(usage.complete)
 
-    def test_the_gate_falls_back_to_cumulative_when_incomplete(self):
+    def test_an_incomplete_window_still_carries_recent_data(self):
+        # The premise of the correction: partial means shorter, not empty.
+        usage = self.meter.window_usage(86400, max_events=1)
+        self.assertTrue(usage.buckets)
+
+    def test_the_gate_uses_a_short_window_rather_than_all_time(self):
+        from unittest.mock import patch
+
+        from aictl.core.metering import TokenMeter, WindowBucket, WindowedUsage
+
+        # A shorter-than-requested window in which the old hog is idle and the
+        # busy tenant is not. Cumulative would defer the hog; the window must
+        # not, because it is no longer contending.
+        short = WindowedUsage({"now-busy": WindowBucket("now-busy", 1000, 1000)},
+                              3600.0, False, 1)
+        with patch.object(TokenMeter, "window_usage", return_value=short):
+            self.assertTrue(self._admits_with_patch("past-hog"),
+                            "an incomplete window must not fall back to all-time")
+
+    def test_an_unreadable_log_fails_open(self):
         from unittest.mock import patch
 
         from aictl.core.metering import TokenMeter, WindowedUsage
 
-        # An incomplete window that would otherwise have exonerated the hog.
-        incomplete = WindowedUsage({}, 3600.0, False, 0)
-        with patch.object(TokenMeter, "window_usage", return_value=incomplete):
-            deferred = not self._admits_with_patch("past-hog")
-        self.assertTrue(deferred,
-                        "an unmeasurable window must not silently exonerate")
+        # OSError path: no buckets at all. should_admit's own no-buckets rule
+        # admits, so no second fail-open mechanism is needed here.
+        with patch.object(TokenMeter, "window_usage",
+                          return_value=WindowedUsage({}, 3600.0, False, 0)):
+            with patch.object(TokenMeter, "list_usage", return_value=[]):
+                self.assertTrue(self._admits_with_patch("past-hog"))
 
     def _admits_with_patch(self, entity):
         from aictl.core.config import load_config, save_config

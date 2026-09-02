@@ -2116,9 +2116,9 @@ release surface, which is a maintainer's decision, not an agent's.
   callers. Sixth time this session the backlog listed as "to do" something
   already partly built. The delta was the config and two call sites.
 - **Two deliberate asymmetries, both about who is harmed by a partial answer:**
-  - *The gate falls back to cumulative on an incomplete window; the report
-    shows it with a caveat.* Being told a number is partial is fine; being
-    throttled on one is not.
+  - *~~The gate falls back to cumulative on an incomplete window~~ —
+    **corrected in the same pass, see below.** Both consumers now use the
+    partial window.* The one surviving asymmetry is the default.
   - *The gate defaults to a window; the report defaults to cumulative.*
     Admission is about who is contending now. A report is a question the reader
     asked, and silently changing what `aictl tco fairshare` means would be the
@@ -2140,7 +2140,19 @@ release surface, which is a maintainer's decision, not an agent's.
   way to know. Now validated on `set`, refusing only problems that name the key
   being set, so a pre-existing invalid value elsewhere cannot block the edit
   that fixes it.
-- **Validation:** 24 new tests (`tests/test_new_features_226.py`), including
+- **A correction to this pass's own design, from questioning it rather than
+  defending it.** The first version fell back to *cumulative* when a window came
+  back incomplete, reasoning that throttling on an unfinished measurement is
+  worse than not throttling. Re-reading `window_usage` showed the premise was
+  wrong: it walks the log **newest-first** and stops at a cap, so an incomplete
+  window is not corrupted or biased — it is a strictly *shorter* window with
+  every entity covered equally across it. Falling back to cumulative was
+  therefore backwards: caps are hit under heavy traffic, exactly when fairness
+  matters most, and cumulative is the measure the change exists to stop using.
+  Both consumers now use the partial window; a genuinely unreadable log still
+  fails open through `should_admit`'s own no-buckets rule rather than a second
+  mechanism.
+- **Validation:** 26 new tests (`tests/test_new_features_226.py`), including
   the pair that proves the change is real — the same entity, same gate, same
   data, deferred under cumulative and admitted under a window. Suite
   4097/4097; gate GREEN twice serial and once parallel.
