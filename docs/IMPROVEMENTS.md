@@ -2233,6 +2233,54 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 11 new tests (`tests/test_new_features_228.py`); suite
   4125/4125; gate GREEN twice serial and once parallel.
 
+## AX. classify() promised to flag an unknown answer and flagged nothing — ✅ fixed (Pass 229)
+
+> **Status:** `classify()` returns a `Classification` carrying `.matched` and
+> `.mock`; all five SDK examples run from a clone; `structured()` names the
+> mock instead of blaming the JSON.
+
+- **Found by running the shipped SDK examples** — the last user-facing path
+  nobody had executed. `01_classify.py` printed:
+
+      [ positive]  I've been on hold for an hour. This is unacceptable.
+      [ positive]  Why is my last payment showing as failed?
+
+  Every message, "positive".
+- **The cause was a comment that lied about its own three lines:**
+
+      # Last resort: return the first category but flag unknown
+      return categories[0]
+
+  Nothing was flagged. An unmatched answer was indistinguishable from a
+  confident one. Same shape as the gate's discarded command set and the
+  installer's discarded interpreter — except this one silently produced
+  **wrong answers** rather than merely failing.
+- **`classify()` returns a `str`, which is *why* the flag went missing**: there
+  was nowhere to put it. `Classification` subclasses `str`, so comparisons,
+  f-strings, JSON and dict keys are unchanged, while `.matched` / `.mock` are
+  there for callers who care — mirroring what `_Response.mock` already does
+  for `ask()`.
+- **None of the five examples could be run as documented.** `python3
+  examples/sdk/01_classify.py` puts `examples/sdk/` on `sys.path`, not the
+  repository root, and the README's install is a bare `git clone` with no
+  `pip install`. Every one failed with `ModuleNotFoundError`.
+- **`05_cost.py` called `aictl.ai.status()`** — a `@property`, documented
+  correctly without parentheses in `docs/SDK.md`. It raised `TypeError: 'dict'
+  object is not callable` and had never worked.
+- **`structured()` blamed the wrong thing.** On the mock it raised "Model did
+  not return valid JSON", sending a reader to hunt for a schema bug when the
+  real cause is that no engine is running. It now says so and what to do.
+  `02_extract.py` states the prerequisite the other four do not have.
+- **Three revisions of one test, worth recording.** The mock-propagation test
+  first read `ai.status["mock"]`, then a live `ask()`, and both passed alone
+  while failing in the suite — the ambient context is a process-wide singleton
+  other tests reset and re-detect against whatever ports are open. Both
+  versions were testing the harness. The third stubs `ask()` and asserts the
+  propagation directly. **A test that depends on ambient engine detection is
+  not a test of the code that changed.**
+- **Validation:** 14 new tests (`tests/test_new_features_229.py`); suite
+  4139/4139; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
