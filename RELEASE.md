@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,106+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,114+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -125,6 +125,12 @@
   (`fair_share_window_seconds`); set it to `0` for the old behaviour.
   `aictl tco fairshare --window SECONDS` applies the same to the report, which
   still defaults to cumulative.
+- **The daemon's OpenAPI spec covers the whole API.** It documented 26 of the
+  30 `/v1/` endpoints — the five missing ones being mostly POSTs
+  (`/v1/stacks/apply`, `/v1/stacks/down`, `/v1/models/register`,
+  `/v1/recipes/run`, `/v1/scheduler`), i.e. the state-changing half. Its
+  version also read 1.5.0, two releases behind; `aictl gate` now checks it
+  alongside `constants.py`, `pyproject.toml` and the Go port.
 - **`aictl config set` now rejects invalid values.** It type-coerced and saved
   without ever running the validation that `config validate` and `config
   import` use, so `aictl config set fair_share_policy bogus` was accepted — and
