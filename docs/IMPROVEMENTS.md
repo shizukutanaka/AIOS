@@ -2013,6 +2013,46 @@ release surface, which is a maintainer's decision, not an agent's.
 - **Validation:** 9 new tests (`tests/test_new_features_223.py`); suite
   4053/4053.
 
+## AS. The documented MCP setup was broken; the server never was — ✅ fixed (Pass 224)
+
+> **Status:** README's MCP section deduplicated and corrected; `docsync` now
+> tracks `README.md` and `Makefile`; every fenced json block in the docs is
+> parsed by a test.
+
+- **Found by running the last unexercised documented path.** The server itself
+  is sound — probed over its real stdio protocol:
+  `initialize -> {'name': 'aictl', 'version': '1.7.0'}`,
+  `tools/list -> 19 tools`. Only the instructions for using it were wrong.
+- **README carried two `## MCP Server` sections** that duplicated and
+  contradicted each other, the second sitting *after* `## License`.
+- **The second config block was not valid JSON** — it opened with
+  `// Claude Desktop config (...)` inside a ```json fence, and JSON has no
+  comments. Measured repo-wide, it was the only fenced json block in any
+  document that failed to parse.
+- **It also omitted the `mcpServers` wrapper** (`{"aictl": {...}}`), which no
+  MCP host will load. The other block and the shipped
+  `claude_desktop_config.json` both had it. The broken block was the more
+  inviting one: it carried the tool table and the "ask naturally" tour, so it
+  was the likelier thing to copy.
+- **The guard paid for itself on its first run.** Wiring `README.md` into
+  `docsync`'s tracked documents immediately surfaced a stale claim nobody had
+  gone looking for — `CLI (66 Python + 29 Go)` against a real 80 — and the
+  headline badge reading `1840 tests | 150 modules | 25,000+ lines` against
+  4,063 / 182 / 40,000+. The `Makefile` carried the same test count and is now
+  tracked too. That is the argument for guards over inspection: four passes of
+  careful reading had walked past all of them.
+- **`17 Go tests` was checked and left alone** — `go test -v` really does run
+  17. The fourth figure this session that looked stale and was not.
+- **The tests check the property, not the instance:** every fenced json block
+  in every document must parse; any block configuring MCP must carry
+  `mcpServers` and match the shipped file's `command`/`args`; the documented
+  command must actually serve, compared against
+  `cli_surface.mcp_declared_tools()` rather than a hardcoded 19 — a number this
+  session has already watched rot in four other places. A companion test guards
+  the scanner itself, so a regex that matched nothing could not pass everything.
+- **Validation:** 10 new tests (`tests/test_new_features_224.py`); suite
+  4063/4063; gate GREEN twice serial and once parallel.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
