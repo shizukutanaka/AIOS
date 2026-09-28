@@ -28,8 +28,19 @@ messages = [
 print("Classifying customer messages...\n")
 
 for msg in messages:
-    category = aictl.ai.classify(
+    result = aictl.ai.classify(
         msg,
         categories=["positive", "complaint", "question"],
     )
-    print(f"  [{category:>9}]  {msg}")
+    # `result` is a str subclass, so `print(f"[{result}]")` above would have
+    # worked and shown "positive" for every message here — that silent
+    # failure is exactly what motivated `.matched`/`.mock` (see
+    # aictl.sdk.Classification). Checking them is what actually shows this
+    # ran against the in-process mock rather than a real model, and that
+    # none of these five answers were a confident category match.
+    flag = ""
+    if result.mock:
+        flag = "  (mock engine — not a real classification)"
+    elif not result.matched:
+        flag = "  (no category matched; showing the default)"
+    print(f"  [{result:>9}]  {msg}{flag}")

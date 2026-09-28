@@ -15,7 +15,7 @@ help:  ## Show this help
 
 # ── Python ──────────────────────────────────────
 
-test:  ## Run all 4151+ tests
+test:  ## Run all 4153+ tests
 	python3 -m unittest discover -s tests -q 2>&1 | tail -3
 
 test-quick:  ## Run tests, quiet

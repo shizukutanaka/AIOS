@@ -172,6 +172,43 @@ class TestTheExamplesRunAsDocumented(unittest.TestCase):
                          (Path("examples/sdk") / "05_cost.py").read_text())
 
 
+class TestClassifyExampleDisclosesItsOwnMotivatingBug(unittest.TestCase):
+    """`Classification`'s docstring names this exact example; it never used
+    the attributes it was added to demonstrate.
+
+    `.matched`/`.mock` shipped in this pass, but `01_classify.py` still just
+    printed `f"[{category}]"` — the identical silent-"positive"-for-everything
+    output quoted at the top of this file's module docstring, reproducible by
+    running the example after the SDK fix landed. The fix was real; its own
+    reference example did not use it.
+    """
+
+    def _run(self, path: Path):
+        import os
+        import tempfile
+
+        env = dict(os.environ, AICTL_STATE_DIR=tempfile.mkdtemp())
+        return subprocess.run([sys.executable, str(path)], capture_output=True,
+                              text=True, timeout=60,
+                              cwd=str(Path(__file__).resolve().parent.parent),
+                              env=env)
+
+    def test_the_example_reports_mock_or_unmatched(self):
+        result = self._run(Path("examples/sdk") / "01_classify.py")
+        self.assertEqual(result.returncode, 0, result.stderr[-300:])
+        self.assertTrue(
+            "mock engine" in result.stdout or "no category matched" in result.stdout,
+            "01_classify.py ran against a mock/unmatched result with no "
+            "disclosure in its output — the bug Classification exists to "
+            "surface is invisible again")
+
+    def test_the_example_still_prints_a_category_for_every_message(self):
+        # The fix must not change the return contract: Classification is a
+        # str, and every existing caller — including this one — keeps working.
+        result = self._run(Path("examples/sdk") / "01_classify.py")
+        self.assertEqual(result.stdout.count("["), 5)
+
+
 class TestStructuredNamesTheRealCause(unittest.TestCase):
     def setUp(self):
         from aictl.sdk import _AmbientContext
