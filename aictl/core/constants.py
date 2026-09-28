@@ -59,6 +59,12 @@ DOCS_MIN_TOPIC_COMMANDS = 25
 # that was just asked to yield, which is the opposite of what deferral is for.
 FAIR_SHARE_RETRY_AFTER_SECONDS = 5
 
+# SGLang has emitted its Prometheus metrics under both `sglang_` and `sglang:`
+# depending on version, and published guides disagree about which is current.
+# Reading only one silently turns every metric into 0 on an engine that uses the
+# other, which the governor sees as a healthy idle engine. Tried in this order.
+SGLANG_METRIC_PREFIXES = ("sglang_", "sglang:")
+
 # Default rolling window for fair-share admission. The gate measured *all-time*
 # cumulative service, so a tenant that was heavy last month kept yielding
 # indefinitely — fairness is about who is contending for the GPU now, not who

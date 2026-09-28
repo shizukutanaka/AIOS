@@ -261,12 +261,29 @@ class SGLangAdapter:
         if code != 200:
             return m
 
-        # SGLang v0.3.0+ uses sglang_ prefix (underscore, not colon)
-        m.ttft_ms_p95 = _prom_histogram_quantile(body, "sglang_time_to_first_token_seconds", 0.95) * 1000
-        m.itl_ms_p95 = _prom_histogram_quantile(body, "sglang_time_per_output_token_seconds", 0.95) * 1000
-        m.queue_depth = int(_prom_gauge(body, "sglang_num_requests_waiting"))
-        m.active_requests = int(_prom_gauge(body, "sglang_num_requests_running"))
-        m.kv_cache_utilization = _prom_gauge(body, "sglang_cache_hit_rate")
+        # The prefix has varied by version (see SGLANG_METRIC_PREFIXES), so each
+        # metric is looked up under whichever one this engine actually emits.
+        def name(suffix: str) -> str:
+            return _sglang_metric(body, suffix)
+
+        def seen(suffix: str) -> bool:
+            return _metric_present(body, name(suffix))
+
+        for suffix in ("time_to_first_token_seconds", "time_per_output_token_seconds",
+                       "num_requests_waiting", "num_requests_running"):
+            if not seen(suffix):
+                m.missing_metrics.append(f"sglang_{suffix}")
+
+        m.ttft_ms_p95 = _prom_histogram_quantile(body, name("time_to_first_token_seconds"), 0.95) * 1000
+        m.itl_ms_p95 = _prom_histogram_quantile(body, name("time_per_output_token_seconds"), 0.95) * 1000
+        m.queue_depth = int(_prom_gauge(body, name("num_requests_waiting")))
+        m.active_requests = int(_prom_gauge(body, name("num_requests_running")))
+        # sglang_cache_hit_rate is a prefix-cache HIT RATE. It used to be stored
+        # in kv_cache_utilization, which the router reads as "how full is the
+        # cache": a healthy 95% hit rate looked like a 95%-full cache and got the
+        # engine flagged kv_cache_exhausted. SGLang's own utilization metric is
+        # left unread rather than guessed, so kv_cache_utilization stays 0.0.
+        m.prefix_cache_hit_rate = _prom_gauge(body, name("cache_hit_rate"))
 
         return m
 
@@ -414,6 +431,22 @@ class LMStudioAdapter:
 # ══════════════════════════════════════════════════════════
 #  Prometheus text format parsing (minimal)
 # ══════════════════════════════════════════════════════════
+
+def _metric_present(text: str, metric_name: str) -> bool:
+    """True if the metric appears at all, with or without labels."""
+    return re.search(rf'^{re.escape(metric_name)}(?:{{|\s|_bucket|_sum|_count)',
+                     text, re.MULTILINE) is not None
+
+
+def _sglang_metric(text: str, suffix: str) -> str:
+    """The name under which this engine exposes `suffix`, else the first prefix."""
+    from aictl.core.constants import SGLANG_METRIC_PREFIXES
+
+    for prefix in SGLANG_METRIC_PREFIXES:
+        if _metric_present(text, prefix + suffix):
+            return prefix + suffix
+    return SGLANG_METRIC_PREFIXES[0] + suffix
+
 
 def _prom_gauge(text: str, metric_name: str) -> float:
     """Extract a gauge value from Prometheus text format."""
