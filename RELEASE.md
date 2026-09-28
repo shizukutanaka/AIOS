@@ -2,7 +2,7 @@
 
 ## Highlights
 
-- **4,153+ tests** (Python + Go), zero failures — run with `aictl gate`
+- **4,162+ tests** (Python + Go), zero failures — run with `aictl gate`
 - **Zero external Python dependencies** — stdlib only
 - **80 Python + 29 Go CLI commands**
 - **30 REST API endpoints**
@@ -146,6 +146,10 @@
   `/v1/recipes/run`, `/v1/scheduler`), i.e. the state-changing half. Its
   version also read 1.5.0, two releases behind; `aictl gate` now checks it
   alongside `constants.py`, `pyproject.toml` and the Go port.
+- **SGLang metrics are read under either prefix, and a healthy cache is no longer "exhausted".**
+  An SGLang emitting `sglang:` names read as an idle engine (every metric 0), and its prefix-cache
+  hit rate was stored as cache utilization, so a 95% hit rate marked the engine
+  `kv_cache_exhausted`. Both fixed; absent metrics are now reported as missing rather than 0.
 - **`aictl config set` now rejects invalid values.** It type-coerced and saved
   without ever running the validation that `config validate` and `config
   import` use, so `aictl config set fair_share_policy bogus` was accepted — and

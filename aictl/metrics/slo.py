@@ -38,6 +38,9 @@ class InferenceMetrics:
     prefix_cache_hit_rate: float = 0.0   # vLLM v1 prefix cache hit ratio (0-1)
     error_rate: float = 0.0
     goodput_ratio: float = 1.0   # fraction of requests meeting latency SLOs (SOLA)
+    # Expected metrics the engine did not expose at all. Distinct from a
+    # reading of 0: absent means "unknown", not "idle and healthy".
+    missing_metrics: list[str] = field(default_factory=list)
 
 
 @dataclass

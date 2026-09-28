@@ -2319,6 +2319,23 @@ release surface, which is a maintainer's decision, not an agent's.
   one asserting no supported format reports a user's malformed file as an
   aictl bug; suite 4151/4151; gate GREEN twice serial and once parallel.
 
+## AZ. An engine with a different metric prefix read as healthy and idle — ✅ fixed (Pass 231)
+
+- **Source-driven.** Zenn/Qiita 2026 ops articles and overseas monitoring guides agree
+  Prometheus metrics are the production backbone, and disagree on SGLang's prefix
+  (`sglang:` vs `sglang_`). arxiv.org is egress-blocked here, so paper leads
+  (Token Latency Fairness 2609.18112, Unified AI Gateway 2609.06940) were titles only and
+  drove no change.
+- **Silent zero.** The adapter read only `sglang_*`, and `_prom_gauge` returns 0.0 for an
+  absent metric, so the other prefix yielded TTFT/queue/active = 0 — a perfect idle engine
+  to the governor. Both prefixes are now resolved (`SGLANG_METRIC_PREFIXES`), and
+  `InferenceMetrics.missing_metrics` says which expected metrics were absent.
+- **Hit rate stored as utilization.** `sglang_cache_hit_rate` went into
+  `kv_cache_utilization`, which the router reads as fullness: a healthy 95% hit rate
+  flagged the engine `kv_cache_exhausted`. It now lands in `prefix_cache_hit_rate`;
+  utilization stays 0.0 (unread, not guessed).
+- **Validation:** 9 tests (`tests/test_new_features_231.py`); 6 fail against the old adapter.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).
