@@ -1,6 +1,5 @@
 # aictl — AI Native Linux OS
 
-[![CI](https://github.com/shizukutanaka/aios/actions/workflows/ci.yml/badge.svg)](https://github.com/shizukutanaka/aios/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go 1.23](https://img.shields.io/badge/go-1.23-00ADD8.svg)](https://go.dev/)
@@ -205,7 +204,7 @@ curl http://localhost:9999/v1/models   # Mock engine
 ## Testing
 
 ```bash
-make test       # 4053 Python tests
+make test       # 4162 Python tests
 make go-test    # 17 Go tests
 make gate       # Full quality gate
 make demo       # E2E demo

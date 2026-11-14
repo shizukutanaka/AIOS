@@ -16,7 +16,7 @@ help:  ## Show this help
 # ── Python ──────────────────────────────────────
 
 test:  ## Run all 4162+ tests
-	python3 -m unittest discover -s tests -q 2>&1 | tail -3
+	python3 -m unittest discover -s tests -q
 
 test-quick:  ## Run tests, quiet
 	python3 -m unittest discover -s tests -q
@@ -26,7 +26,7 @@ test-verbose:  ## Run tests, verbose
 
 coverage:  ## Run tests with coverage report
 	python3 -m pytest tests/ --tb=short -q 2>/dev/null || \
-	python3 -m unittest discover -s tests -q 2>&1 | tail -5
+	python3 -m unittest discover -s tests -q
 
 gate:  ## Quality gate (compile + version + tests + demo)
 	python3 -m aictl gate
