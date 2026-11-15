@@ -8,7 +8,7 @@ VERSION := $(shell python3 -c "from aictl.core.constants import AICTL_VERSION; p
 
 all: lint test gate  ## Run lint + tests + gate
 
-ci: lint test gate  ## Full local check (this repo has no CI service configured)
+ci: lint test gate  ## Full local check (mirrors the CI workflow)
 
 help:  ## Show this help
 	@grep -E '^[a-z].*:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'

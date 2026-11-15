@@ -7,7 +7,7 @@ Manages KV cache persistence so that:
 
 Architecture:
   1. Before upgrade/restart: snapshot KV cache state via engine API
-  2. Store snapshots in /var/lib/aios/contexts/
+  2. Store snapshots in <state dir>/contexts/ (see default_dir())
   3. After restart: restore context from snapshot
   4. Garbage collect stale snapshots (age, size limits)
 
@@ -41,13 +41,34 @@ class ContextSnapshot:
 class ContextContinuityEngine:
     """Manage KV cache persistence for inference engines."""
 
-    DEFAULT_DIR = Path("/var/lib/aios/contexts")
     MAX_TOTAL_SIZE = 50 * 1024 * 1024 * 1024  # 50GB max
     MAX_SNAPSHOTS = 100
 
+    @staticmethod
+    def default_dir() -> Path:
+        """Snapshot directory when the caller does not specify one.
+
+        Resolved through aictl.core.state.resolve_state_dir — the one place
+        state location is decided — so snapshots live in
+        ``<state dir>/contexts``. Deployments that set AIOS_STATE_DIR to
+        /var/lib/aios (the systemd unit and the Docker image do) therefore
+        keep /var/lib/aios/contexts exactly as before, while the default
+        ~/.aios location needs no root-created directory.
+
+        The previous hardcoded /var/lib/aios/contexts ignored that
+        resolution — the one artifact the v1.7.0 state-dir unification
+        missed. For any user who cannot create directories under /var/lib
+        the constructor raised PermissionError, which also turned the
+        daemon's /v1/context endpoint into a 500 and made every
+        `aictl context` subcommand fail.
+        """
+        from aictl.core.state import resolve_state_dir
+
+        return resolve_state_dir() / "contexts"
+
     def __init__(self, context_dir: Path | None = None):
         """Initialize context continuity engine."""
-        self.dir = context_dir or self.DEFAULT_DIR
+        self.dir = context_dir or self.default_dir()
         self.dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self.dir / "index.json"
 
