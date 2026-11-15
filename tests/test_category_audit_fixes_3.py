@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -207,6 +208,41 @@ class TestContextListJson(unittest.TestCase):
         parsed = json.loads(buf.getvalue())
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0]["snapshot_id"], "snap-1")
+
+
+# ── Runtime: continuity engine default dir follows the state dir ────
+class TestContinuityDefaultDir(unittest.TestCase):
+    """The engine's default snapshot dir must follow resolve_state_dir().
+
+    Regression: the default was hardcoded to /var/lib/aios/contexts, so
+    constructing the engine with no arguments raised PermissionError for
+    any user who cannot create directories under /var/lib — breaking the
+    daemon's /v1/context endpoint and every `aictl context` subcommand
+    (this is what turned CI red for PR #57 once the suite ran as the
+    unprivileged runner user).
+    """
+
+    def test_default_dir_honours_aios_state_dir(self):
+        from aictl.runtime.continuity import ContextContinuityEngine
+
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.dict(os.environ, {"AIOS_STATE_DIR": td}):
+                engine = ContextContinuityEngine()
+            self.assertEqual(engine.dir, Path(td) / "contexts")
+            self.assertTrue(engine.dir.is_dir())
+            self.assertEqual(engine.list_snapshots(), [])
+
+    def test_default_dir_falls_back_to_home_state_dir(self):
+        from aictl.runtime.continuity import ContextContinuityEngine
+
+        with tempfile.TemporaryDirectory() as td:
+            env = {"HOME": td}
+            with mock.patch.dict(os.environ, env):
+                os.environ.pop("AIOS_STATE_DIR", None)
+                os.environ.pop("AICTL_STATE_DIR", None)
+                engine = ContextContinuityEngine()
+            self.assertEqual(engine.dir, Path(td) / ".aios" / "contexts")
+            self.assertEqual(engine.list_snapshots(), [])
 
 
 # ── CLI: tenant.py run_namespace JSON flag respected ─────────────────
