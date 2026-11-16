@@ -826,7 +826,7 @@ func cmdCost() *cobra.Command {
 // ── security ───────────────────────────────────────
 
 func cmdSecurity() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "security",
 		Short: "Security scan",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -880,6 +880,13 @@ func cmdSecurity() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.AddCommand(
+		cmdSecuritySecrets(),
+		cmdSecurityGHA(),
+		cmdSecuritySBOM(),
+		cmdSecurityChain(),
+	)
+	return cmd
 }
 
 // ── tenant ─────────────────────────────────────────
@@ -1112,7 +1119,7 @@ func cmdInfo() *cobra.Command {
 // ── report ─────────────────────────────────────────
 
 func cmdReport() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "report",
 		Short: "Generate system assessment (delegates to Python)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1127,6 +1134,11 @@ func cmdReport() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.AddCommand(
+		cmdReportPlan(),
+		cmdReportSessions(),
+	)
+	return cmd
 }
 
 // ── meter ──────────────────────────────────────────
