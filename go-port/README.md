@@ -2,6 +2,20 @@
 
 The Go implementation of the `aictl` command surface (Cobra). 29 commands.
 
+## Imported from Yagura
+
+The packages `internal/secretscan`, `internal/ghaaudit`, `internal/sbom`,
+`internal/audit`, `internal/plantracker`, `internal/agentevent` and
+`internal/sessionsummary` were imported from
+[Yagura](https://github.com/shizukutanaka/Yagura) v0.119.0 (MIT, same
+author) when that repository was consolidated into AIOS. They are
+stdlib-only, keep their original tests, and are exposed as subcommands
+of the existing `security` and `report` commands (`aictl security
+secrets|gha|sbom|chain`, `aictl report plan|sessions`) so the
+top-level command count above is unchanged. The rest of Yagura's
+harness (its MCP daemon and per-language micro-linters) was not
+imported: AIOS already has its own MCP server and quality gates.
+
 ## Building
 
 ```bash
