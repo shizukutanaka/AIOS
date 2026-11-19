@@ -110,8 +110,8 @@ def size_cpu_tier(host_ram_mb: int, gpu_kv_mb: float = 0.0) -> int:
     return cpu_bytes if cpu_bytes >= KV_OFFLOAD_MIN_BYTES else 0
 
 
-def measured_prefix_reuse() -> float | None:
-    """This process's observed prefix-cache reuse rate, or None if unmeasured.
+def measured_prefix_reuse(endpoint: str | None = None) -> float | None:
+    """Observed prefix reuse for the endpoint, or aggregate when unspecified.
 
     Reads the router's own lookup accounting rather than sampling anything:
     if requests have flowed through prefix-aware routing, the workload has
@@ -127,10 +127,10 @@ def measured_prefix_reuse() -> float | None:
         # This process's own traffic first — it is exact and current. The
         # cross-process log is the fallback that makes a short-lived CLI run
         # (which has served nothing) able to see what the daemon observed.
-        in_process = get_default_tracker().reuse_rate()
+        in_process = get_default_tracker().reuse_rate(endpoint)
         if in_process is not None:
             return in_process
-        return persisted_reuse_rate()
+        return persisted_reuse_rate(endpoint)
     except Exception:
         # Advisory path: never let measurement failure break flag generation.
         return None
@@ -142,6 +142,7 @@ def advise_kv_offload(
     gpu_kv_mb: float,
     vendor: str = "nvidia",
     prefix_reuse: float | None = None,
+    endpoint: str | None = None,
 ) -> OffloadAdvice:
     """Decide whether extending the prefix cache into host memory is worth it.
 
@@ -155,7 +156,8 @@ def advise_kv_offload(
     same arguments can yield different advice in a process that has served
     requests versus a fresh one. That is the intent: an observed workload
     beats an assumed one. Pass `prefix_reuse` explicitly for advice that does
-    not depend on ambient state.
+    not depend on ambient state. With an endpoint, missing measurements fall
+    back to the heuristic, not to observations of other endpoints.
 
     Note that `prefix_reuse=0.0` and `prefix_reuse=None` are distinct inputs:
     0.0 vetoes offloading (reuse was measured and absent), None defers to the
@@ -164,7 +166,7 @@ def advise_kv_offload(
     notes: list[str] = []
 
     if prefix_reuse is None:
-        prefix_reuse = measured_prefix_reuse()
+        prefix_reuse = measured_prefix_reuse(endpoint)
 
     if vendor.lower() not in SUPPORTED_VENDORS:
         # An unnamed vendor is treated exactly like an unrecognized one. The
@@ -212,9 +214,8 @@ def advise_kv_offload(
         return OffloadAdvice(recommended=False, reason=reason)
 
     if prefix_reuse is not None:
-        notes.append(f"measured prefix reuse {prefix_reuse:.0%} (from this process's "
-                     "prefix-aware routing) — offloaded blocks should see comparable "
-                     "hit rates")
+        notes.append(f"measured prefix reuse {prefix_reuse:.0%} "
+                     "— a prefix-aware routing estimate, not an engine cache hit rate")
     else:
         notes.append("no measured prefix reuse available; this assumes a prefix-heavy "
                      "workload (multi-turn chat, shared RAG system prompt, agent loops). "

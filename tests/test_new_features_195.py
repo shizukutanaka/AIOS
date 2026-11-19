@@ -6,10 +6,8 @@ traffic — always fell back to the heuristic. The measurement only ever
 accumulated in the long-lived daemon that does the routing, which is precisely
 the process that never asks for the advice.
 
-The log stores *deltas*, not absolute counts. Appends under PIPE_BUF are
-atomic on POSIX, so concurrent writers share one file without locking and a
-reader simply sums; absolute counts would need read-modify-write and would
-race. This mirrors `core/perf.py`'s rationale for jsonl over a mutable file.
+The log stores *deltas*, not absolute counts. Writers take the same lock as
+compaction, and readers sum records, either across all traffic or per endpoint.
 
 Properties these tests protect:
   * flushing twice must not double-count (deltas advance by what was written)
@@ -25,7 +23,8 @@ import json
 import os
 import tempfile
 import unittest
-from io import BytesIO
+from contextlib import redirect_stdout
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
@@ -122,6 +121,8 @@ class TestLiveProxyPersistence(IsolatedStateTestCase):
         self.assertFalse(self.tracker.persistence_enabled())
         with patch("aictl.runtime.prefix_route._DEFAULT_TRACKER", PrefixRouteTracker()):
             self.assertAlmostEqual(measured_prefix_reuse(), 1 / 3)
+            self.assertAlmostEqual(measured_prefix_reuse(self.candidates[0].endpoint), 1 / 3)
+            self.assertIsNone(measured_prefix_reuse(self.candidates[1].endpoint))
 
     def test_failed_upstream_does_not_warm_or_count(self):
         self.urlopen.side_effect = HTTPError("", 429, "busy", {}, BytesIO())
@@ -147,6 +148,39 @@ class TestLiveProxyPersistence(IsolatedStateTestCase):
 
 
 class TestPersistence(_IsolatedState):
+    def test_scoped_counts_and_legacy_totals_are_kept_separate(self):
+        warm, cold = ENDPOINTS[0], "http://b:8000"
+        tracker = self._warm_tracker(hits=1, misses=0)
+        tracker.observe(warm, SHARED)
+        tracker.observe(cold, SHARED)
+        self.assertEqual(tracker.reuse_rate(warm), 1.0)
+        self.assertEqual(tracker.reuse_rate(cold), 0.0)
+        self.assertIsNone(tracker.reuse_rate("http://unknown"))
+        self.assertTrue(tracker.flush_reuse())
+
+        self.assertEqual(persisted_reuse_rate(warm + "/"), 1.0)
+        self.assertEqual(persisted_reuse_rate(cold), 0.0)
+        self.assertIsNone(persisted_reuse_rate("http://unknown"))
+        self.assertAlmostEqual(persisted_reuse_rate(), 2 / 3)
+        self.assertNotIn(cold, _reuse_log_path().read_text())
+
+        tracker.clear()
+        self.assertIsNone(tracker.reuse_rate(warm))
+        self.assertFalse(tracker.flush_reuse())
+
+    def test_retried_scope_flush_preserves_all_counts(self):
+        tracker = PrefixRouteTracker()
+        tracker.observe(ENDPOINTS[0], SHARED)
+        path = _reuse_log_path()
+        path.mkdir()
+        self.assertFalse(tracker.flush_reuse())
+        path.rmdir()
+        path.write_text('{"lookups":')
+        tracker.observe(ENDPOINTS[0], SHARED)
+        self.assertTrue(tracker.flush_reuse())
+        self.assertEqual(persisted_reuse_rate(ENDPOINTS[0]), 0.5)
+        self.assertEqual(persisted_reuse_rate(), 0.5)
+
     def test_absent_log_is_unmeasured_not_zero(self):
         self.assertIsNone(persisted_reuse_rate())
 
@@ -306,6 +340,33 @@ class TestStaleness(_IsolatedState):
 
 
 class TestTruncation(_IsolatedState):
+    def test_compaction_keeps_scopes_and_does_not_refresh_expiry(self):
+        from aictl.core.constants import PREFIX_REUSE_MAX_AGE_SECONDS
+
+        warm, cold = ENDPOINTS[0], "http://b:8000"
+        now = PREFIX_REUSE_MAX_AGE_SECONDS * 100
+        tracker = PrefixRouteTracker()
+        ticks = "aictl.runtime.prefix_route.time.time"
+        with patch(ticks, return_value=now - PREFIX_REUSE_MAX_AGE_SECONDS - 2):
+            for offset in range(4):
+                tracker.observe(warm, str(offset) + SHARED)
+            tracker.flush_reuse()
+        with patch(ticks, return_value=now - PREFIX_REUSE_MAX_AGE_SECONDS + 2):
+            tracker.clear()
+            tracker.record(warm, SHARED)
+            tracker.observe(warm, SHARED)
+            tracker.observe(cold, SHARED)
+            tracker.flush_reuse()
+        with patch(ticks, return_value=now), \
+                patch("aictl.runtime.prefix_route.PREFIX_REUSE_MAX_RECORDS", 1):
+            truncate_reuse_log()
+            self.assertEqual(persisted_reuse_rate(warm), 1.0)
+            self.assertEqual(persisted_reuse_rate(cold), 0.0)
+            self.assertEqual(persisted_reuse_rate(), 0.5)
+            self.assertEqual(len(_reuse_log_path().read_text().splitlines()), 2)
+        with patch(ticks, return_value=now + 3):
+            self.assertIsNone(persisted_reuse_rate())
+
     def test_below_bound_is_left_alone(self):
         tracker = self._warm_tracker()
         tracker.flush_reuse()
@@ -316,9 +377,10 @@ class TestTruncation(_IsolatedState):
     def test_truncation_preserves_the_rate(self):
         path = _reuse_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        now = _now()
         with open(path, "w", encoding="utf-8") as fh:
             for _ in range(2500):
-                fh.write(json.dumps({"lookups": 2, "hits": 1, "ts": _now()}) + "\n")
+                fh.write(json.dumps({"lookups": 2, "hits": 1, "ts": now}) + "\n")
         before = persisted_reuse_rate()
         truncate_reuse_log()
         self.assertAlmostEqual(persisted_reuse_rate(), before)
@@ -327,9 +389,10 @@ class TestTruncation(_IsolatedState):
     def test_truncation_keeps_totals_not_just_recent_history(self):
         path = _reuse_log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
+        now = _now()
         with open(path, "w", encoding="utf-8") as fh:
             for _ in range(2500):
-                fh.write(json.dumps({"lookups": 4, "hits": 3, "ts": _now()}) + "\n")
+                fh.write(json.dumps({"lookups": 4, "hits": 3, "ts": now}) + "\n")
         truncate_reuse_log()
         rec = json.loads(path.read_text().strip())
         self.assertEqual(rec["lookups"], 10000)
@@ -415,6 +478,31 @@ class TestAutoFlush(_IsolatedState):
 
 
 class TestAdvisorFallbackOrder(_IsolatedState):
+    def test_deploy_optimize_json_uses_only_the_selected_endpoint(self):
+        from aictl.__main__ import main
+
+        tracker = PrefixRouteTracker()
+        warm, cold = ENDPOINTS[0], "http://b:8000"
+        tracker.record(warm, SHARED)
+        tracker.observe(warm, SHARED)
+        tracker.observe(cold, SHARED)
+        tracker.flush_reuse()
+
+        def optimize(endpoint):
+            argv = ["aictl", "--json", "deploy", "optimize", "m", "--gpu", "H100",
+                    "--vram", "24576", "--host-ram", "131072", "--kv-offload"]
+            if endpoint is not None:
+                argv += ["--kv-offload-endpoint", endpoint]
+            with patch("sys.argv", argv), redirect_stdout(StringIO()) as output:
+                self.assertEqual(main(), 0)
+            return json.loads(output.getvalue())
+
+        with patch("aictl.runtime.prefix_route._DEFAULT_TRACKER", PrefixRouteTracker()):
+            self.assertIn("measured prefix reuse 100%", " ".join(optimize(warm)["notes"]))
+            self.assertIn("measured prefix reuse is 0%", " ".join(optimize(cold)["notes"]))
+            self.assertIn("no measured prefix reuse", " ".join(optimize("http://c:8000")["notes"]))
+            self.assertIn("measured prefix reuse 50%", " ".join(optimize(None)["notes"]))
+
     def test_persisted_rate_reaches_a_fresh_advisor(self):
         from aictl.runtime.kv_offload import measured_prefix_reuse
         from aictl.runtime.prefix_route import get_default_tracker

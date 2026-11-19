@@ -78,6 +78,7 @@ def optimize_vllm_flags(
     enable_speculative: bool = False,
     enable_kv_offload: bool = False,
     prefix_reuse: float | None = None,
+    kv_offload_endpoint: str | None = None,
 ) -> OptimizeResult:
     """Generate optimal vLLM flags for model + hardware.
 
@@ -164,6 +165,7 @@ def optimize_vllm_flags(
             gpu_kv_mb=gpu_kv_mb,
             vendor=hardware.vendor,
             prefix_reuse=prefix_reuse,
+            endpoint=kv_offload_endpoint,
         )
         if advice.recommended:
             flags.append(advice.flag)
