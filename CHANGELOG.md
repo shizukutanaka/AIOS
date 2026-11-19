@@ -2,6 +2,9 @@
 
 ## v1.7.0 — 2026-07-16 — Retrieval quality, layered routing, fairness & guardrail hardening
 
+> **Not yet published.** No `v1.7.0` tag or GitHub Release exists; the newest
+> Release is v1.6.0. `make release` creates both from `RELEASE.md`.
+
 Highlights since v1.6.0 (features all additive and off-by-default/opt-in, zero new
 external dependencies, still stdlib-only):
 

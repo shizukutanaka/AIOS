@@ -19,7 +19,7 @@ aictl/trust/      verify baseline cosign oras
 aictl/metrics/    slo otel prometheus collector_config genai_spans
 aictl/mcp_server  MCP server (19 tools, JSON-RPC 2.0 stdio)
 go-port/          29 Go commands (Cobra)
-tests/            298 test files, 4162+ tests
+tests/            299 test files, 4162+ tests
 docs/             ADRs, OpenAPI, OPERATIONS, QUICKSTART, IMPROVEMENTS
                   REVIEW_v1.7.0, INSTRUCTIONS_OPUS, INSTRUCTIONS_SONNET
 .claude/          3 agents, 5 commands, 8 skills

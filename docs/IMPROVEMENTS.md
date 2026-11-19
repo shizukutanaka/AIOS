@@ -2336,6 +2336,22 @@ release surface, which is a maintainer's decision, not an agent's.
   utilization stays 0.0 (unread, not guessed).
 - **Validation:** 9 tests (`tests/test_new_features_231.py`); 6 fail against the old adapter.
 
+## BA. The signboard said "no CI" and "v1.7.0"; the repo had CI and no v1.7.0 — ✅ fixed (Pass 232)
+
+- **Measured, not recalled.** GitHub API: one workflow (`ci.yml`, added in #57), every
+  run since the first green; one tag (`v1.6.0`) and one Release (v1.6.0). The `v1.6.0`
+  tag points at `24cfaef` ("V1.5"), whose tree is only `aios-v1.5.0-final.zip`.
+- **Two claims went stale in opposite directions.** `REVIEW_v1.7.0.md` still listed CI as
+  absent; `SECURITY.md` claimed `go mod verify` + `pip-audit` "in CI", which ci.yml has
+  never run. `RELEASE.md` — the notes `make release` will publish — said the repo "has no
+  `.github/workflows/`".
+- **Fix:** README CI badge + a "版数と配布の実態" note; CHANGELOG marks v1.7.0 unpublished;
+  SECURITY.md states what CI actually runs; RELEASE.md past tense.
+- **Guard:** `tests/test_new_features_232.py` — every backticked tool a doc says runs
+  "in CI" must appear in ci.yml; the README badge must name an existing workflow; no
+  present-tense "no workflows" claim while one exists.
+- **Not done here:** creating the v1.7.0 tag/Release (`make release`) needs the maintainer.
+
 ## Sources (Part 3)
 
 MCP 2026-07-28 RC: [official RC post](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/).

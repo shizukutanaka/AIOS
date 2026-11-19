@@ -190,7 +190,7 @@
   with), and the post-install check verifies the file it just wrote rather than
   whatever `aictl` PATH happens to resolve.
 - **`make release` does what it says.** It was documented as triggering
-  CI → PyPI → Docker and printed `✓ released`; the repository has no
+  CI → PyPI → Docker and printed `✓ released`; the repository then had no
   `.github/workflows/` at all, so it triggered nothing and never created a
   GitHub Release. It now publishes the release from `RELEASE.md` via `gh`,
   refuses to tag a dirty tree, and says explicitly when a step did not run.
