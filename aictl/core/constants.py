@@ -103,6 +103,7 @@ PREFIX_REUSE_MAX_RECORDS = 2000       # log is trimmed past this
 # advice driven by stale traffic is worse than advice that admits it has no
 # data. Records older than this are ignored when reading.
 PREFIX_REUSE_MAX_AGE_SECONDS = 86400  # 24h
+PREFIX_REUSE_COMPACTION_SECONDS = 3600
 
 # ── Guard model-check verdict cache (IMPROVEMENTS.md item P) ─────────
 # DoS hardening (arXiv:2606.14517 "From Shield to Target"): a flood of

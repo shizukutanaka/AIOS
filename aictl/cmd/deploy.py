@@ -70,6 +70,9 @@ def register(sub: Any) -> None:
                           "with a reason when it would not help.")
     opt.add_argument("--host-ram", type=int, default=0,
                      help="Host RAM in MB for --kv-offload sizing (auto-detect)")
+    opt.add_argument("--kv-offload-endpoint",
+                     help="When using --kv-offload, read reuse measurements only "
+                          "for this configured engine URL")
     opt.set_defaults(func=run_optimize)
 
     strat = dsub.add_parser(
@@ -356,6 +359,7 @@ def run_optimize(args: argparse.Namespace) -> int:
         objective=args.objective,
         enable_speculative=getattr(args, "speculative", False),
         enable_kv_offload=want_offload,
+        kv_offload_endpoint=getattr(args, "kv_offload_endpoint", None),
     )
 
     if getattr(args, "json", False):

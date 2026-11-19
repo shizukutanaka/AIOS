@@ -25,18 +25,21 @@ from typing import Any
 
 import hashlib
 import json
-import os
+import math
 import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
+from aictl.core.atomicio import atomic_write_text
 from aictl.core.constants import (
+    PREFIX_REUSE_COMPACTION_SECONDS,
     PREFIX_REUSE_FLUSH_EVERY,
     PREFIX_REUSE_MAX_AGE_SECONDS,
     PREFIX_REUSE_MAX_RECORDS,
 )
+from aictl.core.filelock import file_lock
 from aictl.core.state import resolve_state_dir
 
 
@@ -77,11 +80,10 @@ class PrefixRouteTracker:
         # the KV cache (see runtime/kv_offload.py) can pay off at all.
         self._lookups = 0
         self._hits = 0
-        # Counts already written to the on-disk log, so a flush appends only
-        # what is new. Tracked separately from the absolute counters so
-        # in-process reads stay exact regardless of flush timing.
-        self._flushed_lookups = 0
-        self._flushed_hits = 0
+        self._scoped_counts: dict[str, tuple[int, int]] = {}
+        self._pending: dict[str | None, tuple[int, int]] = {}
+        self._pending_lookups = 0
+        self._flush_lock = threading.Lock()
         # Per-instance rather than a module global: a process-wide switch
         # flipped by the daemon leaked into every other tracker in the
         # process, so unrelated code started writing to the state directory.
@@ -134,7 +136,7 @@ class PrefixRouteTracker:
         now = time.time()
         with self._lock:
             match = self._best_match_locked(candidates, [endpoint], now)
-            due = self._count_lookup_locked(match)
+            due = self._count_lookup_locked(match, _endpoint_id(endpoint))
             self._record_locked(endpoint, candidates, now)
         if due:
             self.flush_reuse()
@@ -196,12 +198,20 @@ class PrefixRouteTracker:
                     )
         return best
 
-    def _count_lookup_locked(self, match: PrefixMatch | None) -> bool:
+    def _count_lookup_locked(
+        self, match: PrefixMatch | None, endpoint_id: str | None = None,
+    ) -> bool:
+        hit = int(match is not None)
         self._lookups += 1
-        if match is not None:
-            self._hits += 1
+        self._hits += hit
+        if endpoint_id is not None:
+            lookups, hits = self._scoped_counts.get(endpoint_id, (0, 0))
+            self._scoped_counts[endpoint_id] = lookups + 1, hits + hit
+        lookups, hits = self._pending.get(endpoint_id, (0, 0))
+        self._pending[endpoint_id] = lookups + 1, hits + hit
+        self._pending_lookups += 1
         return (self._persist and PREFIX_REUSE_FLUSH_EVERY > 0
-                and self._lookups - self._flushed_lookups >= PREFIX_REUSE_FLUSH_EVERY)
+                and self._pending_lookups >= PREFIX_REUSE_FLUSH_EVERY)
 
     def enable_persistence(self, enabled: bool = True) -> None:
         """Opt this tracker into periodically persisting its reuse counts.
@@ -223,43 +233,43 @@ class PrefixRouteTracker:
     def flush_reuse(self) -> bool:
         """Append this tracker's unflushed hit/miss delta to the reuse log.
 
-        Deltas rather than absolute counts: appends under PIPE_BUF are atomic
-        on POSIX, so concurrent processes can write to the same log without
-        locking and a reader just sums. Absolute counts would need
-        read-modify-write and would race.
-
         Best-effort — returns False and keeps the delta pending if the write
         fails. Measurement must never break routing.
         """
-        # Reserve the delta and claim it in one atomic step. Computing the
-        # delta, releasing the lock, then advancing the cursor lets two
-        # concurrent flushes claim overlapping ranges and write the same
-        # lookups twice — a real double-count observed under 6 threads.
-        with self._lock:
-            d_lookups = self._lookups - self._flushed_lookups
-            d_hits = self._hits - self._flushed_hits
-            if d_lookups <= 0:
-                return False
-            self._flushed_lookups += d_lookups
-            self._flushed_hits += d_hits
-
-        line = json.dumps({"lookups": d_lookups, "hits": d_hits,
-                           "ts": int(time.time())},
-                          separators=(",", ":")) + "\n"
-        try:
-            path = _reuse_log_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-        except OSError:
-            # Un-claim so the counts are retried rather than lost.
+        with self._flush_lock:
             with self._lock:
-                self._flushed_lookups -= d_lookups
-                self._flushed_hits -= d_hits
-            return False
-        return True
+                if not self._pending:
+                    return False
+                pending, pending_lookups = self._pending, self._pending_lookups
+                self._pending, self._pending_lookups = {}, 0
+            ts = int(time.time())
+            try:
+                path = _reuse_log_path()
+                lines = "".join(_reuse_line(scope, lookups, hits, ts)
+                                for scope, (lookups, hits) in pending.items())
+                with file_lock(path), open(path, "a+b", buffering=0) as fh:
+                    end = fh.seek(0, 2)
+                    if end:
+                        fh.seek(-1, 2)
+                        if fh.read(1) != b"\n":
+                            lines = "\n" + lines
+                    data = lines.encode("utf-8")
+                    try:
+                        if fh.write(data) != len(data):
+                            raise OSError("short prefix reuse log write")
+                    except OSError:
+                        fh.truncate(end)
+                        raise
+            except OSError:
+                with self._lock:
+                    for scope, (lookups, hits) in pending.items():
+                        new_lookups, new_hits = self._pending.get(scope, (0, 0))
+                        self._pending[scope] = lookups + new_lookups, hits + new_hits
+                    self._pending_lookups += pending_lookups
+                return False
+            return True
 
-    def reuse_rate(self) -> float | None:
+    def reuse_rate(self, endpoint: str | None = None) -> float | None:
         """Fraction of lookups that found a warm prefix, or None if unmeasured.
 
         None and 0.0 are deliberately different answers: None means nothing
@@ -267,11 +277,14 @@ class PrefixRouteTracker:
         Callers act on them in opposite ways — `advise_kv_offload` falls back
         to a heuristic on None but vetoes offloading on a measured 0.0 — so
         collapsing the two would turn "no data" into "don't bother".
+        With an endpoint, only requests actually observed there are counted.
         """
         with self._lock:
-            if self._lookups == 0:
-                return None
-            return self._hits / self._lookups
+            if endpoint is None:
+                lookups, hits = self._lookups, self._hits
+            else:
+                lookups, hits = self._scoped_counts.get(_endpoint_id(endpoint), (0, 0))
+        return hits / lookups if lookups else None
 
     def stats(self) -> dict[str, Any]:
         """For debugging."""
@@ -296,16 +309,13 @@ class PrefixRouteTracker:
 
     def clear(self) -> None:
         """Clear stored data."""
-        with self._lock:
+        with self._flush_lock, self._lock:
             self._endpoints.clear()
             self._lookups = 0
             self._hits = 0
-            # The flush cursors must reset with the counters they index into.
-            # Leaving them behind makes the next delta (lookups - flushed) go
-            # negative, so a cleared tracker silently under-persists — or
-            # persists nothing at all — until it exceeds the stale cursor.
-            self._flushed_lookups = 0
-            self._flushed_hits = 0
+            self._scoped_counts.clear()
+            self._pending.clear()
+            self._pending_lookups = 0
 
 
 def _reuse_log_path() -> Path:
@@ -314,13 +324,45 @@ def _reuse_log_path() -> Path:
     return Path(base) / "prefix_reuse.jsonl"
 
 
-def persisted_reuse_rate() -> float | None:
+def _endpoint_id(endpoint: str) -> str:
+    return hashlib.sha256(endpoint.rstrip("/").encode("utf-8", errors="replace")).hexdigest()
+
+
+def _reuse_line(scope: str | None, lookups: int, hits: int, ts: float) -> str:
+    record: dict[str, str | int | float] = {"lookups": lookups, "hits": hits, "ts": ts}
+    if scope is not None:
+        record["endpoint_id"] = scope
+    return json.dumps(record, separators=(",", ":")) + "\n"
+
+
+def _read_reuse_line(line: str, cutoff: float) -> tuple[str | None, int, int, float] | None:
+    try:
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            return None
+        ts = float(record.get("ts", 0))
+        if not math.isfinite(ts) or ts < cutoff:
+            return None
+        scope = record.get("endpoint_id")
+        if scope is not None and not isinstance(scope, str):
+            return None
+        lookups = int(record.get("lookups", 0))
+        hits = int(record.get("hits", 0))
+        if lookups > 0:
+            return scope, lookups, hits, ts
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return None
+
+
+def persisted_reuse_rate(endpoint: str | None = None) -> float | None:
     """Reuse rate accumulated across processes, or None if none recorded.
 
     Lets a short-lived CLI read a measurement produced by the long-lived
     daemon that actually served the traffic. Returns None (not 0.0) when the
     log is absent or unusable — see `PrefixRouteTracker.reuse_rate` for why
     that distinction is load-bearing.
+    Legacy records without identity contribute only to the unscoped rate.
     """
     try:
         path = _reuse_log_path()
@@ -328,30 +370,13 @@ def persisted_reuse_rate() -> float | None:
             return None
         cutoff = time.time() - PREFIX_REUSE_MAX_AGE_SECONDS
         lookups = hits = 0
-        with open(path, encoding="utf-8") as fh:
+        scope = _endpoint_id(endpoint) if endpoint is not None else None
+        with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    # Valid JSON that isn't an object (a list, a bare number)
-                    # would raise AttributeError on .get and escape the
-                    # handler below, so reject by shape before reading it.
-                    if not isinstance(rec, dict):
-                        continue
-                    # Stale traffic describes a workload that may no longer
-                    # exist. Records predating the window are dropped, and
-                    # untimestamped ones (written before ts existed) with them
-                    # — "no data" is a safer answer than "old data".
-                    if float(rec.get("ts", 0)) < cutoff:
-                        continue
-                    # A truncated final line from a crashed writer must not
-                    # discard every valid record before it.
-                    lookups += int(rec.get("lookups", 0))
-                    hits += int(rec.get("hits", 0))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    continue
+                record = _read_reuse_line(line, cutoff)
+                if record is not None and (scope is None or record[0] == scope):
+                    lookups += record[1]
+                    hits += record[2]
         if lookups <= 0:
             return None
         return max(0.0, min(1.0, hits / lookups))
@@ -360,37 +385,31 @@ def persisted_reuse_rate() -> float | None:
 
 
 def truncate_reuse_log() -> None:
-    """Collapse the log to a single summary record once it grows past bound.
-
-    Keeps the accumulated totals rather than dropping history outright, so
-    trimming does not distort the rate.
-    """
+    """Compact fresh records by endpoint and age once the log exceeds its bound."""
     try:
         path = _reuse_log_path()
         if not path.exists():
             return
-        with open(path, encoding="utf-8") as fh:
-            lines = fh.readlines()
-        if len(lines) <= PREFIX_REUSE_MAX_RECORDS:
-            return
-        lookups = hits = 0
-        for line in lines:
-            try:
-                rec = json.loads(line)
-                if not isinstance(rec, dict):
+        with file_lock(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+            if len(lines) <= PREFIX_REUSE_MAX_RECORDS:
+                return
+            now = time.time()
+            cutoff = now - PREFIX_REUSE_MAX_AGE_SECONDS
+            totals: dict[tuple[str | None, int], tuple[int, int, float]] = {}
+            for line in lines:
+                record = _read_reuse_line(line, cutoff)
+                if record is None:
                     continue
-                lookups += int(rec.get("lookups", 0))
-                hits += int(rec.get("hits", 0))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-        tmp = path.with_suffix(".jsonl.tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            # Stamped now: the summary is only as trustworthy as the moment it
-            # was written, and an unstamped record would be dropped as stale.
-            fh.write(json.dumps({"lookups": lookups, "hits": hits,
-                                 "ts": int(time.time())},
-                                separators=(",", ":")) + "\n")
-        tmp.replace(path)
+                scope, lookups, hits, ts = record
+                bucket = (scope, math.floor(ts / PREFIX_REUSE_COMPACTION_SECONDS))
+                prev_lookups, prev_hits, oldest_ts = totals.get(bucket, (0, 0, ts))
+                totals[bucket] = prev_lookups + lookups, prev_hits + hits, min(ts, oldest_ts)
+            atomic_write_text(path, "".join(
+                _reuse_line(scope, lookups, hits, ts)
+                for (scope, _), (lookups, hits, ts) in totals.items()
+            ))
     except OSError:
         pass
 

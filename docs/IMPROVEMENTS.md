@@ -757,10 +757,10 @@ discipline as Parts 1–2: no assumed gaps).
   --kv-offload` — a fresh process that has served no traffic — always fell
   back to the heuristic. The measurement only accumulated in the long-lived
   daemon, which is precisely the process that never asks for the advice.
-- **Design:** the log stores *deltas*, not absolute counts. Appends under
-  PIPE_BUF are atomic on POSIX, so concurrent writers share one file without
-  locking and a reader simply sums; absolute counts would need
-  read-modify-write and would race. Mirrors `core/perf.py`'s rationale.
+- **Design:** the log stores *deltas*, not absolute counts. Writers and
+  compaction use the same file lock; readers sum records. Compaction keeps
+  each endpoint separate, drops stale records, and retains the oldest
+  timestamp in each hourly bucket so it never makes stale traffic look fresh.
 - **Staleness rule:** records older than 24h are ignored, and untimestamped
   ones (predating the `ts` field) with them. Advice driven by month-old
   traffic is worse than advice that admits it has no data — the workload it
@@ -798,8 +798,13 @@ discipline as Parts 1–2: no assumed gaps).
   periodically and on orderly exit so a separate KV-offload advisor can use them.
   This is a text-locality estimate, not a measurement of the engine's KV cache.
   Embeddings, tool calls, structured prompts, and cloud fallback are not counted.
-- **Shutdown gap closed in Pass 196 (below).** Still open: the log is global
-  rather than per-endpoint, so a multi-engine deployment gets one blended rate.
+- **Endpoint-scoped KV offload:** use
+  `aictl deploy optimize <model> --kv-offload --kv-offload-endpoint <engine-url>`
+  to use only measurements for that configured engine URL (trailing slash
+  optional). Logs store a hash of the URL, not the URL itself. With no data for
+  the selected endpoint, the advisor falls back to its heuristic, not to
+  another engine's traffic. Omitting the option keeps the blended rate,
+  including legacy records. The shutdown gap was closed in Pass 196 (below).
 
 ## Y. Drain reuse counters on shutdown, and a `clear()` cursor bug — ✅ implemented (Pass 196)
 

@@ -782,6 +782,7 @@ def serve_proxy(host: str = DAEMON_HOST, port: int = PROXY_PORT,
     was_persisting = tracker.persistence_enabled()
     with HTTPServer((host, port), ProxyHandler) as server:
         print(f"AI OS completions proxy on http://{host}:{port}/v1/chat/completions")
+        prefix_route.truncate_reuse_log()
         tracker.enable_persistence()
         try:
             server.serve_forever()
