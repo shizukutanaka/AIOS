@@ -440,6 +440,7 @@ def index_directory(
     indexed = 0
     skipped = 0
     chunks_created = 0
+    fallback_chunks = 0
     flagged: list[tuple[str, str]] = []
 
     for fpath in files:
@@ -496,6 +497,11 @@ def index_directory(
         store.upsert_doc(str(fpath), stat.st_mtime, stat.st_size, chunks)
         indexed += 1
         chunks_created += len(chunks)
+        fallback_chunks += sum(
+            chunk.embedding is not None and len(chunk.embedding) == FALLBACK_DIM
+            and chunk.embedding == _fallback_embedding(chunk.text)
+            for chunk in chunks
+        )
 
         if progress_callback:
             progress_callback(fpath, len(chunks))
@@ -504,6 +510,7 @@ def index_directory(
         "indexed": indexed,
         "skipped": skipped,
         "chunks_created": chunks_created,
+        "fallback_chunks": fallback_chunks,
         "files_total": len(files),
         # Always present so --json consumers get a stable shape whether or not
         # screening ran; empty means "nothing flagged", not "not checked".
