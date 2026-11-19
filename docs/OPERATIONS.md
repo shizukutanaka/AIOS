@@ -56,6 +56,10 @@ aictl otel config > /etc/otel/config.yaml  # Generate OTel Collector config
 ## 4. Upgrades
 
 ### Pre-upgrade checklist
+Run `aictl upgrade plan` to review the steps for your node. The plan is
+advisory: it does not run health checks or trigger a rollback. Record the
+snapshot ID so it is available after a reboot.
+
 ```bash
 aictl context save        # Save KV cache state
 aictl snapshot create --label pre-upgrade
@@ -67,18 +71,32 @@ aictl fabric detect       # Verify memory tiers
 # bootc-based upgrade (atomic, rollback-safe)
 sudo bootc upgrade
 # Or: sudo bootc switch ghcr.io/org/aios:v1.2.0
+# Confirm staging succeeds before rebooting.
+sudo systemctl reboot
 
-# After reboot:
-aictl context restore     # Restore KV cache
-aictl doctor              # Verify everything
+# After reboot, review health before restoring workloads.
+aictl doctor
+# If healthy, restore context and re-apply drained workloads as appropriate.
+aictl context restore
+aictl ps
 ```
 
 ### Rollback
+If the node is unhealthy after the upgrade, stop before restoring workloads.
+Confirm that `bootc rollback` succeeds before rebooting.
+
 ```bash
 sudo bootc rollback       # Switch to previous deployment
-# Reboot
-aictl snapshot restore <id>  # Restore state
+sudo systemctl reboot
+# On the previous deployment:
+aictl doctor
+# Only if state needs recovery; replace PRE_UPGRADE_ID with the recorded ID.
+aictl snapshot restore PRE_UPGRADE_ID
 ```
+
+If you use a custom state directory, use the same settings for snapshot
+creation and restoration. Re-apply drained workloads as needed and check
+them with `aictl ps`.
 
 ## 5. Scaling to Cluster
 
