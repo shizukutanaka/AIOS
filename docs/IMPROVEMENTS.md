@@ -155,7 +155,7 @@ The gaps below are where it trails current peers or recent research — not gree
   **MLX on Apple Silicon** as mainstream; SGLang/LMDeploy show ~29% higher throughput than
   vLLM, TensorRT-LLM leads at scale, LMDeploy has lowest TTFT.
 
-## E. KV-cache-aware cluster routing & long-context KV — proposal (a) done (Pass 177)
+## E. KV-cache-aware cluster routing & long-context KV — proposals (a) and (b) implemented
 
 > **Status:** `SLOConfig.kv_cache_max` (default 0.9) was already threaded through
 > `check_slo()` (governor) and `cmd/optimize.py`'s recommendations, but
@@ -175,8 +175,14 @@ The gaps below are where it trails current peers or recent research — not gree
   prefetch.
 - **Proposal:** ~~(a) extend the router's soft-score with a KV-budget term~~ ✅ done
   (hard filter, not just soft-score — stronger than originally proposed). (b) add a
-  **long-context KV advisor** to `cmd/optimize.py` recommending eviction/compression flags
-  (e.g. vLLM cache settings) by context length — advisory-only, zero-dep. Still open.
+  **long-context KV advisor** to `cmd/optimize.py` — implemented as an opt-in recommendation:
+  `aictl optimize --engine vllm --context-length 65536` suggests testing
+  `--kv-cache-dtype=fp8` when the supplied context is at least 32,768 tokens
+  and live KV utilization exceeds the configured SLO. The context length comes from
+  the operator, not engine metrics. The advisor does not assume FP8 support or
+  detect existing quantization; it asks operators to check both and validate
+  quality and latency before rollout. No engine configuration is changed, and
+  the existing scaling advice remains available.
 
 ## F. Prefill/decode & MoE serving advisors — ✅ implemented (v1.6)
 

@@ -12,6 +12,7 @@ import argparse
 
 from aictl.core.output import ok, err, print_json, print_table
 from aictl.core.argtypes import positive_int, engine_filter_choices
+from aictl.core.constants import DEFAULT_MAX_MODEL_LEN
 from aictl.runtime.adapters import discover_engines, get_adapter
 
 
@@ -27,10 +28,14 @@ def register(sub: Any) -> None:
     p.add_argument("--engine", default="", choices=engine_filter_choices(),
                    help="Target a specific engine (vllm/ollama/sglang)")
     p.add_argument("--top", type=positive_int, default=5, help="Show top N recommendations (default 5)")
+    p.add_argument("--context-length", type=positive_int,
+                   help=f"Workload context in tokens; enables vLLM KV-cache advice at {DEFAULT_MAX_MODEL_LEN:,}+")
     p.set_defaults(func=run)
 
 
-def _analyze_engine(engine: str, endpoint: str, slo: Any) -> list[dict[str, Any]]:
+def _analyze_engine(
+    engine: str, endpoint: str, slo: Any, *, context_length: int | None = None,
+) -> list[dict[str, Any]]:
     """Gather metrics from one engine and return recommendations."""
     recs: list[dict[str, Any]] = []
 
@@ -73,9 +78,23 @@ def _analyze_engine(engine: str, endpoint: str, slo: Any) -> list[dict[str, Any]
 
     # High KV cache utilization → increase max cache or reduce concurrency
     if kv > slo.kv_cache_max:
+        kv_metric = f"kv_cache={kv:.1%} > SLO {slo.kv_cache_max:.1%}"
+        if engine == "vllm" and context_length is not None and context_length >= DEFAULT_MAX_MODEL_LEN:
+            recs.append({
+                "engine": engine,
+                "metric": f"{kv_metric}; context={context_length:,} tokens",
+                "recommendation": (
+                    "If the KV cache is not already quantized and your backend supports FP8, "
+                    "test FP8 KV caching to reduce memory per token. Validate model quality "
+                    "and latency on representative long prompts before rollout."
+                ),
+                "command": "vllm serve <model> --kv-cache-dtype=fp8",
+                "impact": "high",
+                "effort": "medium",
+            })
         recs.append({
             "engine": engine,
-            "metric": f"kv_cache={kv:.1%} > SLO {slo.kv_cache_max:.1%}",
+            "metric": kv_metric,
             "recommendation": "Increase --gpu-memory-utilization or add replicas",
             "command": f"aictl scale keda <deployment> --max 4",
             "impact": "high",
@@ -152,8 +171,9 @@ def run(args: argparse.Namespace) -> int:
         healths = [h for h in healths if h.engine == engine_filter]
 
     all_recs: list[dict[str, Any]] = []
+    context_length = getattr(args, "context_length", None)
     for h in healths:
-        all_recs.extend(_analyze_engine(h.engine, h.endpoint, slo))
+        all_recs.extend(_analyze_engine(h.engine, h.endpoint, slo, context_length=context_length))
 
     # Sort by impact (high → medium → low), then engine name
     all_recs.sort(

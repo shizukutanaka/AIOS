@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import io
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import patch, MagicMock
 
 
@@ -179,6 +181,13 @@ class TestOptimizeCommand(unittest.TestCase):
         args = parser.parse_args(["optimize", "--top", "3"])
         self.assertEqual(args.top, 3)
 
+    def test_context_length_requires_positive_tokens(self):
+        parser = self._make_parser()
+        for value in ("0", "-1"):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["optimize", f"--context-length={value}"])
+
     def test_run_no_engines(self):
         from aictl.cmd.optimize import run
         with patch("aictl.cmd.optimize.discover_engines", return_value=[]):
@@ -252,6 +261,44 @@ class TestOptimizeCommand(unittest.TestCase):
         with patch("aictl.cmd.optimize.get_adapter", return_value=adapter):
             recs = _analyze_engine("vllm", "http://localhost:8000", slo)
         self.assertEqual(recs, [])
+
+    def test_long_context_kv_advice_in_json(self):
+        from aictl.core.config import SLOConfig
+        from aictl.core.constants import DEFAULT_MAX_MODEL_LEN
+        from aictl.runtime.adapters import EngineHealth
+
+        parser = self._make_parser()
+        for engine, context, kv, expected in (
+            ("vllm", DEFAULT_MAX_MODEL_LEN, 0.95, True),
+            ("vllm", DEFAULT_MAX_MODEL_LEN - 1, 0.95, False),
+            ("vllm", None, 0.95, False),
+            ("vllm", DEFAULT_MAX_MODEL_LEN, 0.9, False),
+            ("sglang", DEFAULT_MAX_MODEL_LEN, 0.95, False),
+        ):
+            with self.subTest(engine=engine, context=context, kv=kv):
+                endpoint = "http://localhost:8000"
+                health = EngineHealth(engine=engine, endpoint=endpoint, reachable=True)
+                adapter = MagicMock()
+                adapter.health.return_value = health
+                adapter.scrape_metrics.return_value = self._make_metrics(kv=kv)
+                argv = ["optimize", "--engine", engine]
+                if context is not None:
+                    argv.extend(["--context-length", str(context)])
+                args = parser.parse_args(argv)
+                args.json = True
+                with patch("aictl.core.config.load_config") as load_config, \
+                     patch("aictl.cmd.optimize.discover_engines", return_value=[health]), \
+                     patch("aictl.cmd.optimize.get_adapter", return_value=adapter), \
+                     patch("aictl.cmd.optimize.print_json") as print_json:
+                    load_config.return_value.slo = SLOConfig(kv_cache_max=0.9)
+                    self.assertEqual(args.func(args), 0)
+                recs = print_json.call_args.args[0]
+                fp8_command = "vllm serve <model> --kv-cache-dtype=fp8"
+                self.assertEqual(any(r["command"] == fp8_command for r in recs), expected)
+                if expected:
+                    self.assertEqual(recs[0]["command"], fp8_command)
+                    self.assertIn(f"context={context:,} tokens", recs[0]["metric"])
+                    self.assertTrue(any(r["command"].startswith("aictl scale") for r in recs))
 
     def test_run_json_high_ttft(self):
         from aictl.cmd.optimize import run
