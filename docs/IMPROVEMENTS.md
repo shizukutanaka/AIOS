@@ -791,6 +791,13 @@ discipline as Parts 1–2: no assumed gaps).
   concurrency test asserting persisted totals equal in-process totals under 6
   threads, corruption resilience (truncated final line, garbage lines,
   unwritable log), and that routing still works when the log cannot be written.
+- **Live proxy measurements:** `aictl proxy` uses model-scoped text prefixes
+  from local completion requests to score candidate engines. After a successful
+  response it checks and warms the selected endpoint, counting once per served
+  request rather than once per candidate. The proxy flushes these measurements
+  periodically and on orderly exit so a separate KV-offload advisor can use them.
+  This is a text-locality estimate, not a measurement of the engine's KV cache.
+  Embeddings, tool calls, structured prompts, and cloud fallback are not counted.
 - **Shutdown gap closed in Pass 196 (below).** Still open: the log is global
   rather than per-endpoint, so a multi-engine deployment gets one blended rate.
 

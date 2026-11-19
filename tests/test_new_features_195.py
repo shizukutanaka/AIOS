@@ -25,7 +25,10 @@ import json
 import os
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 from tests.support import IsolatedStateTestCase
 from aictl.runtime.prefix_route import (
@@ -55,6 +58,92 @@ class _IsolatedState(IsolatedStateTestCase):
         for _ in range(hits):
             tracker.best_endpoint(SHARED, ENDPOINTS)
         return tracker
+
+
+class TestLiveProxyPersistence(IsolatedStateTestCase):
+    def setUp(self):
+        super().setUp()
+        from aictl.daemon.proxy import ProxyHandler
+        from aictl.runtime.adapters import EngineHealth
+        from aictl.runtime.router import BrokerRouter
+
+        self.tracker = PrefixRouteTracker()
+        self.enterContext(patch("aictl.runtime.prefix_route._DEFAULT_TRACKER", self.tracker))
+        self.candidates = [
+            EngineHealth("vllm", "http://a:8000", True, "READY"),
+            EngineHealth("sglang", "http://b:8000", True, "READY"),
+        ]
+        self.enterContext(patch("aictl.runtime.router.discover_engines",
+                                return_value=self.candidates))
+        self.enterContext(patch("aictl.runtime.router.get_adapter", return_value=None))
+        self.urlopen = self.enterContext(patch("aictl.daemon.proxy.urllib.request.urlopen"))
+
+        self.handler = ProxyHandler.__new__(ProxyHandler)
+        self.handler.path = "/v1/chat/completions"
+        self.handler._get_router = Mock(return_value=BrokerRouter())
+        self.handler._model_trust_ok = Mock(return_value=(True, ""))
+        self.handler._check_guard = Mock(return_value=(True, ""))
+        self.handler._entity_id = Mock(return_value="anonymous")
+        self.handler._check_fair_share = Mock(return_value=(True, ""))
+        self.handler._redact_response_pii = lambda data: data
+        self.handler._meter_tokens = Mock()
+        self.handler._record_genai_span = Mock()
+        self.handler.send_response = Mock()
+        self.handler.send_header = Mock()
+        self.handler.end_headers = Mock()
+        self.handler.wfile = Mock()
+        self.handler._error = Mock()
+
+    def _complete(self, model="m", stream=False):
+        self.handler._read_body = Mock(return_value={
+            "model": model, "stream": stream,
+            "messages": [{"role": "system", "content": SHARED}],
+        })
+        self.urlopen.return_value = BytesIO(b"{}")
+        self.handler._proxy_completion()
+
+    def test_proxy_drains_one_observation_per_successful_request(self):
+        from aictl.core.state import StateStore
+        from aictl.daemon.proxy import ProxyHandler, serve_proxy
+        from aictl.runtime.kv_offload import measured_prefix_reuse
+
+        with patch.object(ProxyHandler, "store", create=True), \
+                patch("aictl.daemon.proxy.HTTPServer") as server:
+            def serve():
+                self.assertTrue(self.tracker.persistence_enabled())
+                self._complete()
+                self._complete(stream=True)
+                self._complete(model="other")
+            server.return_value.__enter__.return_value.serve_forever.side_effect = serve
+            serve_proxy(store=StateStore(self.state_dir))
+
+        self.assertEqual(self.tracker.stats()["lookups"], 3)
+        self.assertEqual(self.tracker.stats()["hits"], 1)
+        self.assertFalse(self.tracker.persistence_enabled())
+        with patch("aictl.runtime.prefix_route._DEFAULT_TRACKER", PrefixRouteTracker()):
+            self.assertAlmostEqual(measured_prefix_reuse(), 1 / 3)
+
+    def test_failed_upstream_does_not_warm_or_count(self):
+        self.urlopen.side_effect = HTTPError("", 429, "busy", {}, BytesIO())
+        self._complete()
+        self.handler._error.assert_called_once_with(429, "Upstream error from vllm")
+        self.assertIsNone(self.tracker.reuse_rate())
+        self.urlopen.side_effect = None
+        self._complete()
+        self.assertEqual(self.tracker.reuse_rate(), 0.0)
+
+    def test_warm_endpoint_scores_higher_without_counting_candidates(self):
+        from aictl.runtime.router import RouteRequest
+
+        body = {"prompt": SHARED}
+        prompt = self.handler._completion_prefix(body)
+        self.tracker.record(self.candidates[1].endpoint, prompt, model="m")
+        self.candidates[1].engine = "vllm"
+        router = self.handler._get_router()
+        self.assertEqual(router.route(RouteRequest("m")).endpoint, self.candidates[0].endpoint)
+        self.assertEqual(router.route(RouteRequest("m", prompt=prompt)).endpoint,
+                         self.candidates[1].endpoint)
+        self.assertIsNone(self.tracker.reuse_rate())
 
 
 class TestPersistence(_IsolatedState):

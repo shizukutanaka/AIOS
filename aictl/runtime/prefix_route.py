@@ -87,92 +87,83 @@ class PrefixRouteTracker:
         # process, so unrelated code started writing to the state directory.
         self._persist = False
 
-    # Candidate prefix lengths to hash (must match best_endpoint)
-    _PREFIX_LENS = [1024, 768, 512, 384, 256, 192, 128, 64, 32, 16]
+    _PREFIX_LENS = [PREFIX_HASH_LEN, 768, 512, 384, 256, 192, 128, 64, 32, 16]
 
-    def record(self, endpoint: str, prompt: str) -> None:
+    def _prefix_hashes(self, prompt: str, model: str) -> list[tuple[int, str]]:
+        if len(prompt) < self._PREFIX_LENS[-1]:
+            return []
+        model_key = hashlib.sha256(model.encode("utf-8", errors="replace")).digest()
+        return [
+            (length, hashlib.sha256(
+                model_key + prompt[:length].encode("utf-8", errors="replace")
+            ).hexdigest()[:16])
+            for length in self._PREFIX_LENS if length <= len(prompt)
+        ]
+
+    def record(self, endpoint: str, prompt: str, *, model: str = "") -> None:
         """Note that `endpoint` just served a request with this prompt prefix.
 
         Records ALL applicable prefix lengths so that partial matches work.
         """
         if not endpoint or not prompt:
             return
+        candidates = self._prefix_hashes(prompt, model)
+        if not candidates:
+            return
         now = time.time()
         with self._lock:
-            history = self._endpoints.setdefault(endpoint, OrderedDict())
-            for length in self._PREFIX_LENS:
-                if length > len(prompt):
-                    continue
-                h = hashlib.sha256(
-                    prompt[:length].encode("utf-8", errors="replace")
-                ).hexdigest()[:16]
-                history.pop(h, None)
-                history[h] = now
-            # Cap size
-            while len(history) > self._capacity:
-                history.popitem(last=False)
+            self._record_locked(endpoint, candidates, now)
+
+    def _record_locked(
+        self, endpoint: str, candidates: list[tuple[int, str]], now: float,
+    ) -> None:
+        history = self._endpoints.setdefault(endpoint, OrderedDict())
+        for _, h in candidates:
+            history.pop(h, None)
+            history[h] = now
+        while len(history) > self._capacity:
+            history.popitem(last=False)
+
+    def observe(self, endpoint: str, prompt: str, *, model: str = "") -> None:
+        """Count one served request against the selected endpoint before warming it."""
+        if not endpoint or not prompt:
+            return
+        candidates = self._prefix_hashes(prompt, model)
+        if not candidates:
+            return
+        now = time.time()
+        with self._lock:
+            match = self._best_match_locked(candidates, [endpoint], now)
+            due = self._count_lookup_locked(match)
+            self._record_locked(endpoint, candidates, now)
+        if due:
+            self.flush_reuse()
 
     def best_endpoint(
         self,
         prompt: str,
         endpoints: list[str],
+        *,
+        model: str = "",
+        count: bool = True,
     ) -> PrefixMatch | None:
         """Find the endpoint most likely to have this prompt's prefix cached.
 
-        Returns None if no endpoint has any history. The overlap_score is
-        based on the LONGEST matching prefix; we check 8 progressively
-        shorter prefixes (each half the previous).
+        Returns None if no endpoint has a warm prefix for this model.
+        The overlap_score uses the length and freshness of matching prefixes.
+        Use count=False when probing candidates before a request is served.
         """
         if not prompt or not endpoints:
             return None
 
-        # Generate hashes for progressively shorter prefixes
-        candidates: list[tuple[int, str]] = []
-        prefix_lens = [PREFIX_HASH_LEN, 768, 512, 384, 256, 192, 128, 64, 32, 16]
-        for length in prefix_lens:
-            if length > len(prompt):
-                continue
-            piece = prompt[:length]
-            candidates.append((length, hashlib.sha256(
-                piece.encode("utf-8", errors="replace")
-            ).hexdigest()[:16]))
-
+        candidates = self._prefix_hashes(prompt, model)
         if not candidates:
             return None
 
         now = time.time()
-        best: PrefixMatch | None = None
-
         with self._lock:
-            for endpoint in endpoints:
-                history = self._endpoints.get(endpoint)
-                if not history:
-                    continue
-
-                for length, h in candidates:
-                    if h in history:
-                        last_seen = history[h]
-                        age = now - last_seen
-                        if age > self._ttl:
-                            continue
-                        overlap_ratio = length / PREFIX_HASH_LEN
-                        freshness = max(0.0, 1.0 - age / self._ttl)
-                        score = overlap_ratio * 0.7 + freshness * 0.3
-                        if best is None or score > best.overlap_score:
-                            best = PrefixMatch(
-                                endpoint=endpoint,
-                                overlap_score=score,
-                                matched_prefix_len=length,
-                            )
-
-            # Counted inside the lock, and only for lookups that got far
-            # enough to be answerable — early returns above are malformed
-            # queries, not evidence about the workload.
-            self._lookups += 1
-            if best is not None:
-                self._hits += 1
-            due = (self._persist and PREFIX_REUSE_FLUSH_EVERY > 0
-                   and self._lookups - self._flushed_lookups >= PREFIX_REUSE_FLUSH_EVERY)
+            best = self._best_match_locked(candidates, endpoints, now)
+            due = count and self._count_lookup_locked(best)
 
         # Flushed outside the lock: it touches the filesystem, and routing
         # decisions must not wait on I/O.
@@ -180,6 +171,37 @@ class PrefixRouteTracker:
             self.flush_reuse()
 
         return best
+
+    def _best_match_locked(
+        self, candidates: list[tuple[int, str]], endpoints: list[str], now: float,
+    ) -> PrefixMatch | None:
+        best: PrefixMatch | None = None
+        for endpoint in endpoints:
+            history = self._endpoints.get(endpoint)
+            if not history:
+                continue
+            for length, h in candidates:
+                last_seen = history.get(h)
+                if last_seen is None:
+                    continue
+                age = now - last_seen
+                if age > self._ttl:
+                    continue
+                overlap_ratio = length / PREFIX_HASH_LEN
+                freshness = max(0.0, 1.0 - age / self._ttl)
+                score = overlap_ratio * 0.7 + freshness * 0.3
+                if best is None or score > best.overlap_score:
+                    best = PrefixMatch(
+                        endpoint=endpoint, overlap_score=score, matched_prefix_len=length,
+                    )
+        return best
+
+    def _count_lookup_locked(self, match: PrefixMatch | None) -> bool:
+        self._lookups += 1
+        if match is not None:
+            self._hits += 1
+        return (self._persist and PREFIX_REUSE_FLUSH_EVERY > 0
+                and self._lookups - self._flushed_lookups >= PREFIX_REUSE_FLUSH_EVERY)
 
     def enable_persistence(self, enabled: bool = True) -> None:
         """Opt this tracker into periodically persisting its reuse counts.
@@ -284,13 +306,6 @@ class PrefixRouteTracker:
             # persists nothing at all — until it exceeds the stale cursor.
             self._flushed_lookups = 0
             self._flushed_hits = 0
-
-    def _hash_prefix(self, prompt: str) -> str:
-        """Compute and return the hash."""
-        piece = prompt[:PREFIX_HASH_LEN]
-        return hashlib.sha256(
-            piece.encode("utf-8", errors="replace")
-        ).hexdigest()[:16]
 
 
 def _reuse_log_path() -> Path:

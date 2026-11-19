@@ -39,6 +39,7 @@ class RouteRequest:
     # exist, not that the field is unused input.
     tenant: str = ""
     latency_slo_ms: float = 0.0
+    prompt: str = ""
 
 
 @dataclass
@@ -221,14 +222,13 @@ class BrokerRouter:
         cache = 0.5
         if engine in ("vllm", "sglang"):
             cache = 0.8
-        # Check real prefix locality via the prefix route tracker
-        # Use model name as the prompt proxy when full message unavailable
-        prompt = getattr(req, "prompt", "") or req.model
-        if prompt and c.endpoint:
+        if req.prompt and c.endpoint:
             try:
                 from aictl.runtime.prefix_route import get_default_tracker
                 _tracker = get_default_tracker()
-                _match = _tracker.best_endpoint(prompt, [c.endpoint])
+                _match = _tracker.best_endpoint(
+                    req.prompt, [c.endpoint], model=req.model, count=False,
+                )
                 if _match and _match.endpoint == c.endpoint:
                     cache = min(1.0, cache + _match.overlap_score * 0.15)
             except Exception:
