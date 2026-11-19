@@ -1,5 +1,6 @@
 # aictl — AI Native Linux OS
 
+[![CI](https://github.com/shizukutanaka/AIOS/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/shizukutanaka/AIOS/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Go 1.23](https://img.shields.io/badge/go-1.23-00ADD8.svg)](https://go.dev/)
@@ -67,6 +68,12 @@ git clone https://github.com/shizukutanaka/aios.git
 cd aios
 python3 -m aictl --version   # aictl 1.7.0
 ```
+
+> **版数と配布の実態.** `main` のソースは 1.7.0 です（`constants.py`・`pyproject.toml`・Go port の 3 箇所を `aictl gate` が照合）。
+> ただし **v1.7.0 のタグと GitHub Release はまだ作られていません**。Releases タブの最新は v1.6.0 で、
+> その `v1.6.0` タグはソースツリーではなく `aios-v1.5.0-final.zip` 1 ファイルだけのコミット（2026-04-11「V1.5」）を指しています（v1.6.0 本体は Release 添付の `aios-v1.6.0-final.zip`）。
+> タグの「Source code」アーカイブからは aictl は動かないので、上の `git clone`（`main`）で入手してください。
+> `main` への push と全 PR は [CI](.github/workflows/ci.yml)（Python 3.11–3.13 のテスト一式 + gate、Go port の build/vet/test）で検証されます。
 
 ## Quick Start
 

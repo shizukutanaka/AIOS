@@ -130,7 +130,7 @@
 | 1 | バージョン文字列が **20 ファイル**に分散 | **過大評価だった。実際に編集が要るのは 3 ファイル** | 実測: 値としてハードコードするのは `core/constants.py:142`・`pyproject.toml:7`・`go-port/cmd/aictl/main.go:26` のみ。他の 5 件は「v1.7.0 機能」等の**散文中の言及**で、バンプ時に編集不要。**残作業も #44 で解消**: gate の Version フェーズが 3 情報源すべてを照合する |
 | 2 | CLAUDE.md のカウント3重複を毎パス手動更新 | **解消** | `core/docsync.py` + gate の Counts フェーズが自動同期。`check_counts()` は現在 in sync |
 | 3 | 文書の陳腐化（v1.6.0 が実在しない CI を宣伝） | **本パスで修正** | `CHANGELOG.md:197` は今日まで "GitHub Actions CI" を Added に列挙していた。取り消し線＋「never shipped」注記で訂正（削除ではなく記録を残す） |
-| 4 | CI 不在 | **未解決（外部要因）** | `.github/workflows/` は依然不在。App の `workflows` 権限が無く、ブランチ push もREST も 403 で拒否されることを実測確認済み |
+| 4 | CI 不在 | **未解決（外部要因）→ 2026-11 解消（§追補 2026-11 参照）** | `.github/workflows/` は依然不在。App の `workflows` 権限が無く、ブランチ push もREST も 403 で拒否されることを実測確認済み |
 | 5 | Go port が `go build` 検証不能 | **解消** | #34: 全 10 checksum を `sum.golang.org` で検証し `go.sum` を復元。隠れていた unused import も修正。`go build` / `go vet` / `go test ./...` すべて green、gate が毎回検証 |
 | 6 | `_load_config` 名前衝突ハザード | **継続（軽微）** | 実測 2 件（`cmd/tco.py:543`, `cmd/route.py:694`）。当時の想定より狭い |
 | 7 | リリース工程が手動 | **半分解消** | #41: `make release` が `gh release create` まで実行し、dirty tree を拒否し、実行しなかった手順を明示する。Release オブジェクト作成自体は依然として権限保有者の操作待ち |
@@ -192,3 +192,21 @@ gate は現在 `1.7.0 == pyproject.toml == go-port` と 3 情報源を照合し�
 3. **fair-share のキューイング**（提案 #3 の残り）— 現在は拒否であって
    queue-and-release ではない。IMPROVEMENTS.md:895 に既知の限界として記載済み。
    設計判断を要するため Opus 向き。
+
+## 追補 2026-11 — CI と版数を実測で確定
+
+上の「CI 不在」「Releases タブが v1.6.0 のまま」はどちらも書いた時点の事実だったが、
+前者はその後変わり、後者は書かれていたより悪かった。GitHub API で直接確認した値:
+
+| 項目 | 看板 | 実態（2026-11-19 確認） |
+|---|---|---|
+| CI | 本文書 §1-4「未解決」、`SECURITY.md`「`go mod verify` + `pip-audit` in CI」 | `.github/workflows/ci.yml` は #57 で実在（2026-11-15）。push(main)/PR で起動し、初回の 1 件を除き全て success。ただし `go mod verify` と `pip-audit` は**実行していない** |
+| ソースの版数 | README / CLAUDE.md / CHANGELOG は 1.7.0 | `constants.py`・`pyproject.toml`・Go port すべて 1.7.0（gate が照合） |
+| 公開された版数 | CHANGELOG「v1.7.0 — 2026-07-16」 | **タグは `v1.6.0` の 1 本だけ**。v1.7.0 のタグも Release も無い |
+| `v1.6.0` タグの中身 | — | ソースツリーではなく `aios-v1.5.0-final.zip` 1 ファイルのコミット（`24cfaef`「V1.5」）。v1.6.0 本体は Release 添付の `aios-v1.6.0-final.zip` |
+
+是正: README に CI バッジと「版数と配布の実態」を追記、CHANGELOG の v1.7.0 に未公開注記、
+`SECURITY.md` の CI 記述を ci.yml の実際の内容に合わせ、`RELEASE.md` の「workflows が無い」を過去形に。
+`tests/test_new_features_232.py` が「CI について書いたことは ci.yml にある」を固定する。
+**残る作業は権限保有者の 1 操作だけ**: `make release`（v1.7.0 のタグと Release の作成）。
+

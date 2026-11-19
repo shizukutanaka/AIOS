@@ -48,7 +48,7 @@ aictl is designed with security as a first-class concern:
 ### Dependencies
 - Zero external Python runtime dependencies (stdlib only)
 - All Go dependencies audited quarterly
-- Supply chain: `go mod verify` + `pip-audit` in CI
+- Supply chain: CI (`.github/workflows/ci.yml`) builds, vets and tests the Go port; dependency auditing (`go mod verify`, `pip-audit`) is not run there yet — the Python runtime has no third-party dependencies to audit
 
 ### Authentication
 - API keys use Ed25519 signatures (`aictl apikey create`)
