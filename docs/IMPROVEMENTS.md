@@ -622,10 +622,12 @@ discipline as Parts 1–2: no assumed gaps).
   real HTTP server, not a hand-rolled double), which genuinely lacks
   `/v1/embeddings` — making it a live demonstration of the degradation case the
   feature exists to surface. 18 new tests (`tests/test_new_features_191.py`).
-- **Still open:** the probes describe conformance, they do not yet *gate*
-  anything — e.g. `rag index` could warn up front when the configured engine
-  fails the embeddings probe. Deliberately deferred rather than silently
-  skipped.
+- **Index-time feedback:** `rag index` warns when newly indexed chunks use
+  non-semantic hash embeddings; `--json` reports the count as
+  `fallback_chunks`. This checks the actual embeddings instead of running a
+  separate probe, so it also catches an embedding request that failed after
+  successful model discovery. Indexing stays available offline. Run
+  `aictl engines conform` to investigate embedding support.
 
 ## U. KV prefix-cache offload advice (OffloadingConnector) — ✅ implemented (Pass 192)
 

@@ -1,10 +1,14 @@
 """Tests for RAG and prefix-cache aware routing."""
 
+import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -168,6 +172,25 @@ class TestRAGIndexDirectory(unittest.TestCase):
             self.assertGreaterEqual(stats["indexed"], 2)
             self.assertGreater(stats["chunks_created"], 0)
 
+    def test_index_counts_only_new_hash_embeddings(self):
+        from aictl.core.rag import FALLBACK_DIM, RagStore, _fallback_embedding, index_directory
+
+        with tempfile.TemporaryDirectory() as td:
+            docs = Path(td) / "docs"
+            docs.mkdir()
+            (docs / "offline.txt").write_text("Hash fallback")
+            (docs / "online.txt").write_text("Real embedding")
+            store = RagStore(Path(td) / "rag.db")
+            with patch("aictl.core.rag.embed_text", side_effect=[
+                [_fallback_embedding("Hash fallback")],
+                [[0.5] * FALLBACK_DIM],
+            ]) as embed:
+                stats = index_directory(docs, store)
+                self.assertEqual(stats["chunks_created"], 2)
+                self.assertEqual(stats["fallback_chunks"], 1)
+                self.assertEqual(index_directory(docs, store)["fallback_chunks"], 0)
+                self.assertEqual(embed.call_count, 2)
+
 
 class TestPrefixRoute(unittest.TestCase):
     def setUp(self):
@@ -256,6 +279,32 @@ class TestPrefixRoute(unittest.TestCase):
 
 
 class TestRagCli(unittest.TestCase):
+    def test_index_reports_hash_fallback_in_terminal_and_json(self):
+        from aictl.__main__ import main
+        from aictl.core.rag import _fallback_embedding
+
+        for as_json in (False, True):
+            with self.subTest(as_json=as_json), tempfile.TemporaryDirectory() as td:
+                target = Path(td) / "sample.txt"
+                target.write_text("Engine maintenance reference")
+                flags = ["--json"] if as_json else []
+                argv = ["aictl", "rag", "index", str(target), "--state-dir", td, *flags]
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with patch.object(sys, "argv", argv), patch.dict(os.environ), \
+                     patch("aictl.core.rag.embed_text", return_value=[
+                         _fallback_embedding(target.read_text()),
+                     ]), redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(main(), 0)
+                if as_json:
+                    stats = json.loads(stdout.getvalue())
+                    self.assertEqual(stats["fallback_chunks"], 1)
+                    self.assertEqual(stats["indexed"], 1)
+                    self.assertNotIn("non-semantic hash embeddings", stderr.getvalue())
+                else:
+                    self.assertIn("Indexed 1 files", stdout.getvalue())
+                    self.assertIn("1 newly indexed chunks used non-semantic hash embeddings", stderr.getvalue())
+                    self.assertIn("aictl engines conform", stderr.getvalue())
+
     def test_index_subcommand_parses(self):
         from aictl.__main__ import build_parser
         p = build_parser()

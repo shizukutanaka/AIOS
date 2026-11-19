@@ -67,17 +67,20 @@ def run_index(args: argparse.Namespace) -> int:
     """Index documents from a directory."""
     from aictl.core.rag import RagStore, index_directory
 
+    json_output = getattr(args, "json", False)
     target = Path(args.path).expanduser().resolve()
     if not target.exists():
         err(f"Path does not exist: {target}")
-        print("  Try: aictl rag index ./docs")
+        if not json_output:
+            print("  Try: aictl rag index ./docs")
         return 1
 
     store = RagStore()
 
-    print()
-    print(f"  Indexing: {target}")
-    print()
+    if not json_output:
+        print()
+        print(f"  Indexing: {target}")
+        print()
 
     def progress(fpath: Path, n_chunks: int) -> None:
         """Execute progress."""
@@ -88,11 +91,15 @@ def run_index(args: argparse.Namespace) -> int:
         from aictl.core.config import load_config as _load_full_config
         _state = Path(args.state_dir) if getattr(args, "state_dir", None) else None
         _screen = getattr(_load_full_config(_state), "rag_screen_policy", "off")
-        stats = index_directory(target, store, progress_callback=progress,
+        stats = index_directory(target, store, progress_callback=None if json_output else progress,
                                 screen_policy=_screen)
     except FileNotFoundError as e:
         err(str(e))
         return 1
+
+    if json_output:
+        print_json(stats)
+        return 0
 
     print()
     if stats["indexed"] == 0:
@@ -106,15 +113,16 @@ def run_index(args: argparse.Namespace) -> int:
            f"{stats['chunks_created']} chunks "
            f"({stats['skipped']} skipped)")
 
+    if stats["fallback_chunks"]:
+        warn(f"{stats['fallback_chunks']} newly indexed chunks used non-semantic hash embeddings. "
+             "Run 'aictl engines conform' to check embedding support.")
+
     if stats.get("flagged"):
         print()
         verb = "Not indexed" if _screen == "enforce" else "Indexed but flagged"
         warn(f"{verb} — possible injected instructions:")
         for entry in stats["flagged"]:
             print(f"    ! {entry['source']}: {entry['rule']}")
-
-    if getattr(args, "json", False):
-        print_json(stats)
 
     from aictl.core.next_action import suggest
     suggest("rag_index")
