@@ -163,6 +163,38 @@ class TestUpgradeCmd(unittest.TestCase):
         actions = [s["action"] for s in parsed["steps"]]
         self.assertIn("snapshot_state", actions)
 
+    def test_plan_json_exposes_manual_recovery_in_order(self):
+        from aictl.cmd import upgrade
+        with tempfile.TemporaryDirectory() as d:
+            rc, parsed = _capture_json(
+                upgrade.run_plan,
+                _ns(state_dir=Path(d), target_version="next", json=True),
+            )
+        self.assertEqual(rc, 0)
+        descriptions = {step["action"]: step["description"] for step in parsed["steps"]}
+        self.assertIn("record the snapshot ID", descriptions["snapshot_state"])
+        self.assertIn("aictl doctor", descriptions["verify_health"])
+        self.assertIn("stop", descriptions["verify_health"])
+        self.assertIn("does not roll back automatically", parsed["rollback"])
+        rollback, reboot, restore, verify = parsed["rollback_steps"]
+        self.assertIn("sudo bootc rollback", rollback)
+        self.assertIn("previous deployment", reboot)
+        self.assertIn("If aictl state needs recovery", restore)
+        self.assertIn("aictl snapshot restore <snapshot-id>", restore)
+        self.assertIn("aictl ps", verify)
+
+    def test_plan_text_prints_health_and_recovery_instructions(self):
+        from aictl.cmd import upgrade
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = _capture(
+                upgrade.run_plan,
+                _ns(state_dir=Path(d), target_version="next", json=False),
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("review aictl doctor", out)
+        self.assertIn("Manual: run sudo bootc rollback", out)
+        self.assertIn("aictl snapshot restore <snapshot-id>", out)
+
 
 # ─── apply ────────────────────────────────────────────────
 

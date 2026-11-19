@@ -38,14 +38,28 @@ def run_plan(args: argparse.Namespace) -> int:
         "profile": node.profile,
         "active_stacks": len(stacks),
         "steps": [
-            {"order": 1, "action": "snapshot_state", "description": "Snapshot current state for rollback"},
+            {"order": 1, "action": "snapshot_state",
+             "description": "Run aictl snapshot create --label pre-upgrade and record the snapshot ID"},
             {"order": 2, "action": "drain_workloads", "description": "Gracefully drain active stacks"},
-            {"order": 3, "action": "stage_update", "description": f"Stage OS image update to {target}"},
-            {"order": 4, "action": "apply_update", "description": "Apply staged update (bootc switch)"},
-            {"order": 5, "action": "verify_health", "description": "Run health checks post-reboot"},
-            {"order": 6, "action": "restore_workloads", "description": "Re-apply stacks from saved state"},
+            {"order": 3, "action": "stage_update",
+             "description": "On a bootc host, run sudo bootc upgrade, or sudo bootc switch "
+                            "with the full image reference for a specific version"},
+            {"order": 4, "action": "apply_update",
+             "description": "Confirm the update is staged, then reboot into it"},
+            {"order": 5, "action": "verify_health",
+             "description": "After reboot, review aictl doctor; if the node is unhealthy, "
+                            "stop and follow the manual rollback steps"},
+            {"order": 6, "action": "restore_workloads",
+             "description": "Re-apply stacks from saved state and verify them with aictl ps"},
         ],
-        "rollback": "bootc rollback (automatic if health check fails within 5 minutes)",
+        "rollback": "Manual: run sudo bootc rollback, then reboot. aictl does not roll back automatically.",
+        "rollback_steps": [
+            "Run sudo bootc rollback and confirm it succeeds before rebooting.",
+            "Reboot into the previous deployment and review aictl doctor.",
+            "If aictl state needs recovery, run aictl snapshot restore <snapshot-id> "
+            "with the pre-upgrade snapshot ID and the same state-directory settings.",
+            "Re-apply any drained stacks as needed and verify them with aictl ps.",
+        ],
         "estimated_downtime_seconds": 120,
         "generated_at": time.time(),
     }
@@ -64,5 +78,7 @@ def run_plan(args: argparse.Namespace) -> int:
         ("Est. downtime", f"{plan['estimated_downtime_seconds']}s"),
         ("Rollback", plan["rollback"]),
     ])
+    for order, step in enumerate(plan["rollback_steps"], 1):
+        print(f"  {order}. {step}")
 
     return 0
