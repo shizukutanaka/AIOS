@@ -17,6 +17,7 @@ import urllib.error
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any
 
+from aictl.runtime import prefix_route
 from aictl.runtime.router import BrokerRouter, RouteRequest
 from aictl.core.config import load_config
 from aictl.core.state import StateStore
@@ -153,6 +154,31 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return text_input
         if isinstance(text_input, list):
             return "\n".join(s for s in text_input if isinstance(s, str))
+        return ""
+
+    def _completion_prefix(self, body: dict[str, Any]) -> str:
+        if body.get("tools") or body.get("functions"):
+            return ""
+        limit = prefix_route.PREFIX_HASH_LEN
+        messages = body.get("messages")
+        if isinstance(messages, list) and messages and all(
+            isinstance(m, dict) and isinstance(m.get("role"), str)
+            and isinstance(m.get("content"), str)
+            and m.keys() <= {"role", "content", "name"} for m in messages
+        ):
+            parts = ["chat:"]
+            length = len(parts[0])
+            for m in messages:
+                part = json.dumps([m["role"], m.get("name"), m["content"][:limit]],
+                                  ensure_ascii=False)
+                parts.append(part)
+                length += len(part)
+                if length >= limit:
+                    break
+            return "".join(parts)[:limit]
+        prompt = body.get("prompt")
+        if messages is None and isinstance(prompt, str) and prompt:
+            return "text:" + prompt[:limit - len("text:")]
         return ""
 
     def _entity_id(self) -> str:
@@ -348,7 +374,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         # Route
         router = self._get_router()
-        decision = router.route(RouteRequest(model=model, objective="balanced"))
+        prompt = self._completion_prefix(body) if isinstance(model, str) else ""
+        decision = router.route(RouteRequest(model=model, objective="balanced", prompt=prompt))
 
         if not decision.endpoint:
             # Try cloud fallback
@@ -377,7 +404,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     # no buffering/reassembly point (_stream_response below).
                     # A regulated deployment that needs output redaction must
                     # disable streaming; documented, not silently ignored.
-                    self._stream_response(resp, decision)
+                    if not self._stream_response(resp, decision):
+                        return
                 else:
                     result = resp.read()
                     result = self._redact_response_pii(result)
@@ -410,8 +438,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._error(e.code, msg)
         except Exception as e:
             self._error(502, f"Proxy error: {e}")
+        else:
+            prefix_route.get_default_tracker().observe(decision.endpoint, prompt, model=model)
 
-    def _stream_response(self, resp: Any, decision: Any) -> None:
+    def _stream_response(self, resp: Any, decision: Any) -> bool:
         """Stream the response back to the client as SSE."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -424,7 +454,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
-            pass  # best-effort; failure is non-critical
+            return False
+        return True
 
     def _proxy_embedding(self) -> None:
         """Proxy an embedding request to the upstream engine."""
@@ -747,6 +778,13 @@ def serve_proxy(host: str = DAEMON_HOST, port: int = PROXY_PORT,
     if store is None:
         store = StateStore()
     ProxyHandler.store = store
-    server = HTTPServer((host, port), ProxyHandler)
-    print(f"AI OS completions proxy on http://{host}:{port}/v1/chat/completions")
-    server.serve_forever()
+    tracker = prefix_route.get_default_tracker()
+    was_persisting = tracker.persistence_enabled()
+    with HTTPServer((host, port), ProxyHandler) as server:
+        print(f"AI OS completions proxy on http://{host}:{port}/v1/chat/completions")
+        tracker.enable_persistence()
+        try:
+            server.serve_forever()
+        finally:
+            tracker.flush_reuse()
+            tracker.enable_persistence(was_persisting)
